@@ -10277,6 +10277,12 @@ app.get('/api/scan/carton-slip/:orderNumber', (req, res) => {
     poNo:         ord.po_number || '',
     pickTicket:   ord.pick_ticket || '',
     jobCode:      batch.idealscan_code || '',
+    // HOW MANY CARTONS THERE ARE IN TOTAL IS ONLY KNOWN ONCE THE ORDER IS
+    // FINISHED. `cartonCount` is how many boxes exist RIGHT NOW, which on a
+    // multi-box order is not the total — so the label may only print "of N"
+    // when that number is final. Completion closes every carton and drops an
+    // empty trailing one, so `done` is exactly when it stops moving.
+    cartonTotalFinal: state.status === 'done',
     orderedTotal, packedHere,
     labelText:    `${orderNumber}-${String(carton.num).padStart(2, '0')}`,
     printedAt:    new Date().toISOString(),

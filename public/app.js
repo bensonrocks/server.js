@@ -9353,78 +9353,106 @@
   //
   // Sized 100×150mm (the common thermal label) with a fallback for A4, so it
   // works on whatever is plugged in.
-  async function printCartonLabel(cartonNum, { silent } = {}) {
-    if (!activeOrder) return false;
-    try {
-      const q = cartonNum ? `?cartonNum=${encodeURIComponent(cartonNum)}` : '';
-      const resp = await fetch(`/api/scan/carton-slip/${encodeURIComponent(activeOrder.order_number)}${q}`, { headers: hdrs() });
-      const data = await resp.json();
-      if (!resp.ok) { if (!silent) alert(data.error || 'Could not build the label.'); return false; }
-      // ── PRINTED FROM A HIDDEN IFRAME, NOT A POP-UP ─────────────────────
-      // The label now prints ITSELF when the prompt fires, and a `window.open`
-      // that is not inside a click handler is blocked by every browser — so
-      // the auto-print silently did nothing. An iframe carries no such rule
-      // and needs no pop-up permission, which also means the button path stops
-      // depending on one. Reused rather than recreated so a packer working
-      // through ten cartons does not accumulate ten frames.
-      let frame = document.getElementById('cartonLabelFrame');
-      if (!frame) {
-        frame = document.createElement('iframe');
-        frame.id = 'cartonLabelFrame';
-        frame.setAttribute('aria-hidden', 'true');
-        // Off-screen rather than display:none — a frame that is not rendered
-        // does not lay out, and Chrome then prints a blank page.
-        frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:120mm;height:170mm;border:0;';
-        document.body.appendChild(frame);
-      }
-      const w = frame.contentWindow;
-      if (!w) { if (!silent) alert('Could not open the label for printing.'); return false; }
-      // Only the identifiers this order actually has — a label of empty
-      // captions is harder to read than a short one.
-      const idRows = [
-        ['Client',  data.clientName],
-        ['Waybill', data.waybill],
-        ['PO',      data.poNo],
-        ['Job',     data.jobCode],
-      ].filter(([, v]) => v)
-       .map(([k, v]) => `<tr><th>${k}</th><td>${esc(String(v))}</td></tr>`).join('');
-      // ── THE ORDER REFERENCE, LARGE, WITH THE CUSTOMER ON IT ────────────
-      // Per the user. This is the block someone reads across a bench or off a
-      // pallet: which order this box belongs to and who it is for. The GI is
-      // the reference actually printed on the client's paperwork, so it leads
-      // when there is one and the order number stands in when there is not.
-      const orderRef = data.issueNo || data.orderNumber;
-      const refBlock = `
-        <div class="ref">
-          <span class="cap">Order</span>
-          <div class="ref-no">${esc(String(orderRef))}</div>
-          ${data.issueNo && data.orderNumber && data.issueNo !== data.orderNumber
-            ? `<div class="ref-alt">${esc(String(data.orderNumber))}</div>` : ''}
-          ${data.customerName ? `<div class="ref-cust">${esc(String(data.customerName))}</div>` : ''}
-        </div>`;
-      // THE LABEL GOES ON THE BOX BEFORE IT IS PACKED, so at carton 1 there is
-      // nothing in it yet. An empty "contents" table is noise on a label; the
-      // order total is the useful thing at that moment, and the 🏷 button
-      // reprints it with real contents once the box is full.
-      const packed = (data.items || []).filter(i => i.qty > 0);
-      const itemsBlock = packed.length
-        ? `<table class="it">
-             <thead><tr><th>SKU</th><th style="text-align:right">Qty</th></tr></thead>
-             <tbody>${packed.map(i => `<tr><td>${esc(i.sku)}</td><td class="q">${i.qty}</td></tr>`).join('')}</tbody>
-           </table>`
-        : `<div class="pend">Reprint with the &#127991; button once the box is packed to list its contents.</div>`;
-      // QUANTITY, said outright. It was only ever derivable by adding up the
-      // contents table, which is not a thing anyone does on a loading bay.
-      const inBox = Number(data.packedHere) || 0;
-      const ordered = Number(data.orderedTotal) || 0;
-      const qtyBlock = `
-        <div class="qty">
-          <span><b>${inBox}</b> pc${inBox === 1 ? '' : 's'} in this carton</span>
-          ${ordered ? `<span class="muted">${ordered} on the order</span>` : ''}
-        </div>`;
-      const label = data.labelText || `${data.orderNumber}-${String(data.cartonNum).padStart(2, '0')}`;
-      w.document.write(`
-        <html><head><title>${esc(label)}</title>
+  // ── ONE LABEL'S BODY ───────────────────────────────────────────────────
+  // Built here and nowhere else: the single print, the auto-print and the
+  // pre-print run all render through this, so a change to the label can never
+  // reach only some of them.
+  function cartonLabelBody(data) {
+    // Only the identifiers this order actually has — a label of empty
+    // captions is harder to read than a short one.
+    const idRows = [
+      ['Client',  data.clientName],
+      ['Waybill', data.waybill],
+      ['PO',      data.poNo],
+      ['Job',     data.jobCode],
+    ].filter(([, v]) => v)
+     .map(([k, v]) => `<tr><th>${k}</th><td>${esc(String(v))}</td></tr>`).join('');
+    // ── THE ORDER REFERENCE, LARGE, WITH THE CUSTOMER ON IT ────────────
+    // Per the user. This is the block someone reads across a bench or off a
+    // pallet: which order this box belongs to and who it is for. The GI is
+    // the reference actually printed on the client's paperwork, so it leads
+    // when there is one and the order number stands in when there is not.
+    const orderRef = data.issueNo || data.orderNumber;
+    const refBlock = `
+      <div class="ref">
+        <span class="cap">Order</span>
+        <div class="ref-no">${esc(String(orderRef))}</div>
+        ${data.issueNo && data.orderNumber && data.issueNo !== data.orderNumber
+          ? `<div class="ref-alt">${esc(String(data.orderNumber))}</div>` : ''}
+        ${data.customerName ? `<div class="ref-cust">${esc(String(data.customerName))}</div>` : ''}
+      </div>`;
+    // THE LABEL GOES ON THE BOX BEFORE IT IS PACKED, so at carton 1 there is
+    // nothing in it yet. An empty "contents" table is noise on a label; the
+    // order total is the useful thing at that moment, and the 🏷 button
+    // reprints it with real contents once the box is full.
+    const packed = (data.items || []).filter(i => i.qty > 0);
+    const itemsBlock = packed.length
+      ? `<table class="it">
+           <thead><tr><th>SKU</th><th style="text-align:right">Qty</th></tr></thead>
+           <tbody>${packed.map(i => `<tr><td>${esc(i.sku)}</td><td class="q">${i.qty}</td></tr>`).join('')}</tbody>
+         </table>`
+      : `<div class="pend">Reprint with the &#127991; button once the box is packed to list its contents.</div>`;
+    // QUANTITY, said outright. It was only ever derivable by adding up the
+    // contents table, which is not a thing anyone does on a loading bay.
+    const inBox = Number(data.packedHere) || 0;
+    const ordered = Number(data.orderedTotal) || 0;
+    const qtyBlock = `
+      <div class="qty">
+        <span><b>${inBox}</b> pc${inBox === 1 ? '' : 's'} in this carton</span>
+        ${ordered ? `<span class="muted">${ordered} on the order</span>` : ''}
+      </div>`;
+    const label = data.labelText || `${data.orderNumber}-${String(data.cartonNum).padStart(2, '0')}`;
+    // ── "OF N" IS ONLY PRINTED ONCE N IS TRUE ──────────────────────────
+    // How many boxes an order takes is not knowable when the first one is
+    // labelled — it depends on the goods, the cartons to hand and the
+    // packer's judgement. `cartonCount` is how many exist RIGHT NOW, so on a
+    // four-box order the first label used to read "CARTON 1 OF 1", which
+    // tells a receiver the consignment is complete when three more boxes are
+    // behind it. Worse than saying nothing. The total is final only once the
+    // order is done (completion closes every carton), so until then the
+    // label states the carton number alone and the count is left off.
+    const ctnText = data.cartonTotalFinal && Number(data.cartonCount) > 0
+      ? `CARTON ${data.cartonNum} OF ${data.cartonCount}`
+      : `CARTON ${data.cartonNum}`;
+    return `
+      <div class="lbl-page">
+        <div class="lbl">${esc(label)}</div>
+        <div class="ctn">&#128230; ${ctnText}${
+          inBox ? ` &middot; ${inBox} pc${inBox === 1 ? '' : 's'}` : ''}</div>
+        <svg class="bc" data-code="${esc(label)}"></svg>
+        ${refBlock}
+        ${qtyBlock}
+        <table class="ids">${idRows}</table>
+        ${itemsBlock}
+        <div class="foot"><span>${esc(String(data.orderNumber))}</span><span>${
+          new Date(data.printedAt || Date.now()).toLocaleString('en-GB', { hour12: false })}</span></div>
+      </div>`;
+  }
+
+  // Write one or more label bodies into the hidden frame and send them to the
+  // printer. `bodies` is already-built HTML from cartonLabelBody().
+  function printCartonLabelDoc(bodies, title, { silent } = {}) {
+    // ── PRINTED FROM A HIDDEN IFRAME, NOT A POP-UP ─────────────────────
+    // The label prints ITSELF when the prompt fires, and a `window.open`
+    // that is not inside a click handler is blocked by every browser — so
+    // the auto-print silently did nothing. An iframe carries no such rule
+    // and needs no pop-up permission, which also means the button path stops
+    // depending on one. Reused rather than recreated so a packer working
+    // through ten cartons does not accumulate ten frames.
+    let frame = document.getElementById('cartonLabelFrame');
+    if (!frame) {
+      frame = document.createElement('iframe');
+      frame.id = 'cartonLabelFrame';
+      frame.setAttribute('aria-hidden', 'true');
+      // Off-screen rather than display:none — a frame that is not rendered
+      // does not lay out, and Chrome then prints a blank page.
+      frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:120mm;height:170mm;border:0;';
+      document.body.appendChild(frame);
+    }
+    const w = frame.contentWindow;
+    if (!w) { if (!silent) alert('Could not open the label for printing.'); return false; }
+    w.document.write(`
+        <html><head><title>${esc(title)}</title>
         <script src="/vendor/jsbarcode.min.js"><\/script>
         <style>
           @page { size: 100mm 150mm; margin: 4mm; }
@@ -9467,31 +9495,38 @@
           .pend { margin-top: 2.5mm; font-size: 11px; color: #333; border-top: 1px solid #000;
                   padding-top: 1.2mm; }
           .hint { margin-top: 3mm; font-size: 10px; color: #666; }
+          /* One label per page when several are printed in a run. */
+          .lbl-page { page-break-after: always; }
+          .lbl-page:last-of-type { page-break-after: auto; }
         </style></head>
         <body>
-          <div class="lbl">${esc(label)}</div>
-          <div class="ctn">&#128230; CARTON ${data.cartonNum} OF ${data.cartonCount}${
-            data.packedHere ? ` &middot; ${data.packedHere} pc${data.packedHere === 1 ? '' : 's'}` : ''}</div>
-          <svg id="bc"></svg>
-          ${refBlock}
-          ${qtyBlock}
-          <table class="ids">${idRows}</table>
-          ${itemsBlock}
-          <div class="foot"><span>${esc(data.orderNumber)}</span><span>${
-            new Date(data.printedAt || Date.now()).toLocaleString('en-GB', { hour12: false })}</span></div>
+          ${bodies}
           <div class="hint">If this did not print, check the printer and use the &#128462; button on the carton bar.</div>
           <script>
             // The BARCODE IS THE CARTON ID, not the order number — scanning a
             // box has to identify that box, and two cartons of one order are
             // otherwise indistinguishable.
-            try { JsBarcode("#bc", ${JSON.stringify(label)}, { format: "CODE128", width: 2, height: 50, fontSize: 13, margin: 0 }); } catch (e) {}
+            document.querySelectorAll('svg.bc').forEach(function (el) {
+              try { JsBarcode(el, el.getAttribute('data-code'), { format: "CODE128", width: 2, height: 50, fontSize: 13, margin: 0 }); } catch (e) {}
+            });
             // focus() first: printing an iframe prints the TOP document unless
             // the frame has focus, which would send the whole app to the printer.
             window.onload = () => setTimeout(() => { try { window.focus(); } catch (e) {} window.print(); }, 350);
           <\/script>
         </body></html>`);
-      w.document.close();
-      return true;
+    w.document.close();
+    return true;
+  }
+
+  async function printCartonLabel(cartonNum, { silent } = {}) {
+    if (!activeOrder) return false;
+    try {
+      const q = cartonNum ? `?cartonNum=${encodeURIComponent(cartonNum)}` : '';
+      const resp = await fetch(`/api/scan/carton-slip/${encodeURIComponent(activeOrder.order_number)}${q}`, { headers: hdrs() });
+      const data = await resp.json();
+      if (!resp.ok) { if (!silent) alert(data.error || 'Could not build the label.'); return false; }
+      const label = data.labelText || `${data.orderNumber}-${String(data.cartonNum).padStart(2, '0')}`;
+      return printCartonLabelDoc(cartonLabelBody(data), label, { silent });
     } catch (err) {
       if (!silent) alert(err.message);
       return false;
@@ -9505,6 +9540,61 @@
     if (btn) btn.disabled = true;
     try { await printCartonLabel(activeOrder?.cartonNum); }
     finally { if (btn) btn.disabled = false; }
+  }
+
+  // ── PRE-PRINT A STRIP OF LABELS FOR A BIG ORDER ──────────────────────────
+  // Per the user, for the case where one order takes several boxes. The system
+  // CANNOT know how many boxes an order will need — that depends on the goods,
+  // the cartons to hand and the packer's judgement — so this is never automatic
+  // and never a guess made on the packer's behalf. A packer who already knows a
+  // job is four boxes asks for the next three and sticks them on as they go.
+  //
+  // IT PRINTS PAPER AND NOTHING ELSE. No carton is created: "+ New Carton" is
+  // still what brings a box into existence, so a label that ends up unused is
+  // torn up and no phantom carton is left behind on the order. The labels are
+  // identical to what each carton's own label would say at the moment it is
+  // opened — empty, with the order total on it — so nothing here is invented.
+  const PREPRINT_MAX = 20;
+  async function preprintCartonLabels() {
+    if (!activeOrder) return;
+    const btn = document.getElementById('preprintCartonLabelsBtn');
+    if (btn) btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/scan/carton-slip/${encodeURIComponent(activeOrder.order_number)}`, { headers: hdrs() });
+      const data = await resp.json();
+      if (!resp.ok) { alert(data.error || 'Could not build the labels.'); return; }
+      // The NEXT carton is highest + 1, which is what "+ New Carton" creates —
+      // not current + 1, since a packer may have switched back to an earlier box.
+      const start = (Number(data.cartonCount) || 1) + 1;
+      const raw = prompt(
+        `How many MORE carton labels for this order?\n\n` +
+        `They will be numbered ${String(start).padStart(2, '0')} onwards. Nothing is counted or ` +
+        `created — this only prints paper, and any label you do not use gets torn up.`,
+        '2');
+      if (raw === null) return;
+      const n = Math.floor(Number(raw));
+      if (!Number.isFinite(n) || n < 1) { alert('Enter how many labels you need, as a number.'); return; }
+      if (n > PREPRINT_MAX) { alert(`That is more than ${PREPRINT_MAX} labels in one go. Print them in smaller runs.`); return; }
+      const nums = Array.from({ length: n }, (_, i) => start + i);
+      const ids = nums.map(num => `${data.orderNumber}-${String(num).padStart(2, '0')}`);
+      const shown = ids.length > 6 ? `${ids.slice(0, 5).join(', ')} … ${ids[ids.length - 1]}` : ids.join(', ');
+      if (!confirm(`Print ${n} label${n === 1 ? '' : 's'}?\n\n${shown}\n\nEach one is blank until its box is packed — use the 🏷 button to reprint a box with its contents.`)) return;
+      const bodies = nums.map(num => cartonLabelBody({
+        ...data,
+        cartonNum: num,
+        // A box that does not exist yet holds nothing, and the total is not
+        // known — the same shape a real carton's first label has.
+        packedHere: 0,
+        items: [],
+        cartonTotalFinal: false,
+        labelText: `${data.orderNumber}-${String(num).padStart(2, '0')}`,
+      })).join('');
+      printCartonLabelDoc(bodies, `${data.orderNumber} — ${n} labels`);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   async function printCartonSlip() {
@@ -9561,6 +9651,7 @@
     }
   }
   document.getElementById('printCartonLabelBtn')?.addEventListener('click', reprintCartonLabel);
+  document.getElementById('preprintCartonLabelsBtn')?.addEventListener('click', preprintCartonLabels);
   document.getElementById('printCartonSlipBtn')?.addEventListener('click', printCartonSlip);
   document.getElementById('scanSerialsBtn')?.addEventListener('click', () => {
     if (!activeOrder) return;

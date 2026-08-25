@@ -2949,11 +2949,51 @@ breaking the default.
     order" — adding up the contents table is not a thing anyone does on a
     loading bay. Stated ONCE: the empty-carton line used to repeat the order
     total and now just says how to get the contents on later.
+  - **"CARTON n OF m" IS PRINTED ONLY ONCE m IS TRUE.** How many boxes an order
+    takes is NOT knowable when the first one is labelled — it depends on the
+    goods, the cartons to hand and the packer's judgement. The label printed
+    `CARTON ${cartonNum} OF ${cartonCount}` unconditionally, and `cartonCount`
+    is how many boxes exist RIGHT NOW, so on a four-box order the first label
+    read **"CARTON 1 OF 1"** and told a receiver the consignment was complete
+    with three more boxes behind it. Worse than saying nothing. The carton-slip
+    endpoint now returns **`cartonTotalFinal`** (`state.status === 'done'` —
+    completion closes every carton and drops an empty trailing one, so that is
+    exactly when the number stops moving) and the label states the carton
+    number ALONE until then. A 🏷 reprint after completion carries the real
+    "OF 2".
+  - **PRE-PRINTING A STRIP FOR A BIG ORDER** — 🏷×N on the carton bar, per the
+    user, for an order that will take several boxes.
+    - **NEVER AUTOMATIC AND NEVER A GUESS ON THE PACKER'S BEHALF.** Nothing in
+      the system can know the box count up front (`orderedTotal` says 20
+      pieces, not how many cartons those need), so it ASKS. A packer who
+      already knows a job is four boxes takes the next three.
+    - **IT PRINTS PAPER AND NOTHING ELSE.** No carton is created — `+ New
+      Carton` is still the only thing that brings a box into existence — so a
+      label that ends up unused is torn up and leaves no phantom carton on the
+      order. Asserted: the run leaves the order on exactly one carton.
+    - Numbered from **highest + 1**, which is what `+ New Carton` creates, NOT
+      current + 1: a packer may have switched back to an earlier box.
+    - Each label is identical to what that carton's own label says the moment
+      it is opened — empty, with the order total on it — so nothing is
+      invented. Capped at `PREPRINT_MAX` (20) so a fat finger cannot send 500
+      pages, and the confirm names the exact ids first.
+  - **ONE LABEL BODY, `cartonLabelBody(data)`.** The single print, the
+    auto-print and the pre-print run all render through it, so a change to the
+    label can never reach only some of them. The barcode `<svg>` went from an
+    `id` to a `class` (`svg.bc`, `data-code`) because a run holds several, and
+    `printCartonLabelDoc` loops over them; `.lbl-page` carries the page break.
   Verified 22 browser checks driving a real pick — the label printing itself on
   open with nothing pressed, reaching the print dialog, the prompt closing
   itself, the reference and customer sized above the identifier rows and below
   the carton id, neither duplicated in the table below, and the same box
-  reprinted after packing showing 3 pcs and both SKU lines.
+  reprinted after packing showing 3 pcs and both SKU lines. Plus 14 API checks
+  on the "OF m" rule (an open order claims no total; a second box is opened and
+  it STILL claims none — the moment the old code printed "OF 1" on a two-box
+  order; completion makes it final and both boxes then reprint "OF 2") and 20
+  browser checks on desktop and a Pixel 5 on the pre-print (it asks rather than
+  guessing, says plainly that it creates nothing, renders three sequential
+  labels each with its OWN barcode, all blank, none claiming a total, one per
+  page — and the order still holds exactly one carton afterwards).
 
   Verified 20 browser checks driving a real pick.
 
