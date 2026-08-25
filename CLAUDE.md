@@ -1965,10 +1965,20 @@ anywhere in the download, to see which products or how many of each**. The
 Cancelled sheet is the worst case: it is the list a client re-places somewhere
 else, and a piece count cannot be re-placed.
 
-- **`Order lines`** — one row per order × SKU: order no, order date, status,
-  **SKU, Description, Quantity**, waybill, PO, completed. Cancelled orders are
-  included and told apart by the Status column, because "what was in the order
-  we did not fulfil" is exactly the question that sheet exists to answer.
+- **ONE LINE SHEET PER ORDER SHEET** — `Order lines` for the Orders tab,
+  `Cancelled lines` for the Cancelled tab. Each carries order no, order date,
+  status, **SKU, Description, Quantity**, waybill, PO, completed.
+  - The first cut put BOTH on one `Order lines` sheet with a Status column
+    telling them apart. **A client reading it caught that** (John Tang, MHM):
+    the workbook's own convention is that Orders EXCLUDES cancelled and
+    Cancelled holds them, so a mixed line sheet is inconsistent with the file
+    it sits in — and anyone summing the Quantity column without noticing the
+    Status column adds shipped and cancelled together and gets a wrong figure
+    **silently**, which is the worst way to get one. He was right.
+  - Now the Quantity column of `Order lines` totals the Orders sheet's Pieces
+    exactly (asserted, whole-column), so the sheet total is a real number.
+  - `Cancelled lines` is what a client re-places elsewhere, which is why it
+    needs the description and quantity and not just a comma list of codes.
 - **THE ORDER-LEVEL SHEETS KEEP THEIR SHAPE.** Exploding Orders into one row
   per SKU would change what every figure on it means to anyone already
   counting rows. It stays one row per order and points at the new sheet;
@@ -1989,8 +1999,8 @@ else, and a piece count cannot be re-placed.
 - The catalogue's wording wins for the description (`description ||
   source_description`), so a line is never left as a bare code.
 
-Verified 24 API checks against a client carrying BOTH shipped and cancelled
-orders, plus 22 against a cancelled-only client. A check with no rows behind it
+Verified 32 API checks against a client carrying BOTH shipped and cancelled
+orders, plus 25 against a cancelled-only client. A check with no rows behind it
 is SKIPPED out loud rather than passing on an empty sheet — which is how the
 first run was caught proving nothing about one-row-per-order on a fixture that
 had no live orders in it.

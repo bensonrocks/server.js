@@ -5874,7 +5874,13 @@ const PORTAL_LINE_COLS = ['Order no', 'Order date', 'Status', 'SKU', 'Descriptio
 
 function portalOrderSheetRows(db, clientNorm, { inRange, pol }) {
   const sgt = v => (v ? new Date(v).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '');
-  const orders = [], cancelled = [], lines = [];
+  // ONE LINE SHEET PER ORDER SHEET, never a mixed one. The workbook's own
+  // convention is that Orders EXCLUDES cancelled and Cancelled holds them, so a
+  // line sheet carrying both is inconsistent with the file it sits in — and
+  // anyone summing the Quantity column without noticing the Status column adds
+  // shipped and cancelled together and gets a wrong figure silently, which is
+  // the worst way to get one. Raised by a client reading the first version.
+  const orders = [], cancelled = [], liveLines = [], cancelledLines = [];
   for (const b of db.batches || []) {
     if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
     for (const o of b.orders || []) {
@@ -5907,7 +5913,7 @@ function portalOrderSheetRows(db, clientNorm, { inRange, pol }) {
       // own text behind it, so a line is never left with a bare code.
       for (const l of ol) {
         if (!l || !l.sku) continue;
-        lines.push([o.order_number, orderDate, label, l.sku,
+        (isCancelled ? cancelledLines : liveLines).push([o.order_number, orderDate, label, l.sku,
           l.description || l.source_description || '', Number(l.qty) || 0,
           o.waybill_number || '', o.po_number || '', sgt(st.endTime)]);
       }
@@ -5916,9 +5922,10 @@ function portalOrderSheetRows(db, clientNorm, { inRange, pol }) {
   orders.sort((a, b) => String(b[1]).localeCompare(String(a[1])));
   cancelled.sort((a, b) => String(b[2]).localeCompare(String(a[2])));
   // Grouped by order, newest first, so the lines of one order stay together.
-  lines.sort((a, b) => String(b[1]).localeCompare(String(a[1]))
-    || String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3])));
-  return { orders, cancelled, lines };
+  const byOrder = (a, b) => String(b[1]).localeCompare(String(a[1]))
+    || String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3]));
+  liveLines.sort(byOrder); cancelledLines.sort(byOrder);
+  return { orders, cancelled, liveLines, cancelledLines };
 }
 
 // Office download — one client, date range, same sheets the client can pull.
@@ -6075,20 +6082,20 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
       [], PORTAL_ORDER_COLS, ...built.orders];
     sheet = 'Orders'; name = 'Orders';
     extraSheets = [{ name: 'Order lines', aoa: [...title('Order lines'),
-      ['One row per SKU on each order, cancelled orders included — the Status column says which.'],
-      [], PORTAL_LINE_COLS, ...built.lines] }];
+      ['One row per SKU on the orders above. Cancelled orders are NOT here — they are their own download.'],
+      [], PORTAL_LINE_COLS, ...built.liveLines] }];
   } else if (kind === 'cancelled') {
     // THE ORDERS WE DID NOT FULFIL — the list the client re-places elsewhere.
     // Carries WHY, whether it was automatic, and THEIR OWN note of where the
     // order went, so the sheet is a complete record without them re-keying it.
     const built = portalOrderSheetRows(db, clientNorm, { inRange, pol: pickupPolicy(db) });
-    const cancelledNos = new Set(built.cancelled.map(r => r[0]));
     aoa = [...title('Cancelled orders'),
-      ['What was in each of these orders — SKU, description and quantity — is on the "Order lines" sheet, so it can be re-placed without re-keying it.'],
+      ['What was in each of these orders — SKU, description and quantity — is on the "Cancelled lines" sheet, so it can be re-placed without re-keying it.'],
       [], PORTAL_CANCELLED_COLS, ...built.cancelled];
     sheet = 'Cancelled'; name = 'Cancelled_orders';
-    extraSheets = [{ name: 'Order lines', aoa: [...title('Cancelled order lines'), [],
-      PORTAL_LINE_COLS, ...built.lines.filter(r => cancelledNos.has(r[0]))] }];
+    extraSheets = [{ name: 'Cancelled lines', aoa: [...title('Cancelled order lines'),
+      ['One row per SKU on the cancelled orders above — nothing here shipped.'],
+      [], PORTAL_LINE_COLS, ...built.cancelledLines] }];
   } else if (kind === 'inbound') {
     const out = (db.inbound || [])
       .filter(r => String(r.client_name || '').trim().toLowerCase() === clientNorm)
@@ -6162,11 +6169,14 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     // without saying what shipped, which is the one thing a client cannot look
     // up anywhere else.
     add('Order lines', [...title('Order lines'),
-      ['One row per SKU on each order, cancelled orders included — the Status column says which.'],
-      [], PORTAL_LINE_COLS, ...built.lines]);
+      ['One row per SKU on the Orders tab. Cancelled orders are on their own two tabs.'],
+      [], PORTAL_LINE_COLS, ...built.liveLines]);
     add('Cancelled', [...title('Cancelled orders'),
-      ['What was in each of these orders is on the "Order lines" tab.'],
+      ['What was in each of these orders is on the "Cancelled lines" tab.'],
       [], PORTAL_CANCELLED_COLS, ...built.cancelled]);
+    add('Cancelled lines', [...title('Cancelled order lines'),
+      ['One row per SKU on the Cancelled tab — nothing here shipped.'],
+      [], PORTAL_LINE_COLS, ...built.cancelledLines]);
     try {
       const tx = computeTransactions(db, client, { from, to });
       for (const sh of transactionSheets(client, tx, from, to)) {
