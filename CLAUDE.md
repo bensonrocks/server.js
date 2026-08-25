@@ -1169,6 +1169,51 @@ more and leaves no stalled entry, and suspending stops it — plus 20 browser
 checks on desktop and a Pixel 5 (off by default, the cost written on the form,
 cancelling the confirm leaves it off, and switching it off never asks).
 
+### The waybill was in ZORT and blank here (`ZORT_WAYBILL_CHASE_DAYS`)
+
+Reported from the floor. Lazada mints the tracking number MINUTES after the
+order exists, so an order pulled promptly arrives with none, and the pull's
+backfill is what fills it in later. Two things stopped that happening, and both
+left the client's portal showing a blank waybill against an order ZORT plainly
+had one for:
+
+- **A DONE ORDER WAS REFUSED.** The backfill skipped `status === 'done'`,
+  reasoning that its label had already printed — but that conflates *do not
+  OVERWRITE a printed label* with *do not fill in a BLANK*. On a fast-moving
+  account the order is picked, packed and completed before the channel gets
+  round to the AWB, which is the normal case, not an edge one; those orders
+  stayed blank for ever. A blank is now filled whatever the status, and never
+  overwritten. The on-demand `/waybill-now` path already worked this way — the
+  two now agree, which is what made the inconsistency findable.
+- **AN ORDER THAT LEFT THE WINDOW WAS NEVER RE-READ.** The sweep only sees what
+  `updatedafter` (lastPullAt − 1 day) returns, so a tracking number assigned
+  after that — or assigned without the hub bumping the order's `updated` — could
+  never reach the backfill. A catch-up now runs at the END of each pull:
+  orders on this store with a `zort_id`, no waybill, not cancelled, from the
+  last `ZORT_WAYBILL_CHASE_DAYS` (14), capped at 100, read in **ONE**
+  `getOrdersByNumbers` call via the `numberlist` header.
+  - **ONE CALL PER PULL whatever the backlog** — the account is metered at
+    50,000/day and this is the cheapest possible shape. Asserted.
+  - Bounded by days AND by count so it can never become a sweep of the whole
+    back catalogue: a channel that has not issued a tracking number after two
+    weeks is not going to.
+  - A failure here is caught and logged, never allowed to take the pull down —
+    the orders it chases are already imported and correct but for a blank.
+  - Audited `sync_waybill_backfilled` with `via: 'chase'`, and the inline path
+    records `afterCompletion` when it filled one that was already done.
+
+Verified 14 API checks against a hub that assigns tracking LATE: orders import
+with no waybill, one is picked and completed before the channel issues it and
+still gets it, two that have fallen outside the `updatedafter` window are
+chased by number in a single request, a pull makes at most one catch-up call, a
+waybill already held is never rewritten, and the trail says which path filled
+each. The pre-fix code fails 6 of those, so the suite reproduces the report
+rather than agreeing with itself.
+
+TEST GOTCHA: these orders persist in db.json, so a re-run finds them already
+carrying the waybills the previous run fetched and "it imports with no waybill"
+fails against good code — reset with the server STOPPED (`wb-run.sh`).
+
 ### The hub pushes; we make ONE targeted read (`/api/zort/webhook/:token`)
 
 The polling pull is what spends the 50,000/day: every enabled store, every
@@ -2004,6 +2049,22 @@ is SKIPPED out loud rather than passing on an empty sheet — which is how a
 vacuous pass was caught twice here, once on a fixture with no live orders and
 once when `/api/portal/orders` turned out to answer with a BARE ARRAY, so
 reading `.orders` off it silently compared nothing.
+
+**WHICH DATE THE PERIOD APPLIES TO IS NOW SAID ON THE SHEET.** Reported by a
+client as *"last time the date range is based on Order Date, now the logic is
+based on your completion date"* — half right. The filter has been
+`st.endTime || o.date` since the FIRST version of this export (28 Jul 2026); it
+never changed, and nothing in the line-detail work touched it. But his
+observation was sound: the visible **Date** column is when the order was
+PLACED, while the range filters a completed order on the day it was COMPLETED,
+so rows legitimately appear whose Date sits outside the window — and nothing on
+the sheet said so, which reads as a bug. Each order sheet now states its basis
+in the title block (Orders → completed day, Cancelled → cancelled day, an open
+order → its order date).
+
+**DO NOT change the basis to order date without changing the SCREEN too.** The
+portal's own day table and `orderDay()` bucket on the same rule; moving one and
+not the other recreates the 15-vs-17 class of bug exactly.
 
 **THE DOWNLOAD DIALOG NAMED THE WRONG REPORT** — found by screenshotting the
 real portal rather than by reading the code. `openDownload(kind)` set its title

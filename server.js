@@ -6082,6 +6082,12 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     const built = portalOrderSheetRows(db, clientNorm, { inRange, pol: pickupPolicy(db) });
     aoa = [...title('Orders'),
       ['One row per product on each order. Sum Quantity for pieces; count distinct Order no for orders.'],
+      // WHICH DATE THE PERIOD WAS APPLIED TO, said outright. The visible Date
+      // column is when the order was PLACED, while the range filters a
+      // completed order on the day it was COMPLETED — so rows legitimately
+      // appear whose Date sits outside the window, which reads as a bug when
+      // nothing says otherwise. Reported by a client reading the sheet.
+      ['Period applied to the day each order was COMPLETED (see Completed (SGT)); an order still being worked is placed by its order date. The Date column is when the order was placed, so it can fall outside the period.'],
       ['Cancelled orders are not here — they are their own download.'],
       [], PORTAL_ORDER_COLS, ...built.orders];
     sheet = 'Orders'; name = 'Orders';
@@ -6092,6 +6098,7 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     const built = portalOrderSheetRows(db, clientNorm, { inRange, pol: pickupPolicy(db) });
     aoa = [...title('Cancelled orders'),
       ['One row per product on each cancelled order, so the list can be re-placed without re-keying it. Nothing here shipped.'],
+      ['Period applied to the day each order was CANCELLED (see Cancelled (SGT)); the Order date column can fall outside it.'],
       [], PORTAL_CANCELLED_COLS, ...built.cancelled];
     sheet = 'Cancelled'; name = 'Cancelled_orders';
   } else if (kind === 'inbound') {
@@ -6163,10 +6170,12 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     // ONE TAB EACH. The per-SKU detail is IN these sheets, not beside them.
     add('Orders', [...title('Orders'),
       ['One row per product on each order. Sum Quantity for pieces; count distinct Order no for orders.'],
+      ['Period applied to the day each order was COMPLETED (see Completed (SGT)); an order still being worked is placed by its order date. The Date column is when the order was placed, so it can fall outside the period.'],
       ['Cancelled orders are on the Cancelled tab, never mixed in here.'],
       [], PORTAL_ORDER_COLS, ...built.orders]);
     add('Cancelled', [...title('Cancelled orders'),
       ['One row per product on each cancelled order, so the list can be re-placed without re-keying it. Nothing here shipped.'],
+      ['Period applied to the day each order was CANCELLED (see Cancelled (SGT)); the Order date column can fall outside it.'],
       [], PORTAL_CANCELLED_COLS, ...built.cancelled]);
     try {
       const tx = computeTransactions(db, client, { from, to });
@@ -19243,6 +19252,10 @@ function zortStatusWord(s) {
 // so it imports and the cross-check tool arbitrates. 'voided' is handled
 // separately (it also cancels an existing copy).
 const ZORT_IMPORT_SKIP_STATUSES = new Set(['success', 'shipping', 'returned', 'failed shipment']);
+// How far back the end-of-pull waybill catch-up looks. Bounded so it can never
+// turn into a sweep of the whole back catalogue: an order whose channel has not
+// issued a tracking number after this long is not going to.
+const ZORT_WAYBILL_CHASE_DAYS = Math.max(1, Number(process.env.ZORT_WAYBILL_CHASE_DAYS) || 14);
 
 // ── THE PARCEL HAS LEFT, ACCORDING TO THE HUB ───────────────────────────────
 // A marketplace parcel is collected by the platform's own courier, so nobody
@@ -19464,7 +19477,7 @@ async function pullZortStore(db, store, opts = {}) {
   const zortMeta = {};
   // Built once for the whole pull — one query per client, not one per order.
   const skuOwners = buildSkuOwnerIndex(db); // order_number → {zort_id, zort_status}
-  let fetched = 0, skippedExisting = 0, skippedVoid = 0, updatedTracking = 0;
+  let fetched = 0, skippedExisting = 0, skippedVoid = 0, updatedTracking = 0, waybillChased = 0;
   let collectionsClosed = 0, collectionConflicts = 0;
   // Parcels the hub says came back or failed to ship. Reported on the store
   // row, because a count of zero and a count of nine are different mornings.
@@ -19510,16 +19523,24 @@ async function pullZortStore(db, store, opts = {}) {
         // empty forever. If the hub now carries a tracking number the imported
         // order lacks, fill it in — but never on a DONE order, whose label has
         // already printed (same rule as the direct marketplace push).
+        // A BLANK WAYBILL IS FILLED WHATEVER THE STATUS — including on a DONE
+        // order. The guard here used to skip `done`, reasoning that its label
+        // had already printed; but that conflates "do not OVERWRITE a printed
+        // label" with "do not fill in a BLANK". An order picked and packed
+        // faster than the channel mints its AWB — which is the normal case on a
+        // quick-moving account — was left with no waybill for ever, showing on
+        // the client's portal as blank while ZORT plainly had one. Reported from
+        // the floor. Never overwriting stays the rule, and the on-demand
+        // /waybill-now path already worked this way; the two now agree.
         const lateTracking = String(o.trackingno || o.tracking_no || o.trackingnumber || '').trim();
         if (lateTracking) {
           const f = lazadaFindOrder(db, number, '');
           if (f && !String(f.ord.waybill_number || '').trim()) {
-            const st = f.batch.orderStates?.[f.ord.order_number] || {};
-            if (st.status !== 'done') {
-              f.ord.waybill_number = lateTracking;
-              updatedTracking++;
-              logAudit('sync_waybill_backfilled', { order: number, tracking: lateTracking, storeId: store.id });
-            }
+            f.ord.waybill_number = lateTracking;
+            updatedTracking++;
+            const stDone = (f.batch.orderStates?.[f.ord.order_number] || {}).status === 'done';
+            logAudit('sync_waybill_backfilled', { order: number, tracking: lateTracking, storeId: store.id,
+              afterCompletion: stDone || undefined });
           }
         }
         // A PRE-ASSIGNED TRACKING NUMBER DOES NOT MEAN THE LABEL EXISTS.
@@ -19771,6 +19792,56 @@ async function pullZortStore(db, store, opts = {}) {
       }
     }
   }
+  // ── CHASE THE WAYBILLS THAT FELL OUT OF THE WINDOW ────────────────────────
+  // The sweep only sees orders the hub returns for `updatedafter`, so the
+  // backfill above can only fire while an order is still inside that window —
+  // roughly a day or two. If the channel assigns the tracking number after
+  // that, or does not bump the order's `updated` when it does, the waybill
+  // never arrives and the order sits blank for ever. Reported from the floor as
+  // "it is in ZORT but not in IdealOne".
+  //
+  // ONE EXTRA CALL, deliberately: `numberlist` takes up to 100 order numbers in
+  // a header, so the whole catch-up is a single request per pull whatever the
+  // backlog — which matters on an account metered at 50,000/day. Bounded to
+  // orders from the last ZORT_WAYBILL_CHASE_DAYS so it can never grow into a
+  // sweep of the whole back catalogue.
+  if (!only.length) {
+    try {
+      const wanted = [];
+      const cutoff = Date.now() - ZORT_WAYBILL_CHASE_DAYS * 86400000;
+      for (const b of db.batches || []) {
+        for (const o of b.orders || []) {
+          if (wanted.length >= 100) break;
+          if (o.zort_store_id !== store.id || !o.zort_id) continue;
+          if (String(o.waybill_number || '').trim()) continue;
+          const st = b.orderStates?.[o.order_number] || {};
+          if (st.status === 'unprocessed') continue;      // nobody is shipping it
+          const when = new Date(o.date || b.uploaded_at || 0).getTime();
+          if (!when || when < cutoff) continue;
+          wanted.push(o.order_number);
+        }
+        if (wanted.length >= 100) break;
+      }
+      if (wanted.length) {
+        const d = await zortApi.getOrdersByNumbers(store, wanted);
+        for (const z of d.list || d.orders || d.data || []) {
+          const num = String(z.number || '').trim();
+          const t = String(z.trackingno || z.tracking_no || z.trackingnumber || '').trim();
+          if (!num || !t) continue;
+          const f = lazadaFindOrder(db, num, '');
+          if (!f || String(f.ord.waybill_number || '').trim()) continue;   // never overwrite
+          f.ord.waybill_number = t;
+          updatedTracking++;
+          logAudit('sync_waybill_backfilled', { order: num, tracking: t, storeId: store.id, via: 'chase' });
+        }
+        waybillChased = wanted.length;
+      }
+    } catch (e) {
+      // A catch-up that fails must never take the pull down with it — the
+      // orders it was chasing are already imported and correct but for a blank.
+      console.warn('[zort waybill chase]', store.id, e.message);
+    }
+  }
   // A TARGETED READ MUST NOT MOVE THE WINDOW. `lastPullAt` is what the next
   // scheduled pull looks back from, so letting a webhook advance it would make
   // the sweep skip everything that changed in between — the safety net would
@@ -19785,6 +19856,7 @@ async function pullZortStore(db, store, opts = {}) {
   // Likewise the store row's summary describes the SWEEP; a one-order read
   // would otherwise overwrite it with "fetched 1" and hide the real picture.
   const _result = { at: new Date().toISOString(), fetched, created: orders.length, skippedExisting, skippedVoid, updatedTracking,
+                       waybillChased,
                        collectionsClosed, collectionConflicts,
                        // Parcels the courier brought back or could not ship.
                        hubExceptions: hubExceptions.slice(0, 50),
