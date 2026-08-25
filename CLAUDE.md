@@ -1210,6 +1210,45 @@ waybill already held is never rewritten, and the trail says which path filled
 each. The pre-fix code fails 6 of those, so the suite reproduces the report
 rather than agreeing with itself.
 
+**AND THE TRACKING NUMBER WAS READ SIX DIFFERENT WAYS.** Looking again after a
+second report, there were SIX ad-hoc extractions with six different key sets —
+and the one that mattered most, the IMPORT itself, read only `o.trackingno`.
+An order whose tracking the hub reports under any other spelling imported blank,
+and which later path (if any) rescued it was luck. `zortTracking(obj)` is now
+the ONE reader: every documented and observed spelling, plus one level into the
+containers their responses use (`detail`/`order`/`data`/`shipment`/`shipping`/
+`delivery`) — the hub's own screen shows it as **Shipping → Tracking No.**, so a
+nested shape is not hypothetical. All ten call sites go through it.
+
+**THE LIST ROW MAY NOT CARRY IT AT ALL.** The catch-up assumed the `numberlist`
+list response includes the tracking number; that assumption is NOT verifiable
+from here, and `/waybill-now` reads it from the order DETAIL, where it
+demonstrably works. So anything the list cannot fill is now read properly from
+the detail — **bounded at `ZORT_WAYBILL_DETAIL_MAX` (10) per pull**, because a
+detail read is one call PER ORDER while the list read is one call for a hundred.
+
+**AND A BLANK NOW EXPLAINS ITSELF**, which is what turned this into a support
+question twice. Three outcomes are told apart and reported on the store row:
+- filled (`sync_waybill_backfilled`, with `via` saying which path);
+- **the channel has not issued one yet** — normal, wait. Audited
+  `sync_waybill_unavailable` with the hub's status.
+- **the hub does not answer to that number at all** — retrying cannot fix it,
+  so it is named (`waybillNotOnHub`) and the row points at 🔍 Find order.
+If the row DID carry a tracking-ish field we failed to read, the KEY NAMES are
+recorded (names only — a value could be personal data and the audit log is
+permanent and emailed). That is the evidence to close an unknown-shape bug with,
+instead of a silent blank.
+
+Verified 16 API checks (the list-only order filled from its detail, the ghost
+order named on the row, one list call for six orders, at most one catch-up call
+per pull) plus 6 browser checks on desktop and a Pixel 5. The two NEW cases fail
+against the build that shipped the first pass, so they are real coverage rather
+than a restatement.
+
+TEST GOTCHA: `/api/master/zort/stores` answers with a BARE ARRAY — reading
+`.stores` off it gives undefined and the assertion proves nothing. Second time
+this shape has cost a run; `/api/portal/orders` did the same.
+
 TEST GOTCHA: these orders persist in db.json, so a re-run finds them already
 carrying the waybills the previous run fetched and "it imports with no waybill"
 fails against good code — reset with the server STOPPED (`wb-run.sh`).

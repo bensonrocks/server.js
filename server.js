@@ -19246,6 +19246,46 @@ function zortStatusWord(s) {
   if (/^\d+$/.test(raw)) return ZORT_STATUS_WORDS[Number(raw)] || raw;
   return raw.toLowerCase();
 }
+// ── ONE PLACE THAT READS A TRACKING NUMBER OFF THE HUB ──────────────────────
+// There were SIX ad-hoc extractions with six different key sets, and the one
+// that mattered most — the IMPORT itself — read only `trackingno`. So an order
+// whose tracking the hub reports under any other spelling imported blank, and
+// which later path (if any) would catch it was pure luck. Reported from the
+// floor as "no waybill here and ZORT has one".
+//
+// The exact field names ZORT returns are NOT verified from this sandbox (it
+// cannot reach zortout.com), so this reads every documented and observed
+// spelling, and looks one level into the containers their responses use.
+// `zortTrackingKeysSeen` exists for the case it STILL finds nothing: it reports
+// what the row actually carried, so an unknown shape is a fact we can read off
+// the trail rather than a silent blank nobody can explain.
+const ZORT_TRACKING_KEYS = ['trackingno', 'trackingNo', 'tracking_no', 'trackingnumber',
+  'trackingNumber', 'tracking_number', 'tracking', 'awb', 'awbno', 'awb_no',
+  'shippingtrackingno', 'shipmenttrackingno', 'parceltrackingno'];
+const ZORT_TRACKING_CONTAINERS = ['detail', 'order', 'data', 'shipment', 'shipping', 'delivery'];
+function zortTracking(obj, depth = 0) {
+  if (!obj || typeof obj !== 'object') return '';
+  for (const k of ZORT_TRACKING_KEYS) {
+    const v = obj[k];
+    if (v != null && String(v).trim()) return String(v).trim();
+  }
+  if (depth >= 1) return '';                 // one level down, never a deep crawl
+  for (const c of ZORT_TRACKING_CONTAINERS) {
+    const inner = obj[c];
+    if (Array.isArray(inner)) {
+      for (const row of inner) { const t = zortTracking(row, depth + 1); if (t) return t; }
+    } else if (inner && typeof inner === 'object') {
+      const t = zortTracking(inner, depth + 1); if (t) return t;
+    }
+  }
+  return '';
+}
+// The KEY NAMES a row carried, for when nothing matched. Names only — a value
+// could be personal data and this goes on the permanent audit trail.
+function zortTrackingKeysSeen(obj) {
+  if (!obj || typeof obj !== 'object') return [];
+  return Object.keys(obj).filter(k => /track|awb|waybill|ship|parcel|consign/i.test(k)).slice(0, 12);
+}
 // New orders in these states are never imported as floor work — they are
 // already fulfilled/left/returned on the hub's side. 'waiting' (RTS'd) is
 // deliberately NOT here: during handover a client may RTS work meant for us,
@@ -19256,6 +19296,11 @@ const ZORT_IMPORT_SKIP_STATUSES = new Set(['success', 'shipping', 'returned', 'f
 // turn into a sweep of the whole back catalogue: an order whose channel has not
 // issued a tracking number after this long is not going to.
 const ZORT_WAYBILL_CHASE_DAYS = Math.max(1, Number(process.env.ZORT_WAYBILL_CHASE_DAYS) || 14);
+// How many ORDER DETAIL reads the catch-up may make per pull. The list read is
+// one call for up to 100 orders; a detail read is one call each, so this is the
+// part that has to be bounded. Ten a pull clears a normal morning's backlog
+// within a couple of cycles without ever spending the day's quota on it.
+const ZORT_WAYBILL_DETAIL_MAX = Math.max(0, Number(process.env.ZORT_WAYBILL_DETAIL_MAX) || 10);
 
 // ── THE PARCEL HAS LEFT, ACCORDING TO THE HUB ───────────────────────────────
 // A marketplace parcel is collected by the platform's own courier, so nobody
@@ -19478,6 +19523,9 @@ async function pullZortStore(db, store, opts = {}) {
   // Built once for the whole pull — one query per client, not one per order.
   const skuOwners = buildSkuOwnerIndex(db); // order_number → {zort_id, zort_status}
   let fetched = 0, skippedExisting = 0, skippedVoid = 0, updatedTracking = 0, waybillChased = 0;
+  // Blanks we could not fill, and WHY — so "no waybill here and ZORT has one"
+  // is answerable off the store row instead of being a mystery.
+  const waybillUnavailable = [], waybillNotOnHub = [];
   let collectionsClosed = 0, collectionConflicts = 0;
   // Parcels the hub says came back or failed to ship. Reported on the store
   // row, because a count of zero and a count of nine are different mornings.
@@ -19532,7 +19580,7 @@ async function pullZortStore(db, store, opts = {}) {
         // the client's portal as blank while ZORT plainly had one. Reported from
         // the floor. Never overwriting stays the rule, and the on-demand
         // /waybill-now path already worked this way; the two now agree.
-        const lateTracking = String(o.trackingno || o.tracking_no || o.trackingnumber || '').trim();
+        const lateTracking = zortTracking(o);
         if (lateTracking) {
           const f = lazadaFindOrder(db, number, '');
           if (f && !String(f.ord.waybill_number || '').trim()) {
@@ -19648,7 +19696,7 @@ async function pullZortStore(db, store, opts = {}) {
           tel:              String(o.shippingphone || o.customerphone || '').trim(),
           carrier:          String(o.shippingchannel || '').trim(),
           platform:         String(o.saleschannel || o.channel || '').trim(),
-          waybill_number:   String(o.trackingno || '').trim(),
+          waybill_number:   zortTracking(o),
           date:             String(o.orderdate || '').slice(0, 10),
           // WHEN THE BUYER ACTUALLY ORDERED, with its time. `date` is sliced
           // to a day, which is useless for a KPI whose bands are 12:00 and
@@ -19823,16 +19871,59 @@ async function pullZortStore(db, store, opts = {}) {
         if (wanted.length >= 100) break;
       }
       if (wanted.length) {
-        const d = await zortApi.getOrdersByNumbers(store, wanted);
-        for (const z of d.list || d.orders || d.data || []) {
-          const num = String(z.number || '').trim();
-          const t = String(z.trackingno || z.tracking_no || z.trackingnumber || '').trim();
-          if (!num || !t) continue;
+        const fill = (num, t, via) => {
           const f = lazadaFindOrder(db, num, '');
-          if (!f || String(f.ord.waybill_number || '').trim()) continue;   // never overwrite
+          if (!f || String(f.ord.waybill_number || '').trim()) return false;   // never overwrite
           f.ord.waybill_number = t;
           updatedTracking++;
-          logAudit('sync_waybill_backfilled', { order: num, tracking: t, storeId: store.id, via: 'chase' });
+          logAudit('sync_waybill_backfilled', { order: num, tracking: t, storeId: store.id, via });
+          return true;
+        };
+        const d = await zortApi.getOrdersByNumbers(store, wanted);
+        // Orders the LIST answered for but carried no tracking on. Their id is
+        // kept so the detail read below needs no extra lookup.
+        const noneOnList = [];
+        const seen = new Set();
+        for (const z of d.list || d.orders || d.data || []) {
+          const num = String(z.number || '').trim();
+          if (!num) continue;
+          seen.add(num);
+          const t = zortTracking(z);
+          if (t) { fill(num, t, 'chase'); continue; }
+          noneOnList.push({ num, id: z.id, keys: zortTrackingKeysSeen(z), status: zortStatusWord(z.status) });
+        }
+        // ── THE LIST ROW MAY SIMPLY NOT CARRY THE TRACKING NUMBER ───────────
+        // On the hub's own screen it sits under Shipping → Tracking No., which
+        // is order DETAIL. `/waybill-now` reads it from there and works; the
+        // list is only assumed to carry it, and that assumption is not verified
+        // from here. So anything the list could not fill is read properly,
+        // BOUNDED at ZORT_WAYBILL_DETAIL_MAX per pull — a detail read is one
+        // call per order, and the account is metered at 50,000/day.
+        let detailReads = 0;
+        for (const c of noneOnList) {
+          if (detailReads >= ZORT_WAYBILL_DETAIL_MAX) break;
+          if (!c.id) continue;
+          detailReads++;
+          try {
+            const det = await zortApi.getOrderDetail(store, c.id);
+            const t = zortTracking(det);
+            if (t) { fill(c.num, t, 'chase-detail'); continue; }
+            // STILL NOTHING. Two very different situations, and the trail must
+            // tell them apart: the channel has not issued a number yet (normal,
+            // wait), or it has and we cannot see it under any name we know
+            // (our bug, and the key names are the evidence to fix it with).
+            const keys = [...new Set([...(c.keys || []), ...zortTrackingKeysSeen(det)])];
+            logAudit('sync_waybill_unavailable', { order: c.num, storeId: store.id,
+              hubStatus: c.status || '', keysSeen: keys.length ? keys : undefined });
+            waybillUnavailable.push({ order: c.num, hubStatus: c.status || '', keysSeen: keys });
+          } catch (e) {
+            console.warn('[zort waybill detail]', c.num, e.message);
+          }
+        }
+        // An order the hub did not return AT ALL is its own case — the number we
+        // hold is not one it answers to, which no amount of retrying will fix.
+        for (const num of wanted) {
+          if (!seen.has(num)) waybillNotOnHub.push(num);
         }
         waybillChased = wanted.length;
       }
@@ -19857,6 +19948,9 @@ async function pullZortStore(db, store, opts = {}) {
   // would otherwise overwrite it with "fetched 1" and hide the real picture.
   const _result = { at: new Date().toISOString(), fetched, created: orders.length, skippedExisting, skippedVoid, updatedTracking,
                        waybillChased,
+                       waybillUnavailable: waybillUnavailable.slice(0, 25),
+                       waybillUnavailableCount: waybillUnavailable.length,
+                       waybillNotOnHub: waybillNotOnHub.slice(0, 25),
                        collectionsClosed, collectionConflicts,
                        // Parcels the courier brought back or could not ship.
                        hubExceptions: hubExceptions.slice(0, 50),
@@ -20162,7 +20256,7 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
     if (!String(ord.waybill_number || '').trim()) {
       try {
         const d = await zortApi.getOrderDetail(store, ord.zort_id);
-        const t = String(d?.trackingno || d?.order?.trackingno || d?.trackingnumber || d?.tracking_no || '').trim();
+        const t = zortTracking(d);
         if (t) {
           const db2 = readDb();
           const f3 = lazadaFindOrder(db2, orderNumber, '');
@@ -20930,7 +21024,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
       const nowStatus = await zortHubStatus(store, entry.zortId);
       if (nowStatus && nowStatus !== 'pending') {
         const detail = rts?.detail || rts?.Detail || null;
-        const tracking = String(detail?.trackingno || detail?.trackingNo || '').trim();
+        const tracking = zortTracking(detail);
         const link = String(detail?.link || detail?.Link || '').trim();
         logAudit('sync_rts_at_intake', {
           order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
@@ -20997,7 +21091,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
   }
   if (entry.kind === 'tracking') {
     const d = await zortApi.getOrderDetail(store, entry.zortId);
-    const t = String(d?.trackingno || d?.order?.trackingno || d?.trackingnumber || d?.tracking_no || '').trim();
+    const t = zortTracking(d);
     if (!t) {
       const e = new Error('Tracking not assigned yet');
       e.notReady = true;   // flat retry, same treatment as a label that isn't ready
@@ -21130,7 +21224,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
         const st = f.batch.orderStates?.[f.ord.order_number];
         if (st) { st.zort_pushed_at = new Date().toISOString(); st.zort_push_action = entry.action; }
         // Backfill the tracking number off the RTS response if we never had it.
-        const rtsTracking = String(rtsDetail?.trackingno || rtsDetail?.trackingNo || '').trim();
+        const rtsTracking = zortTracking(rtsDetail);
         if (rtsTracking && !String(f.ord.waybill_number || '').trim()) {
           f.ord.waybill_number = rtsTracking;
           logAudit('sync_waybill_backfilled', { order: entry.orderNumber, tracking: rtsTracking, storeId: store.id, via: 'rts-response' });
@@ -21144,7 +21238,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
       const link = String(rtsDetail?.link || rtsDetail?.Link || '').trim();
       enqueueZortLabel(db, store.id, {
         orderNumber: entry.orderNumber, zortId: entry.zortId,
-        tracking: entry.tracking || String(rtsDetail?.trackingno || '').trim(),
+        tracking: entry.tracking || zortTracking(rtsDetail),
         labelUrl: /^https?:\/\//i.test(link) ? link : undefined,
       });
     }
@@ -21934,7 +22028,7 @@ app.post('/api/master/zort/stores/:id/cross-check', async (req, res) => {
         hub.set(String(z.number || '').trim(), {
           status: zortStatusWord(z.status),
           integration_status: String(z.integrationStatus || '').trim(),
-          tracking: String(z.trackingno || '').trim(),
+          tracking: zortTracking(z),
           success_date: z.successDateString || '',
         });
       }
@@ -22045,7 +22139,7 @@ app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) 
     else would = 'import would bring it in on the next pull';
     return { number: n, apiReturns: true, inIdealOne: !!here, ourStatus: hereStatus,
              zortStatus: stw || String(z.status || ''), zortId: z.id,
-             tracking: String(z.trackingno || '').trim(), channel,
+             tracking: zortTracking(z), channel,
              client: att.client || '', attributedVia: att.via || '',
              lines: (z.list || z.orderlist || []).length,
              foundAs,
