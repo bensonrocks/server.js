@@ -1965,45 +1965,45 @@ anywhere in the download, to see which products or how many of each**. The
 Cancelled sheet is the worst case: it is the list a client re-places somewhere
 else, and a piece count cannot be re-placed.
 
-- **ONE LINE SHEET PER ORDER SHEET** — `Order lines` for the Orders tab,
-  `Cancelled lines` for the Cancelled tab. Each carries order no, order date,
-  status, **SKU, Description, Quantity**, waybill, PO, completed.
-  - The first cut put BOTH on one `Order lines` sheet with a Status column
-    telling them apart. **A client reading it caught that** (John Tang, MHM):
-    the workbook's own convention is that Orders EXCLUDES cancelled and
-    Cancelled holds them, so a mixed line sheet is inconsistent with the file
-    it sits in — and anyone summing the Quantity column without noticing the
-    Status column adds shipped and cancelled together and gets a wrong figure
-    **silently**, which is the worst way to get one. He was right.
-  - Now the Quantity column of `Order lines` totals the Orders sheet's Pieces
-    exactly (asserted, whole-column), so the sheet total is a real number.
-  - `Cancelled lines` is what a client re-places elsewhere, which is why it
-    needs the description and quantity and not just a comma list of codes.
-- **THE ORDER-LEVEL SHEETS KEEP THEIR SHAPE.** Exploding Orders into one row
-  per SKU would change what every figure on it means to anyone already
-  counting rows. It stays one row per order and points at the new sheet;
-  asserted, along with the two reconciling (each order's lines add up to its
-  Pieces figure — a line sheet that disagrees with the total is worse than
-  none, because the client has to pick one).
-- **IT RIDES WITH ORDERS, it is not its own download** (`extraSheets` on
-  `/api/portal/export/:kind`). A separate kind would need its own
-  `PORTAL_REPORTS` entry, and forgetting that is precisely how a download
-  switched off on screen stays reachable by URL. Asserted both ways: with
-  Orders & movements off the Orders download 403s, and there is no
-  `order-lines` URL to slip through.
-- **ONE BUILDER, `portalOrderSheetRows()`.** The combined workbook and the two
-  standalone downloads each had their own copy of the same loop — the
-  workbook's comment claimed they shared code and they did not, which is how a
-  column added to one could silently miss the others. Asserted: the workbook's
-  Orders tab and the standalone download come out identical.
-- The catalogue's wording wins for the description (`description ||
-  source_description`), so a line is never left as a bare code.
+- **TWO SHEETS, NOT FOUR** — per the user: *"Order one sheet, Cancelled order
+  one sheet"*. The per-SKU detail is IN the order sheets, one row per order ×
+  SKU with the order's own columns repeated down its lines. Standard flat
+  shape: it pivots and filters in Excel without anyone joining two tabs by
+  hand.
+  - **THE ORDER-LEVEL `Lines` AND `Pieces` COLUMNS ARE GONE, deliberately.** A
+    row is no longer an order, so repeating an order's total on each of its
+    rows would make that column sum to a multiplied figure — a wrong number
+    arrived at silently, which is the exact trap this whole thread was about.
+    Instead the sheet says, in words at the top: sum **Quantity** for pieces,
+    count **distinct Order no** for orders. Asserted: the Quantity column
+    totals what the portal SCREEN reports for the same orders (55 vs 55), and
+    the distinct order count matches too.
+  - **CANCELLED WORK KEEPS ITS OWN SHEET AND IS NEVER MIXED IN.** Raised by a
+    client reading an earlier version (John Tang, MHM) and right: the workbook
+    already separates them at order level, and summing a mixed Quantity column
+    adds shipped and cancelled together with nothing saying so. Asserted both
+    ways, on the standalone download and inside the workbook.
+  - The Cancelled sheet's old comma-jammed `SKUs` cell is replaced by real
+    SKU / Description / Quantity columns — it is the list a client re-places
+    somewhere else, and a comma list of codes cannot be re-placed.
+  - **AN ORDER WITH NO USABLE LINES STILL GETS A ROW** (blank SKU, "(no product
+    lines on this order)"). Flattening onto the lines would otherwise make such
+    an order vanish from the client's report entirely, which is a worse fault
+    than a blank cell.
+  - **ONE BUILDER, `portalOrderSheetRows()`.** The combined workbook and the two
+    standalone downloads each had their own copy of the same loop — the
+    workbook's comment claimed they shared code and they did not, which is how a
+    column added to one could silently miss the others. Asserted: the workbook's
+    tabs and the standalone downloads come out identical.
+  - The catalogue's wording wins for the description (`description ||
+    source_description`), so a line is never left as a bare code.
 
-Verified 32 API checks against a client carrying BOTH shipped and cancelled
-orders, plus 25 against a cancelled-only client. A check with no rows behind it
-is SKIPPED out loud rather than passing on an empty sheet — which is how the
-first run was caught proving nothing about one-row-per-order on a fixture that
-had no live orders in it.
+Verified 29 API checks against a client carrying BOTH shipped and cancelled
+orders, plus 21 against a cancelled-only client. A check with no rows behind it
+is SKIPPED out loud rather than passing on an empty sheet — which is how a
+vacuous pass was caught twice here, once on a fixture with no live orders and
+once when `/api/portal/orders` turned out to answer with a BARE ARRAY, so
+reading `.orders` off it silently compared nothing.
 
 **THE DOWNLOAD DIALOG NAMED THE WRONG REPORT** — found by screenshotting the
 real portal rather than by reading the code. `openDownload(kind)` set its title

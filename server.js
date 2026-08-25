@@ -5860,33 +5860,34 @@ function transactionSheets(client, data, from, to) {
 // not. A column added to one silently missed the others, which is exactly how
 // the gap below survived. One builder now feeds all three.
 //
-// WHAT WAS MISSING: every sheet was one row per ORDER carrying "Lines: 1,
-// Pieces: 3" and nothing else, so a client could see that an order shipped but
-// not WHAT shipped. `Order lines` is the per-SKU record — code, description
-// and quantity, for live and cancelled orders alike — and the order-level
-// sheets keep their one-row-per-order shape, which is what people count on.
-const PORTAL_ORDER_COLS = ['Order no', 'Date', 'Status', 'Lines', 'Pieces', 'Waybill', 'PO no',
-  'Completed (SGT)', 'Collection', 'Picked up (SGT)'];
+// TWO SHEETS, NOT FOUR — per the user: "Order one sheet, Cancelled order one
+// sheet". The per-SKU detail was on its own tab beside each order sheet; it is
+// now IN them, one row per order × SKU with the order's own columns repeated
+// down its lines. Standard flat shape: it pivots and filters in Excel without
+// anyone joining two tabs by hand.
+//
+// CONSEQUENCE, STATED RATHER THAN DISCOVERED: a row is no longer an order, so
+// the order-level `Lines` and `Pieces` columns are GONE. Keeping them would
+// repeat an order's total on each of its rows, and summing that column would
+// multiply every multi-line order — a wrong figure arrived at silently, which
+// is the trap the previous version was fixed for. Instead: sum **Quantity** for
+// pieces, count **distinct Order no** for orders, and the sheet says so.
+const PORTAL_ORDER_COLS = ['Order no', 'Date', 'Status', 'SKU', 'Description', 'Quantity',
+  'Waybill', 'PO no', 'Completed (SGT)', 'Collection', 'Picked up (SGT)'];
 const PORTAL_CANCELLED_COLS = ['Order no', 'Order date', 'Cancelled (SGT)', 'Reason', 'How',
-  'Lines', 'Pieces', 'SKUs', 'Waybill', 'Re-assigned to', 'Noted (SGT)'];
-const PORTAL_LINE_COLS = ['Order no', 'Order date', 'Status', 'SKU', 'Description', 'Quantity',
-  'Waybill', 'PO no', 'Completed (SGT)'];
+  'SKU', 'Description', 'Quantity', 'Waybill', 'Re-assigned to', 'Noted (SGT)'];
 
 function portalOrderSheetRows(db, clientNorm, { inRange, pol }) {
   const sgt = v => (v ? new Date(v).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '');
-  // ONE LINE SHEET PER ORDER SHEET, never a mixed one. The workbook's own
-  // convention is that Orders EXCLUDES cancelled and Cancelled holds them, so a
-  // line sheet carrying both is inconsistent with the file it sits in — and
-  // anyone summing the Quantity column without noticing the Status column adds
-  // shipped and cancelled together and gets a wrong figure silently, which is
-  // the worst way to get one. Raised by a client reading the first version.
-  const orders = [], cancelled = [], liveLines = [], cancelledLines = [];
+  // Cancelled work stays on its OWN sheet, never mixed in with what shipped —
+  // raised by a client reading an earlier version, and right: summing a mixed
+  // Quantity column adds shipped and cancelled together with nothing saying so.
+  const orders = [], cancelled = [];
   for (const b of db.batches || []) {
     if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
     for (const o of b.orders || []) {
       const st = b.orderStates?.[o.order_number] || {};
       const ol = o.lines || [];
-      const pcs = o.total_qty || ol.reduce((s, l) => s + (Number(l.qty) || 0), 0);
       const orderDate = sgDateStr(new Date(o.date || b.uploaded_at || Date.now()));
       const isCancelled = st.status === 'unprocessed';
       const when = isCancelled ? (cancelledAtOf(st) || o.date || b.uploaded_at)
@@ -5895,37 +5896,39 @@ function portalOrderSheetRows(db, clientNorm, { inRange, pol }) {
       const label = isCancelled
         ? (PORTAL_STATUS_LABEL.unprocessed || 'Cancelled')
         : (PORTAL_STATUS_LABEL[st.status || 'pending'] || PORTAL_STATUS_LABEL.pending);
+      const pk = isCancelled ? null : portalPickup(st, pol);
 
-      if (isCancelled) {
-        cancelled.push([o.order_number, orderDate, sgt(when),
-          st.unprocessed_reason || 'Not processed', st.auto_cancelled ? 'Automatic' : 'By arrangement',
-          ol.length, pcs, ol.map(l => l.sku).filter(Boolean).slice(0, 20).join(', '),
-          o.waybill_number || '', st.client_reassigned_to || '', sgt(st.client_reassigned_at)]);
-      } else {
-        const pk = portalPickup(st, pol);
-        orders.push([o.order_number, orderDate, label, ol.length, pcs,
-          o.waybill_number || '', o.po_number || '', sgt(st.endTime),
-          pk ? pk.label : '', sgt(pk?.at)]);
-      }
+      // AN ORDER WITH NO USABLE LINES STILL GETS A ROW. Flattening onto the
+      // lines would otherwise make such an order vanish from the client's
+      // report entirely, which is a worse fault than a blank SKU cell.
+      const lines = ol.filter(l => l && l.sku);
+      const cells = lines.length
+        // The catalogue's wording wins where there is one — the same name the
+        // client sees on their stock — with the file's own text behind it, so
+        // a line is never left as a bare code.
+        ? lines.map(l => [l.sku, l.description || l.source_description || '', Number(l.qty) || 0])
+        : [['', '(no product lines on this order)', Number(o.total_qty) || 0]];
 
-      // THE PER-SKU RECORD. The catalogue's wording wins where there is one —
-      // it is the same name the client sees on their stock — with the file's
-      // own text behind it, so a line is never left with a bare code.
-      for (const l of ol) {
-        if (!l || !l.sku) continue;
-        (isCancelled ? cancelledLines : liveLines).push([o.order_number, orderDate, label, l.sku,
-          l.description || l.source_description || '', Number(l.qty) || 0,
-          o.waybill_number || '', o.po_number || '', sgt(st.endTime)]);
+      for (const [sku, desc, qty] of cells) {
+        if (isCancelled) {
+          cancelled.push([o.order_number, orderDate, sgt(when),
+            st.unprocessed_reason || 'Not processed', st.auto_cancelled ? 'Automatic' : 'By arrangement',
+            sku, desc, qty,
+            o.waybill_number || '', st.client_reassigned_to || '', sgt(st.client_reassigned_at)]);
+        } else {
+          orders.push([o.order_number, orderDate, label, sku, desc, qty,
+            o.waybill_number || '', o.po_number || '', sgt(st.endTime),
+            pk ? pk.label : '', sgt(pk?.at)]);
+        }
       }
     }
   }
-  orders.sort((a, b) => String(b[1]).localeCompare(String(a[1])));
-  cancelled.sort((a, b) => String(b[2]).localeCompare(String(a[2])));
-  // Grouped by order, newest first, so the lines of one order stay together.
-  const byOrder = (a, b) => String(b[1]).localeCompare(String(a[1]))
-    || String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3]));
-  liveLines.sort(byOrder); cancelledLines.sort(byOrder);
-  return { orders, cancelled, liveLines, cancelledLines };
+  // Newest first, then grouped by order so one order's products stay together.
+  orders.sort((a, b) => String(b[1]).localeCompare(String(a[1]))
+    || String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3])));
+  cancelled.sort((a, b) => String(b[2]).localeCompare(String(a[2]))
+    || String(a[0]).localeCompare(String(b[0])) || String(a[5]).localeCompare(String(b[5])));
+  return { orders, cancelled };
 }
 
 // Office download — one client, date range, same sheets the client can pull.
@@ -6021,11 +6024,11 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
   const title = (d, dated = true) => [[`${client} — ${d}`],
     [dated ? `Period ${from} to ${to} (Singapore time)` : `Position as at ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT`],
     [`Generated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT`], []];
-  // `extraSheets` lets a kind add tabs alongside its main sheet — the per-SKU
-  // `Order lines` breakdown rides with Orders and Cancelled rather than
-  // becoming a separate download, so it needs no new visibility key and cannot
-  // be reachable by URL for a client whose Orders report is switched off.
-  let aoa, sheet, name, extraSheets = [];
+  // ONE SHEET PER DOWNLOAD. If a second tab is ever wanted here, it must ride
+  // with an existing kind rather than becoming its own — a new export kind
+  // needs its own PORTAL_REPORTS entry, and forgetting that is exactly how a
+  // download switched off on screen stays reachable by URL.
+  let aoa, sheet, name;
 
   if (kind === 'stock') {
     // Stock is a live position, not a period — no date filter applies.
@@ -6078,24 +6081,19 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
   } else if (kind === 'orders') {
     const built = portalOrderSheetRows(db, clientNorm, { inRange, pol: pickupPolicy(db) });
     aoa = [...title('Orders'),
-      ['One row per order. What was IN each order — SKU, description and quantity — is on the "Order lines" sheet.'],
+      ['One row per product on each order. Sum Quantity for pieces; count distinct Order no for orders.'],
+      ['Cancelled orders are not here — they are their own download.'],
       [], PORTAL_ORDER_COLS, ...built.orders];
     sheet = 'Orders'; name = 'Orders';
-    extraSheets = [{ name: 'Order lines', aoa: [...title('Order lines'),
-      ['One row per SKU on the orders above. Cancelled orders are NOT here — they are their own download.'],
-      [], PORTAL_LINE_COLS, ...built.liveLines] }];
   } else if (kind === 'cancelled') {
     // THE ORDERS WE DID NOT FULFIL — the list the client re-places elsewhere.
     // Carries WHY, whether it was automatic, and THEIR OWN note of where the
     // order went, so the sheet is a complete record without them re-keying it.
     const built = portalOrderSheetRows(db, clientNorm, { inRange, pol: pickupPolicy(db) });
     aoa = [...title('Cancelled orders'),
-      ['What was in each of these orders — SKU, description and quantity — is on the "Cancelled lines" sheet, so it can be re-placed without re-keying it.'],
+      ['One row per product on each cancelled order, so the list can be re-placed without re-keying it. Nothing here shipped.'],
       [], PORTAL_CANCELLED_COLS, ...built.cancelled];
     sheet = 'Cancelled'; name = 'Cancelled_orders';
-    extraSheets = [{ name: 'Cancelled lines', aoa: [...title('Cancelled order lines'),
-      ['One row per SKU on the cancelled orders above — nothing here shipped.'],
-      [], PORTAL_LINE_COLS, ...built.cancelledLines] }];
   } else if (kind === 'inbound') {
     const out = (db.inbound || [])
       .filter(r => String(r.client_name || '').trim().toLowerCase() === clientNorm)
@@ -6162,21 +6160,14 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     const wbR = XLSX.utils.book_new();
     const add = (nm, rows) => XLSX.utils.book_append_sheet(wbR, XLSX.utils.aoa_to_sheet(rows), nm);
     const built = portalOrderSheetRows(db, clientNorm, { inRange, pol: pickupPolicy(db) });
+    // ONE TAB EACH. The per-SKU detail is IN these sheets, not beside them.
     add('Orders', [...title('Orders'),
-      ['One row per order. What was IN each order is on the "Order lines" tab.'],
+      ['One row per product on each order. Sum Quantity for pieces; count distinct Order no for orders.'],
+      ['Cancelled orders are on the Cancelled tab, never mixed in here.'],
       [], PORTAL_ORDER_COLS, ...built.orders]);
-    // WHAT ACTUALLY MOVED, per SKU. "Lines: 1, Pieces: 3" says an order shipped
-    // without saying what shipped, which is the one thing a client cannot look
-    // up anywhere else.
-    add('Order lines', [...title('Order lines'),
-      ['One row per SKU on the Orders tab. Cancelled orders are on their own two tabs.'],
-      [], PORTAL_LINE_COLS, ...built.liveLines]);
     add('Cancelled', [...title('Cancelled orders'),
-      ['What was in each of these orders is on the "Cancelled lines" tab.'],
+      ['One row per product on each cancelled order, so the list can be re-placed without re-keying it. Nothing here shipped.'],
       [], PORTAL_CANCELLED_COLS, ...built.cancelled]);
-    add('Cancelled lines', [...title('Cancelled order lines'),
-      ['One row per SKU on the Cancelled tab — nothing here shipped.'],
-      [], PORTAL_LINE_COLS, ...built.cancelledLines]);
     try {
       const tx = computeTransactions(db, client, { from, to });
       for (const sh of transactionSheets(client, tx, from, to)) {
@@ -6195,9 +6186,6 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), sheet);
-  for (const sh of extraSheets) {
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sh.aoa), String(sh.name).slice(0, 28));
-  }
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_${name}_${sgDateStr()}.xlsx"`);
