@@ -5853,6 +5853,74 @@ function transactionSheets(client, data, from, to) {
   ];
 }
 
+// ── THE CLIENT'S ORDER SHEETS, BUILT ONCE ───────────────────────────────────
+// The combined "Orders & movements" workbook and the standalone Orders and
+// Cancelled downloads each built these rows from their own copy of the same
+// loop — the comment on the workbook claimed they shared code, and they did
+// not. A column added to one silently missed the others, which is exactly how
+// the gap below survived. One builder now feeds all three.
+//
+// WHAT WAS MISSING: every sheet was one row per ORDER carrying "Lines: 1,
+// Pieces: 3" and nothing else, so a client could see that an order shipped but
+// not WHAT shipped. `Order lines` is the per-SKU record — code, description
+// and quantity, for live and cancelled orders alike — and the order-level
+// sheets keep their one-row-per-order shape, which is what people count on.
+const PORTAL_ORDER_COLS = ['Order no', 'Date', 'Status', 'Lines', 'Pieces', 'Waybill', 'PO no',
+  'Completed (SGT)', 'Collection', 'Picked up (SGT)'];
+const PORTAL_CANCELLED_COLS = ['Order no', 'Order date', 'Cancelled (SGT)', 'Reason', 'How',
+  'Lines', 'Pieces', 'SKUs', 'Waybill', 'Re-assigned to', 'Noted (SGT)'];
+const PORTAL_LINE_COLS = ['Order no', 'Order date', 'Status', 'SKU', 'Description', 'Quantity',
+  'Waybill', 'PO no', 'Completed (SGT)'];
+
+function portalOrderSheetRows(db, clientNorm, { inRange, pol }) {
+  const sgt = v => (v ? new Date(v).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '');
+  const orders = [], cancelled = [], lines = [];
+  for (const b of db.batches || []) {
+    if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
+    for (const o of b.orders || []) {
+      const st = b.orderStates?.[o.order_number] || {};
+      const ol = o.lines || [];
+      const pcs = o.total_qty || ol.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+      const orderDate = sgDateStr(new Date(o.date || b.uploaded_at || Date.now()));
+      const isCancelled = st.status === 'unprocessed';
+      const when = isCancelled ? (cancelledAtOf(st) || o.date || b.uploaded_at)
+                               : (st.endTime || o.date || b.uploaded_at);
+      if (!inRange(when)) continue;
+      const label = isCancelled
+        ? (PORTAL_STATUS_LABEL.unprocessed || 'Cancelled')
+        : (PORTAL_STATUS_LABEL[st.status || 'pending'] || PORTAL_STATUS_LABEL.pending);
+
+      if (isCancelled) {
+        cancelled.push([o.order_number, orderDate, sgt(when),
+          st.unprocessed_reason || 'Not processed', st.auto_cancelled ? 'Automatic' : 'By arrangement',
+          ol.length, pcs, ol.map(l => l.sku).filter(Boolean).slice(0, 20).join(', '),
+          o.waybill_number || '', st.client_reassigned_to || '', sgt(st.client_reassigned_at)]);
+      } else {
+        const pk = portalPickup(st, pol);
+        orders.push([o.order_number, orderDate, label, ol.length, pcs,
+          o.waybill_number || '', o.po_number || '', sgt(st.endTime),
+          pk ? pk.label : '', sgt(pk?.at)]);
+      }
+
+      // THE PER-SKU RECORD. The catalogue's wording wins where there is one —
+      // it is the same name the client sees on their stock — with the file's
+      // own text behind it, so a line is never left with a bare code.
+      for (const l of ol) {
+        if (!l || !l.sku) continue;
+        lines.push([o.order_number, orderDate, label, l.sku,
+          l.description || l.source_description || '', Number(l.qty) || 0,
+          o.waybill_number || '', o.po_number || '', sgt(st.endTime)]);
+      }
+    }
+  }
+  orders.sort((a, b) => String(b[1]).localeCompare(String(a[1])));
+  cancelled.sort((a, b) => String(b[2]).localeCompare(String(a[2])));
+  // Grouped by order, newest first, so the lines of one order stay together.
+  lines.sort((a, b) => String(b[1]).localeCompare(String(a[1]))
+    || String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3])));
+  return { orders, cancelled, lines };
+}
+
 // Office download — one client, date range, same sheets the client can pull.
 app.get('/api/transactions/export', (req, res) => {
   const client = String(req.query.client || '').trim();
@@ -5946,7 +6014,11 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
   const title = (d, dated = true) => [[`${client} — ${d}`],
     [dated ? `Period ${from} to ${to} (Singapore time)` : `Position as at ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT`],
     [`Generated ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' })} SGT`], []];
-  let aoa, sheet, name;
+  // `extraSheets` lets a kind add tabs alongside its main sheet — the per-SKU
+  // `Order lines` breakdown rides with Orders and Cancelled rather than
+  // becoming a separate download, so it needs no new visibility key and cannot
+  // be reachable by URL for a client whose Orders report is switched off.
+  let aoa, sheet, name, extraSheets = [];
 
   if (kind === 'stock') {
     // Stock is a live position, not a period — no date filter applies.
@@ -5997,57 +6069,26 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     ];
     sheet = 'Movements'; name = 'Stock_Movements';
   } else if (kind === 'orders') {
-    const _pol = pickupPolicy(db);
-    const out = [];
-    for (const b of db.batches || []) {
-      if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
-      for (const o of b.orders || []) {
-        const st = b.orderStates?.[o.order_number] || {};
-        const when = st.endTime || o.date || b.uploaded_at;
-        if (!inRange(when)) continue;
-        const pk = portalPickup(st, _pol);
-        out.push([o.order_number, sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
-          PORTAL_STATUS_LABEL[st.status || 'pending'] || PORTAL_STATUS_LABEL.pending,
-          (o.lines || []).length, o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
-          o.waybill_number || '', o.po_number || '',
-          st.endTime ? new Date(st.endTime).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',
-          pk ? pk.label : '',
-          pk?.at ? new Date(pk.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '']);
-      }
-    }
-    out.sort((a, b) => String(b[1]).localeCompare(String(a[1])));
-    aoa = [...title('Orders'), ['Order no', 'Date', 'Status', 'Lines', 'Pieces', 'Waybill', 'PO no', 'Completed (SGT)', 'Collection', 'Picked up (SGT)'], ...out];
+    const built = portalOrderSheetRows(db, clientNorm, { inRange, pol: pickupPolicy(db) });
+    aoa = [...title('Orders'),
+      ['One row per order. What was IN each order — SKU, description and quantity — is on the "Order lines" sheet.'],
+      [], PORTAL_ORDER_COLS, ...built.orders];
     sheet = 'Orders'; name = 'Orders';
+    extraSheets = [{ name: 'Order lines', aoa: [...title('Order lines'),
+      ['One row per SKU on each order, cancelled orders included — the Status column says which.'],
+      [], PORTAL_LINE_COLS, ...built.lines] }];
   } else if (kind === 'cancelled') {
     // THE ORDERS WE DID NOT FULFIL — the list the client re-places elsewhere.
     // Carries WHY, whether it was automatic, and THEIR OWN note of where the
     // order went, so the sheet is a complete record without them re-keying it.
-    const out = [];
-    for (const b of db.batches || []) {
-      if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
-      for (const o of b.orders || []) {
-        const st = b.orderStates?.[o.order_number] || {};
-        if (st.status !== 'unprocessed') continue;
-        const when = cancelledAtOf(st) || o.date || b.uploaded_at;
-        if (!inRange(when)) continue;
-        out.push([o.order_number,
-          sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
-          when ? new Date(when).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',
-          st.unprocessed_reason || 'Not processed',
-          st.auto_cancelled ? 'Automatic' : 'By arrangement',
-          (o.lines || []).length,
-          o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
-          (o.lines || []).map(l => l.sku).filter(Boolean).slice(0, 20).join(', '),
-          o.waybill_number || '',
-          st.client_reassigned_to || '',
-          st.client_reassigned_at ? new Date(st.client_reassigned_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '']);
-      }
-    }
-    out.sort((a, b) => String(b[2]).localeCompare(String(a[2])));
+    const built = portalOrderSheetRows(db, clientNorm, { inRange, pol: pickupPolicy(db) });
+    const cancelledNos = new Set(built.cancelled.map(r => r[0]));
     aoa = [...title('Cancelled orders'),
-      ['Order no', 'Order date', 'Cancelled (SGT)', 'Reason', 'How', 'Lines', 'Pieces', 'SKUs', 'Waybill', 'Re-assigned to', 'Noted (SGT)'],
-      ...out];
+      ['What was in each of these orders — SKU, description and quantity — is on the "Order lines" sheet, so it can be re-placed without re-keying it.'],
+      [], PORTAL_CANCELLED_COLS, ...built.cancelled];
     sheet = 'Cancelled'; name = 'Cancelled_orders';
+    extraSheets = [{ name: 'Order lines', aoa: [...title('Cancelled order lines'), [],
+      PORTAL_LINE_COLS, ...built.lines.filter(r => cancelledNos.has(r[0]))] }];
   } else if (kind === 'inbound') {
     const out = (db.inbound || [])
       .filter(r => String(r.client_name || '').trim().toLowerCase() === clientNorm)
@@ -6113,43 +6154,19 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
     // code as its standalone download, so nothing can drift between them.
     const wbR = XLSX.utils.book_new();
     const add = (nm, rows) => XLSX.utils.book_append_sheet(wbR, XLSX.utils.aoa_to_sheet(rows), nm);
-    const _pol = pickupPolicy(db);
-    const ordersOut = [], cancelledOut = [];
-    for (const b of db.batches || []) {
-      if (String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
-      for (const o of b.orders || []) {
-        const st = b.orderStates?.[o.order_number] || {};
-        const pcs = o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0);
-        if (st.status === 'unprocessed') {
-          const when = cancelledAtOf(st) || o.date || b.uploaded_at;
-          if (!inRange(when)) continue;
-          cancelledOut.push([o.order_number, sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
-            when ? new Date(when).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',
-            st.unprocessed_reason || 'Not processed', st.auto_cancelled ? 'Automatic' : 'By arrangement',
-            (o.lines || []).length, pcs,
-            (o.lines || []).map(l => l.sku).filter(Boolean).slice(0, 20).join(', '),
-            o.waybill_number || '', st.client_reassigned_to || '',
-            st.client_reassigned_at ? new Date(st.client_reassigned_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '']);
-          continue;
-        }
-        const when = st.endTime || o.date || b.uploaded_at;
-        if (!inRange(when)) continue;
-        const pk = portalPickup(st, _pol);
-        ordersOut.push([o.order_number, sgDateStr(new Date(o.date || b.uploaded_at || Date.now())),
-          PORTAL_STATUS_LABEL[st.status || 'pending'] || PORTAL_STATUS_LABEL.pending,
-          (o.lines || []).length, pcs, o.waybill_number || '', o.po_number || '',
-          st.endTime ? new Date(st.endTime).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '',
-          pk ? pk.label : '', pk?.at ? new Date(pk.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) : '']);
-      }
-    }
-    ordersOut.sort((a, b) => String(b[1]).localeCompare(String(a[1])));
-    cancelledOut.sort((a, b) => String(b[2]).localeCompare(String(a[2])));
+    const built = portalOrderSheetRows(db, clientNorm, { inRange, pol: pickupPolicy(db) });
     add('Orders', [...title('Orders'),
-      ['Order no', 'Date', 'Status', 'Lines', 'Pieces', 'Waybill', 'PO no', 'Completed (SGT)', 'Collection', 'Picked up (SGT)'],
-      ...ordersOut]);
+      ['One row per order. What was IN each order is on the "Order lines" tab.'],
+      [], PORTAL_ORDER_COLS, ...built.orders]);
+    // WHAT ACTUALLY MOVED, per SKU. "Lines: 1, Pieces: 3" says an order shipped
+    // without saying what shipped, which is the one thing a client cannot look
+    // up anywhere else.
+    add('Order lines', [...title('Order lines'),
+      ['One row per SKU on each order, cancelled orders included — the Status column says which.'],
+      [], PORTAL_LINE_COLS, ...built.lines]);
     add('Cancelled', [...title('Cancelled orders'),
-      ['Order no', 'Order date', 'Cancelled (SGT)', 'Reason', 'How', 'Lines', 'Pieces', 'SKUs', 'Waybill', 'Re-assigned to', 'Noted (SGT)'],
-      ...cancelledOut]);
+      ['What was in each of these orders is on the "Order lines" tab.'],
+      [], PORTAL_CANCELLED_COLS, ...built.cancelled]);
     try {
       const tx = computeTransactions(db, client, { from, to });
       for (const sh of transactionSheets(client, tx, from, to)) {
@@ -6168,6 +6185,9 @@ app.get('/api/portal/export/:kind', requirePortalAuthMiddleware, (req, res) => {
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), sheet);
+  for (const sh of extraSheets) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sh.aoa), String(sh.name).slice(0, 28));
+  }
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${client.replace(/[^A-Za-z0-9_-]+/g, '_')}_${name}_${sgDateStr()}.xlsx"`);

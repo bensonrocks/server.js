@@ -1955,6 +1955,50 @@ question: which sections that login's portal carries at all.
     configuration nobody can reason about later. The row summary counts them
     too, or a login with Reports "on" and three of four downloads gone would
     read as unrestricted.
+
+### The report has to say WHAT moved, not just that something did
+
+Per the user: *"movement report to include SKUs, description and quantity"*.
+Orders and Cancelled were **one row per order** — "Lines: 1, Pieces: 3" and
+nothing else — so a client could see that an order shipped and had **no way,
+anywhere in the download, to see which products or how many of each**. The
+Cancelled sheet is the worst case: it is the list a client re-places somewhere
+else, and a piece count cannot be re-placed.
+
+- **`Order lines`** — one row per order × SKU: order no, order date, status,
+  **SKU, Description, Quantity**, waybill, PO, completed. Cancelled orders are
+  included and told apart by the Status column, because "what was in the order
+  we did not fulfil" is exactly the question that sheet exists to answer.
+- **THE ORDER-LEVEL SHEETS KEEP THEIR SHAPE.** Exploding Orders into one row
+  per SKU would change what every figure on it means to anyone already
+  counting rows. It stays one row per order and points at the new sheet;
+  asserted, along with the two reconciling (each order's lines add up to its
+  Pieces figure — a line sheet that disagrees with the total is worse than
+  none, because the client has to pick one).
+- **IT RIDES WITH ORDERS, it is not its own download** (`extraSheets` on
+  `/api/portal/export/:kind`). A separate kind would need its own
+  `PORTAL_REPORTS` entry, and forgetting that is precisely how a download
+  switched off on screen stays reachable by URL. Asserted both ways: with
+  Orders & movements off the Orders download 403s, and there is no
+  `order-lines` URL to slip through.
+- **ONE BUILDER, `portalOrderSheetRows()`.** The combined workbook and the two
+  standalone downloads each had their own copy of the same loop — the
+  workbook's comment claimed they shared code and they did not, which is how a
+  column added to one could silently miss the others. Asserted: the workbook's
+  Orders tab and the standalone download come out identical.
+- The catalogue's wording wins for the description (`description ||
+  source_description`), so a line is never left as a bare code.
+
+Verified 22 API checks against a client with cancelled orders and 20 against
+one with live orders — the fixture splits the two cases, and a check with no
+rows behind it is SKIPPED out loud rather than passing on an empty sheet.
+
+TEST GOTCHA: `POST .../portal-users` with a name and no id creates a SECOND
+account, so a non-idempotent run left `mia-2`/`mia-3` behind — then logging in
+by NAME bound to one account while the visibility check wrote to another, and
+the refusal check "failed" against a perfectly good server. Reuse the login and
+sign in by **id**.
+
 - **ENFORCED IN THE ONE MIDDLEWARE EVERY PORTAL ROUTE GOES THROUGH.**
   `portalSectionForPath()` maps the request path to a section and
   `requirePortalAuthMiddleware` refuses it — so a route cannot be added that
