@@ -9521,6 +9521,13 @@
         ${itemsBlock}
         <div class="foot"><span>${esc(String(data.orderNumber))}</span><span>${
           new Date(data.printedAt || Date.now()).toLocaleString('en-GB', { hour12: false })}</span></div>
+        <div class="brand">
+          <img src="/icons/idealone-mark.png" alt="" />
+          <div>
+            <div class="bn">UNITED LOGISTICS AND DISTRIBUTION</div>
+            <div class="pb">powered by IdealOne</div>
+          </div>
+        </div>
       </div>`;
   }
 
@@ -9606,6 +9613,14 @@
           .pend { margin-top: 2.5mm; font-size: 11px; color: #333; border-top: 1px solid #000;
                   padding-top: 1.2mm; }
           .hint { margin-top: 3mm; font-size: 10px; color: #666; }
+          /* The brand block, per the user. The mark is same-origin, and the
+             print fires from window.onload, which waits for images — so the
+             logo is always on the page before the printer sees it. */
+          .brand { margin-top: 2mm; padding-top: 1.5mm; border-top: 1px solid #000;
+                   display: flex; align-items: center; justify-content: center; gap: 2mm; }
+          .brand img { height: 16px; width: auto; }
+          .brand .bn { font-size: 10px; font-weight: 800; letter-spacing: .6px; }
+          .brand .pb { font-size: 8px; color: #555; letter-spacing: .3px; }
           /* One label per page when several are printed in a run. */
           .lbl-page { page-break-after: always; }
           .lbl-page:last-of-type { page-break-after: auto; }
