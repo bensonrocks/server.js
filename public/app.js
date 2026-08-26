@@ -9117,12 +9117,12 @@
     order.cartonNum   = order.active_carton_num || 1;
     order.cartonCount = (order.cartons && order.cartons.length) ? order.cartons.length : 1;
     updateCartonBadge(order);
-    // Carton 1 gets labelled from the moment packing starts, not only once a
-    // split makes it necessary — a packer writes it the moment they grab the
-    // first box. Fires once per order; skipped entirely once already confirmed.
-    if (!cartonLabelConfirmed(order, 1)) {
-      showCartonLabelPrompt(`${order.order_number}-01`, 1);
-    }
+    // NO LABEL PROMPT AT ORDER-OPEN ANY MORE. A label printed before packing
+    // says "0 pcs in this carton" and cannot say "1 of X" — neither is known
+    // yet, and the floor read both as faults (Yvonne, betime). Per the user:
+    // close the carton, THEN print. Every box's label prints at COMPLETION,
+    // in one run, when the contents, the count and the total are all true.
+    // 🏷 and 🏷×N stay for anyone who wants a label mid-pick.
     renderItemsTable(order);
     updateProgress(order);
     startTimer(orderTimings[order.order_number]);
@@ -9315,24 +9315,10 @@
       updateCartonBadge(activeOrder);
       showFeedback(document.getElementById('itemScanFeedback'), 'success', `\u{1F4E6} Carton ${data.activeCartonNum} started`);
       focusActiveQty();
-      // Carton 1 is usually already labelled at order-start (see enterItemsPhase) —
-      // only prompt here if it genuinely hasn't been confirmed yet.
-      if (!cartonLabelConfirmed(activeOrder, closedNum)) {
-        await showCartonLabelPrompt(`${activeOrder.order_number}-${String(closedNum).padStart(2, '0')}`, closedNum);
-      }
-      // ── THE NEW BOX GETS ITS LABEL THE MOMENT IT IS OPENED ─────────────
-      // Same rule as carton 1 at order-start: the label goes on the box before
-      // it is packed. The old flow only ever prompted the carton being CLOSED
-      // — and carton 1 is already labelled by then, so on a multi-carton order
-      // NOTHING prompted carton 2 at all; its label existed only behind the 🏷
-      // button, which the floor read as "subsequent labels unable to print"
-      // (reported live). With this, the final carton is also labelled by the
-      // time the order completes, so the completion-time prompt stays the
-      // no-op it already was for single-carton orders.
-      if (!cartonLabelConfirmed(activeOrder, data.activeCartonNum)) {
-        await showCartonLabelPrompt(
-          `${activeOrder.order_number}-${String(data.activeCartonNum).padStart(2, '0')}`, data.activeCartonNum);
-      }
+      // NO LABEL PROMPTS HERE EITHER — a mid-order label cannot say "1 of X"
+      // because X is not yet a fact. Per the user (after the floor tried the
+      // print-at-open version): close the carton, then print. Every box's
+      // label prints at COMPLETION in one run — see doCompleteOrder.
     } catch (err) {
       showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
     } finally {
@@ -9630,6 +9616,29 @@
       return printCartonLabelDoc(cartonLabelBody(data), label, { silent });
     } catch (err) {
       if (!silent) alert(err.message);
+      return false;
+    }
+  }
+
+  // ── EVERY CARTON'S LABEL, IN ONE RUN AT COMPLETION ────────────────────────
+  // Per the user, after the floor tried the print-at-open version and rightly
+  // objected that it read "0 pcs" and could not say "1 of X": completion is
+  // the one moment when every fact a carton label carries is TRUE — the
+  // contents, the piece count, and "n OF m" (completion closes every carton
+  // and drops an empty trailing one, so m stops moving exactly here). One
+  // document, one print, one page per box.
+  async function printAllCartonLabels(orderNumber, count, { silent } = {}) {
+    try {
+      const bodies = [];
+      for (let n = 1; n <= Math.max(1, Number(count) || 1); n++) {
+        const resp = await fetch(`/api/scan/carton-slip/${encodeURIComponent(orderNumber)}?cartonNum=${n}`, { headers: hdrs() });
+        if (!resp.ok) continue;      // a dropped empty trailing carton 404s — skip, never abort the run
+        bodies.push(cartonLabelBody(await resp.json()));
+      }
+      if (!bodies.length) return false;
+      return printCartonLabelDoc(bodies.join(''), `${orderNumber} — carton labels`, { silent });
+    } catch (e) {
+      if (!silent) alert(e.message);
       return false;
     }
   }
@@ -10874,12 +10883,13 @@
 
         // Update matching transport record
         updateTransportRecordOnOrderCompletion(completedOrder);
-        // Show "SEAL FINAL CARTON" screen with the final carton label
-        const finalCartonNum = completedOrder.cartonCount || 1;
-        const finalLabel = `${completedOrder.order_number}-${String(finalCartonNum).padStart(2, '0')}`;
-        if (!cartonLabelConfirmed(completedOrder, finalCartonNum)) {
-          await showSealFinalCarton(finalLabel, finalCartonNum);
-        }
+        // ── THE CARTON LABELS PRINT NOW, when their facts exist ──────────
+        // Per the user (and Yvonne's report on the print-at-open version):
+        // close the carton, then print. Completion is when the contents, the
+        // piece counts and "n OF m" all become true, so every box's label —
+        // one page per carton — prints here in a single run. The old "SEAL
+        // FINAL CARTON" screen is replaced by the labels themselves.
+        await printAllCartonLabels(completedOrder.order_number, completedOrder.cartonCount || 1, { silent: true });
         closeScanOverlay();
         await refreshOrders();
         renderOrdersDash();

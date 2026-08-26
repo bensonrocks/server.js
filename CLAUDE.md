@@ -3152,15 +3152,21 @@ breaking the default.
   - GOTCHA: the prompt's any-key dismissal is CAPTURE-phase on `document`, so
     Enter on a focused Print button dismissed the prompt before the click ever
     fired. It now ignores keys whose target is inside the overlay.
-  - **EVERY BOX PRINTS AT THE MOMENT IT IS OPENED — including each NEW carton
-    from "+ New Carton".** Reported live (Yvonne, betime): "only the 1st carton
-    label can be printed, subsequent label unable to print". The prompt logic
-    only ever fired for the carton being CLOSED — and carton 1 is already
-    labelled at order-open by then, so on a multi-carton order NOTHING prompted
-    carton 2 at all; its label existed only behind the 🏷 button. `requestNewCarton`
-    now prompts (and auto-prints) the NEWLY ACTIVE carton too, which also means
-    the final carton is labelled before completion, keeping the completion-time
-    prompt the no-op it already was for single-box orders.
+  - **ALL CARTON LABELS PRINT AT COMPLETION, IN ONE RUN — nothing prints or
+    prompts during the pick.** This REVERSES the earlier print-at-open design,
+    per the user, after the floor tried it (Yvonne, betime): a label printed
+    before packing reads "0 pcs in this carton" and cannot say "1 of X",
+    because neither is a fact yet. Completion is the one moment every fact on
+    the label is true — the contents, the piece count, and "n OF m" (completion
+    closes every carton and drops an empty trailing one, so m stops moving
+    exactly there). `printAllCartonLabels()` fetches each carton's slip and
+    prints one document, one page per box, each with its own barcode, contents
+    and "n OF m". The at-open/at-close prompts and the "SEAL FINAL CARTON"
+    screen are gone; `showCartonLabelPrompt`/`showSealFinalCarton` remain as
+    dead definitions (the INBOUND flow has its own separate prompt pair, which
+    is untouched). 🏷 (reprint current) and 🏷×N (pre-print a strip) remain for
+    anyone who wants a label mid-pick. Do not resurrect print-at-open without
+    re-reading this paragraph: it was tried, and the floor was right.
   - **A FRESH PRINT IFRAME PER PRINT, never a rewritten one.** The print fires
     from the written document's `window.onload`, and whether `load` re-fires on
     a document.write into an already-loaded frame is exactly the kind of
@@ -3236,11 +3242,11 @@ breaking the default.
   labels each with its OWN barcode, all blank, none claiming a total, one per
   page — and the order still holds exactly one carton afterwards).
 
-  Verified 20 browser checks driving a real pick, plus 9 more on the
-  multi-carton print path: carton 1 prints at open, opening carton 2 prints
-  carton 2's OWN label and closes its prompt, a third box still prints (no
-  decay after the first), one print frame on the page, and 🏷 reprint still
-  fires afterwards. The pre-fix build fails 4 of the 9.
+  Verified 12 browser checks driving a real two-box pick end to end: nothing
+  prints or prompts at open or at + New Carton, completion fires ONE run with
+  one page per box, labelled -01/-02, each reading "CARTON n OF 2 · 3 pcs"
+  with its own contents table and barcode. (The earlier print-at-open suites
+  were superseded and updated with it.)
 
   TEST GOTCHA, cost three runs: resetting the order needs the server STOPPED
   first (a running one re-persists its in-memory db over the file) AND
