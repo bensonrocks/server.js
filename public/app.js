@@ -2617,6 +2617,7 @@
         <span id="ordersBulkCount" class="obb-count">0 selected</span>
         <button id="ordersBulkWave" class="btn-primary btn-sm" title="Create a wave pick from the selected orders — it appears in Wave Management like any other wave">&#127754; Create Wave</button>
         <button id="ordersBulkPrint" class="btn-secondary btn-sm" title="Print waybill/label for each selected order that has one">&#128438; Print Labels</button>
+        <button id="ordersBulkCartonLabels" class="btn-secondary btn-sm" title="Reprint the CARTON labels for the selected orders — every box, with its contents. Completed orders included: they print the final CTN n / m.">&#127991; Carton Labels</button>
         <button id="ordersBulkFulfil" class="btn-secondary btn-sm" title="Download an XLSX of what the selected orders (or the whole client filter + date range) can fulfil from current stock, and what is short">&#128202; Can-Fulfil Report</button>
         <button id="ordersBulkTxn" class="btn-secondary btn-sm" title="Download this client's transaction statement — everything in and out over the date range, with opening and closing balances">&#129534; Transactions</button>
         <button id="ordersBulkComplete" class="btn-secondary btn-sm" title="Complete the selected orders WITHOUT scanning — Administrator password required. Stock deducts and synced orders report back to their store exactly as a scanned completion would.">&#9989; Complete (skip scan)</button>
@@ -2810,6 +2811,18 @@
       reclBtn.textContent = `\u{21BA} Reclassify${doneSel.length ? ` (${doneSel.length})` : ''}`;
       reclBtn.classList.toggle('hidden', (currentUser?.role || '') === 'warehouse');
     }
+    // Carton labels reprint for ANY selected order, completed included — that
+    // is the point (the labels the pick printed left on the boxes; a re-ship
+    // or a dispute wants them again). Only archived orders are excluded: their
+    // batch is off the live db, so the carton-slip endpoint cannot see them.
+    const ctnBtn = document.getElementById('ordersBulkCartonLabels');
+    if (ctnBtn) {
+      const printable = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && !o.archived);
+      ctnBtn.disabled = printable.length === 0;
+      ctnBtn.textContent = `\u{1F3F7} Carton Labels${printable.length ? ` (${printable.length})` : ''}`;
+    }
     // "Create Wave" takes orders that still have picking to do and are not
     // already inside a live wave.
     const waveable = [...orderSelection]
@@ -2869,6 +2882,17 @@
         return;
       }
       openReclassifyModal(done.map(o => o.order_number));
+    });
+    // CARTON LABELS from the list — completed orders deliberately included.
+    document.getElementById('ordersBulkCartonLabels')?.addEventListener('click', async () => {
+      const btn = document.getElementById('ordersBulkCartonLabels');
+      const picked = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && !o.archived);
+      if (!picked.length) { alert('None of the selected orders can print — archived orders cannot.'); return; }
+      if (btn) btn.disabled = true;
+      try { await printCartonLabelsForOrders(picked.map(o => o.order_number)); }
+      finally { if (btn) btn.disabled = false; updateOrdersBulkBar(); }
     });
     document.getElementById('ordersBulkClear')?.addEventListener('click', () => {
       orderSelection.clear();
@@ -9721,6 +9745,49 @@
     } finally {
       if (btn) btn.disabled = false;
     }
+  }
+
+  // ── REPRINT CARTON LABELS FROM THE ORDERS LIST ───────────────────────────
+  // Per the user: select orders on the Orders tab — COMPLETED ones included —
+  // and get their carton labels again. The carton-slip endpoint deliberately
+  // never checks state.status, so a finished order reprints every box with
+  // its real contents and the final "CTN n / m"; an order still being packed
+  // prints what is true right now (carton number only, no total). One print
+  // run for the whole selection — fifty dialogs for fifty boxes would be
+  // unusable at a bench.
+  async function printCartonLabelsForOrders(orderNumbers) {
+    const bodies = [];
+    const failed = [];
+    for (const orderNumber of orderNumbers) {
+      try {
+        // The base call (no cartonNum) answers with the LAST real carton plus
+        // cartonCount; the earlier boxes are fetched by number.
+        const base = await fetch(`/api/scan/carton-slip/${encodeURIComponent(orderNumber)}`, { headers: hdrs() });
+        const last = await base.json();
+        if (!base.ok) { failed.push(`${orderNumber}: ${last.error || 'not found'}`); continue; }
+        const count = Number(last.cartonCount) || 1;
+        for (let num = 1; num <= count; num++) {
+          let data = last;
+          if (num !== Number(last.cartonNum)) {
+            const r = await fetch(`/api/scan/carton-slip/${encodeURIComponent(orderNumber)}?cartonNum=${num}`, { headers: hdrs() });
+            data = await r.json();
+            if (!r.ok) { failed.push(`${orderNumber} carton ${num}: ${data.error || 'not found'}`); continue; }
+          }
+          bodies.push(cartonLabelBody(data));
+        }
+      } catch (err) { failed.push(`${orderNumber}: ${err.message}`); }
+    }
+    if (!bodies.length) {
+      alert('No carton labels could be built.' + (failed.length ? `\n\n${failed.join('\n')}` : ''));
+      return;
+    }
+    // Confirm with the REAL numbers — a selection of 3 orders can be 14 boxes,
+    // and the person pressing print should know how much paper is coming.
+    if (!confirm(
+      `Print ${bodies.length} carton label${bodies.length === 1 ? '' : 's'} for ` +
+      `${orderNumbers.length} order${orderNumbers.length === 1 ? '' : 's'}?` +
+      (failed.length ? `\n\nCould not build:\n${failed.join('\n')}` : ''))) return;
+    printCartonLabelDoc(bodies.join(''), `${bodies.length} carton labels`);
   }
 
   async function printCartonSlip() {

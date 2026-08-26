@@ -3232,6 +3232,15 @@ breaking the default.
       it is opened — empty, with the order total on it — so nothing is
       invented. Capped at `PREPRINT_MAX` (20) so a fat finger cannot send 500
       pages, and the confirm names the exact ids first.
+  - **REPRINT FROM THE ORDERS LIST, COMPLETED INCLUDED** (🏷 Carton Labels on
+    the Orders bulk bar, `printCartonLabelsForOrders` in app.js). Per the user:
+    select orders on the Orders tab — completed ones included — and get their
+    carton labels again. Rides the carton-slip endpoint, which deliberately
+    never checks `state.status`: a done order reprints every box with its real
+    contents and the final "CTN n / m"; an open one prints what is true now
+    (number only). ONE print run for the whole selection with a confirm stating
+    the real label count first; archived orders are excluded (their batch is
+    off the live db, the endpoint 404s).
   - **ONE LABEL BODY, `cartonLabelBody(data)`.** The single print, the
     auto-print and the pre-print run all render through it, so a change to the
     label can never reach only some of them. The barcode `<svg>` went from an
