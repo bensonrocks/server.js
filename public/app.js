@@ -8370,6 +8370,17 @@
     return document.getElementById('refileClient').value !== ''
         && document.getElementById('refileReason').value.trim().length >= 6;
   }
+  // WHAT IS STILL MISSING, in words — this is what a tap on the locked button
+  // reports, and what the hint under the reason box counts down.
+  function _refileMissing() {
+    const missing = [];
+    if (!document.getElementById('refileClient').value) missing.push('pick the client it belongs to');
+    const len = document.getElementById('refileReason').value.trim().length;
+    if (len < 6) missing.push(len
+      ? `the reason needs at least 6 characters (${6 - len} more)`
+      : 'give a reason of at least 6 characters');
+    return missing;
+  }
   // Both events: a <select> is driven by `change` in older engines and the
   // textarea by `input`, and a button that stays dead reads as broken.
   ['refileClient', 'refileReason'].forEach(id => ['input', 'change'].forEach(ev =>
@@ -8377,7 +8388,35 @@
       const ok = _refileReady();
       document.getElementById('refileConfirmBtn').disabled = !ok;
       if (ok) document.getElementById('refileOrderError').classList.add('hidden');
+      // The reason rule, counted down live — "Wrong" is 5 characters, and a
+      // button that silently stays locked over one missing character was
+      // reported from the floor as "refile doesn't work".
+      const hint = document.getElementById('refileReasonHint');
+      if (hint) {
+        const len = document.getElementById('refileReason').value.trim().length;
+        if (len > 0 && len < 6) {
+          hint.textContent = `${6 - len} more character${6 - len === 1 ? '' : 's'} needed — say why it belongs there.`;
+          hint.style.color = '#d97706';
+        } else {
+          hint.textContent = 'At least 6 characters — say why it belongs there.';
+          hint.style.color = '';
+        }
+      }
     })));
+  // A DISABLED BUTTON SWALLOWS THE TAP, so nothing anywhere said WHY it did
+  // not fire. CSS lets the tap fall through to this wrapper
+  // (#refileConfirmBtn[disabled] { pointer-events: none }), which answers in
+  // words instead of silence.
+  document.getElementById('refileActions')?.addEventListener('click', (e) => {
+    if (e.target.closest('#refileCancelBtn')) return;
+    const btn = document.getElementById('refileConfirmBtn');
+    if (!btn.disabled) return;
+    const missing = _refileMissing();
+    if (!missing.length) return;
+    const err = document.getElementById('refileOrderError');
+    err.textContent = 'Before this can move: ' + missing.join(', and ') + '.';
+    err.classList.remove('hidden');
+  });
   document.getElementById('refileCancelBtn').addEventListener('click', () => {
     document.getElementById('refileOrderOverlay').classList.add('hidden');
     _refileTargets = null;

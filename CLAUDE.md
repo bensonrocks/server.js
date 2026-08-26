@@ -947,6 +947,16 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   - Admin or master; warehouse gets a real 403. Reason of 6+ characters, audited
     `order_refiled` with from/to/why/who. Transport jobs are deliberately NOT
     rewritten — their `clientName` is the CONSIGNEE, not the billing account.
+  - **THE 6-CHARACTER RULE HAS TO SAY SO ON THE SCREEN.** Reported live as
+    "refile doesn't work": the reason typed was "Wrong" (5 chars), the Refile
+    button only unlocks at 6, it had NO disabled styling (solid blue, looked
+    live), and a disabled control fires no events — so the tap did nothing in
+    total silence. Now: `#refileConfirmBtn[disabled]` is dimmed with
+    `pointer-events:none` so the tap falls through to `#refileActions`, which
+    answers in words ("the reason needs at least 6 characters (1 more)"), and
+    `#refileReasonHint` states the rule up front and counts down in amber
+    while short. Same trap exists anywhere else a button silently gates on
+    input length — check for it before shipping such a gate.
   - UI: 🔄 on the order row (admin, not-done) → `#refileOrderOverlay`. The client
     is a **PICKER fed by `/api/putaway/clients`, never free text** — a typed name
     is precisely how the phantom account appeared — and it never offers the

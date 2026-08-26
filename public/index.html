@@ -4261,9 +4261,13 @@
       <div class="form-group">
         <label>Reason <span class="cfg-req">*</span></label>
         <textarea id="refileReason" rows="2" placeholder="Why does this order belong to that client?" autocomplete="off"></textarea>
+        <!-- The rule stated UP FRONT, counting down live — a button that only
+             unlocks at 6 characters with nothing saying so reads as broken
+             (reported from a phone with a 5-character reason typed). -->
+        <div class="hint" id="refileReasonHint">At least 6 characters — say why it belongs there.</div>
       </div>
       <div id="refileOrderError" class="login-error hidden">Pick a client and give a reason.</div>
-      <div class="modal-actions" style="margin-top:1rem">
+      <div class="modal-actions" style="margin-top:1rem" id="refileActions">
         <button class="btn-secondary" id="refileCancelBtn">Cancel</button>
         <button class="btn-primary" id="refileConfirmBtn" disabled>&#128260; Refile</button>
       </div>
