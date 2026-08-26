@@ -3252,7 +3252,7 @@ breaking the default.
 
   Verified 14 browser checks driving a real THREE-box pick end to end —
   nothing at open; closing carton 1 auto-prints "CARTON 1 · 2 pcs" with its
-  own SKUs; closing carton 2 likewise; completion prints "CARTON 3 OF 3" and
+  own SKUs; closing carton 2 likewise; completion prints "CTN 3 / 3" (the short form, on the right) and
   only that one carries the total — plus 3 on a single-box order printing
   "1 OF 1" at completion with contents. (The superseded print-at-open and
   all-at-completion suites were updated alongside.)

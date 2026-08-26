@@ -9496,14 +9496,16 @@
     // behind it. Worse than saying nothing. The total is final only once the
     // order is done (completion closes every carton), so until then the
     // label states the carton number alone and the count is left off.
+    // Per the user: SHORT FORM, on the right — "CTN 1 / 2". The "/ total"
+    // still only appears once the total is final; the piece count lives in
+    // the quantity line below, stated once.
     const ctnText = data.cartonTotalFinal && Number(data.cartonCount) > 0
-      ? `CARTON ${data.cartonNum} OF ${data.cartonCount}`
-      : `CARTON ${data.cartonNum}`;
+      ? `CTN ${data.cartonNum} / ${data.cartonCount}`
+      : `CTN ${data.cartonNum}`;
     return `
       <div class="lbl-page">
         <div class="lbl">${esc(label)}</div>
-        <div class="ctn">&#128230; ${ctnText}${
-          inBox ? ` &middot; ${inBox} pc${inBox === 1 ? '' : 's'}` : ''}</div>
+        <div class="ctn">&#128230; ${ctnText}</div>
         <svg class="bc" data-code="${esc(label)}"></svg>
         ${refBlock}
         ${qtyBlock}
@@ -9552,7 +9554,7 @@
                  width: 100mm; color: #000; }
           .lbl { font-size: 30px; font-weight: 900; letter-spacing: .5px; line-height: 1.05;
                  word-break: break-all; }
-          .ctn { font-size: 15px; font-weight: 800; margin: 1mm 0 2mm; }
+          .ctn { font-size: 15px; font-weight: 800; margin: 1mm 0 2mm; text-align: right; }
           svg { width: 100%; height: 62px; }
           /* THE ORDER REFERENCE. Read across a bench, so it is the second
              biggest thing on the label after the carton id — and it carries
