@@ -9457,14 +9457,22 @@
     // pallet: which order this box belongs to and who it is for. The GI is
     // the reference actually printed on the client's paperwork, so it leads
     // when there is one and the order number stands in when there is not.
+    // Per the user: the GI reads on the LEFT; the order number (reference)
+    // and the customer/description read on the RIGHT — two columns, so the
+    // two identities face each other instead of stacking.
     const orderRef = data.issueNo || data.orderNumber;
+    const refRight = [
+      data.issueNo && data.orderNumber && data.issueNo !== data.orderNumber
+        ? `<div class="ref-alt">${esc(String(data.orderNumber))}</div>` : '',
+      data.customerName ? `<div class="ref-cust">${esc(String(data.customerName))}</div>` : '',
+    ].join('');
     const refBlock = `
       <div class="ref">
         <span class="cap">Order</span>
-        <div class="ref-no">${esc(String(orderRef))}</div>
-        ${data.issueNo && data.orderNumber && data.issueNo !== data.orderNumber
-          ? `<div class="ref-alt">${esc(String(data.orderNumber))}</div>` : ''}
-        ${data.customerName ? `<div class="ref-cust">${esc(String(data.customerName))}</div>` : ''}
+        <div class="ref-row">
+          <div class="ref-no">${esc(String(orderRef))}</div>
+          ${refRight ? `<div class="ref-right">${refRight}</div>` : ''}
+        </div>
       </div>`;
     // THE LABEL GOES ON THE BOX BEFORE IT IS PACKED, so at carton 1 there is
     // nothing in it yet. An empty "contents" table is noise on a label; the
@@ -9554,16 +9562,19 @@
                  width: 100mm; color: #000; }
           .lbl { font-size: 30px; font-weight: 900; letter-spacing: .5px; line-height: 1.05;
                  word-break: break-all; }
-          .ctn { font-size: 15px; font-weight: 800; margin: 1mm 0 2mm; text-align: right; }
+          /* CTN as large as the GI, per the user. */
+          .ctn { font-size: 26px; font-weight: 900; margin: 1mm 0 2mm; text-align: right; }
           svg { width: 100%; height: 62px; }
           /* THE ORDER REFERENCE. Read across a bench, so it is the second
              biggest thing on the label after the carton id — and it carries
              the customer, which is what a person matches the box against. */
-          /* Per the user: the order reference block reads on the RIGHT — the
-             carton id and barcode anchor the left, the order/customer the
-             right, so the two identities do not stack in one column. */
+          /* Per the user: GI on the LEFT, order number + customer on the
+             RIGHT — two columns facing each other rather than one stack. */
           .ref { margin-top: 2mm; border-top: 2px solid #000; border-bottom: 1px solid #000;
-                 padding: 1.5mm 0; text-align: right; }
+                 padding: 1.5mm 0; }
+          .ref-row { display: flex; justify-content: space-between; align-items: flex-start;
+                     gap: 4mm; }
+          .ref-right { text-align: right; min-width: 0; }
           .ref .cap { display: block; font-size: 8px; font-weight: 700; letter-spacing: 1.2px;
                       text-transform: uppercase; color: #444; }
           .ref-no { font-size: 26px; font-weight: 900; line-height: 1.08; word-break: break-all;
