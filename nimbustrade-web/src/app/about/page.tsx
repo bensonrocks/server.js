@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Credibility } from "@/components/sections/credibility";
 import { FaqJsonLd } from "@/components/structured-data";
+import { Reveal } from "@/components/reveal";
+import { staggerDelay } from "@/lib/motion";
 import {
   Accordion,
   AccordionItem,
@@ -43,7 +45,7 @@ export default function AboutPage() {
     <div>
       <FaqJsonLd faqs={FAQS} />
       <div className="mx-auto max-w-7xl px-6 py-20">
-        <div className="max-w-2xl">
+        <Reveal className="max-w-2xl">
           <span className="text-xs font-bold uppercase tracking-wider text-brand">About</span>
           <h1 className="mt-3 font-display text-5xl font-bold text-ink">
             One desk, coordinating the operating layer.
@@ -54,37 +56,45 @@ export default function AboutPage() {
             one customs broker, one set of reports. We run that coordination as a single desk, so
             our clients deal with one point of contact instead of five.
           </p>
-        </div>
+        </Reveal>
 
         <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/gallery/gallery-racking-aisle.jpg"
-            alt="Pallet racking inside a NimbusTrade-appointed warehouse"
-            className="aspect-[4/3] w-full rounded-lg border border-border object-cover"
-          />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/gallery/gallery-outbound-single.jpg"
-            alt="An outbound parcel ready for courier collection"
-            className="aspect-[4/3] w-full rounded-lg border border-border object-cover"
-          />
+          <Reveal delay={staggerDelay(0)} className="group overflow-hidden rounded-lg border border-border">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/gallery/gallery-racking-aisle.jpg"
+              alt="Pallet racking inside a NimbusTrade-appointed warehouse"
+              className="aspect-[4/3] w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+            />
+          </Reveal>
+          <Reveal delay={staggerDelay(1)} className="group overflow-hidden rounded-lg border border-border">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/gallery/gallery-outbound-single.jpg"
+              alt="An outbound parcel ready for courier collection"
+              className="aspect-[4/3] w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+            />
+          </Reveal>
         </div>
       </div>
 
       <Credibility />
 
       <section className="mx-auto max-w-4xl px-6 py-24">
-        <span className="text-xs font-bold uppercase tracking-wider text-brand">FAQ</span>
-        <h2 className="mt-3 font-display text-4xl font-bold text-ink">Common questions.</h2>
-        <Accordion type="single" collapsible className="mt-8">
-          {FAQS.map((item) => (
-            <AccordionItem key={item.q} value={item.q}>
-              <AccordionTrigger>{item.q}</AccordionTrigger>
-              <AccordionContent>{item.a}</AccordionContent>
-            </AccordionItem>
-          ))}
-        </Accordion>
+        <Reveal>
+          <span className="text-xs font-bold uppercase tracking-wider text-brand">FAQ</span>
+          <h2 className="mt-3 font-display text-4xl font-bold text-ink">Common questions.</h2>
+        </Reveal>
+        <Reveal delay={0.1}>
+          <Accordion type="single" collapsible className="mt-8">
+            {FAQS.map((item) => (
+              <AccordionItem key={item.q} value={item.q}>
+                <AccordionTrigger>{item.q}</AccordionTrigger>
+                <AccordionContent>{item.a}</AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
+        </Reveal>
       </section>
     </div>
   );
