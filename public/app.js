@@ -9557,8 +9557,11 @@
           /* THE ORDER REFERENCE. Read across a bench, so it is the second
              biggest thing on the label after the carton id — and it carries
              the customer, which is what a person matches the box against. */
+          /* Per the user: the order reference block reads on the RIGHT — the
+             carton id and barcode anchor the left, the order/customer the
+             right, so the two identities do not stack in one column. */
           .ref { margin-top: 2mm; border-top: 2px solid #000; border-bottom: 1px solid #000;
-                 padding: 1.5mm 0; }
+                 padding: 1.5mm 0; text-align: right; }
           .ref .cap { display: block; font-size: 8px; font-weight: 700; letter-spacing: 1.2px;
                       text-transform: uppercase; color: #444; }
           .ref-no { font-size: 26px; font-weight: 900; line-height: 1.08; word-break: break-all;
