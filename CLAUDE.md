@@ -3152,21 +3152,29 @@ breaking the default.
   - GOTCHA: the prompt's any-key dismissal is CAPTURE-phase on `document`, so
     Enter on a focused Print button dismissed the prompt before the click ever
     fired. It now ignores keys whose target is inside the overlay.
-  - **ALL CARTON LABELS PRINT AT COMPLETION, IN ONE RUN — nothing prints or
-    prompts during the pick.** This REVERSES the earlier print-at-open design,
-    per the user, after the floor tried it (Yvonne, betime): a label printed
-    before packing reads "0 pcs in this carton" and cannot say "1 of X",
-    because neither is a fact yet. Completion is the one moment every fact on
-    the label is true — the contents, the piece count, and "n OF m" (completion
-    closes every carton and drops an empty trailing one, so m stops moving
-    exactly there). `printAllCartonLabels()` fetches each carton's slip and
-    prints one document, one page per box, each with its own barcode, contents
-    and "n OF m". The at-open/at-close prompts and the "SEAL FINAL CARTON"
-    screen are gone; `showCartonLabelPrompt`/`showSealFinalCarton` remain as
-    dead definitions (the INBOUND flow has its own separate prompt pair, which
-    is untouched). 🏷 (reprint current) and 🏷×N (pre-print a strip) remain for
-    anyone who wants a label mid-pick. Do not resurrect print-at-open without
-    re-reading this paragraph: it was tried, and the floor was right.
+  - **EACH CARTON'S LABEL PRINTS WHEN THAT CARTON CLOSES.** The user's final
+    spec, verbatim: *"when individual carton closes, label to be out
+    automatically. ie: an order of 3 ctns — carton #01 will be printed when
+    user scans a few products then opens another carton. until the last, user
+    will complete the order, final carton label will be out as # of #."*
+    - `+ New Carton` closes the current box → its label auto-prints with its
+      REAL contents and piece count, carton number alone (**no "of X"** — the
+      total is not a fact mid-order, and the user accepted that only the final
+      label carries it).
+    - Completion closes the last box → its label auto-prints as **"n OF n"**.
+      Called with NO carton number, deliberately: completion drops an empty
+      trailing carton server-side, and a stale client-side count would 404 —
+      the slip endpoint's default is the last REAL box.
+    - A single-box order prints its one label at completion, "1 OF 1", with
+      contents.
+    HISTORY, so nobody relitigates it: print-at-OPEN was built first ("label
+    the box before packing") and the floor rejected it — a label before
+    packing reads "0 pcs" and can claim no total (Yvonne, betime). An
+    all-at-completion run was built next; the user then specified per-close.
+    Nothing prompts at order-open. `showCartonLabelPrompt`/`showSealFinalCarton`
+    are dead definitions (the INBOUND flow's own prompt pair is separate and
+    untouched). 🏷 (reprint current, with "OF m" once done) and 🏷×N
+    (pre-print a strip) remain.
   - **A FRESH PRINT IFRAME PER PRINT, never a rewritten one.** The print fires
     from the written document's `window.onload`, and whether `load` re-fires on
     a document.write into an already-loaded frame is exactly the kind of
@@ -3242,11 +3250,12 @@ breaking the default.
   labels each with its OWN barcode, all blank, none claiming a total, one per
   page — and the order still holds exactly one carton afterwards).
 
-  Verified 12 browser checks driving a real two-box pick end to end: nothing
-  prints or prompts at open or at + New Carton, completion fires ONE run with
-  one page per box, labelled -01/-02, each reading "CARTON n OF 2 · 3 pcs"
-  with its own contents table and barcode. (The earlier print-at-open suites
-  were superseded and updated with it.)
+  Verified 14 browser checks driving a real THREE-box pick end to end —
+  nothing at open; closing carton 1 auto-prints "CARTON 1 · 2 pcs" with its
+  own SKUs; closing carton 2 likewise; completion prints "CARTON 3 OF 3" and
+  only that one carries the total — plus 3 on a single-box order printing
+  "1 OF 1" at completion with contents. (The superseded print-at-open and
+  all-at-completion suites were updated alongside.)
 
   TEST GOTCHA, cost three runs: resetting the order needs the server STOPPED
   first (a running one re-persists its in-memory db over the file) AND

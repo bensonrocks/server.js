@@ -9315,10 +9315,13 @@
       updateCartonBadge(activeOrder);
       showFeedback(document.getElementById('itemScanFeedback'), 'success', `\u{1F4E6} Carton ${data.activeCartonNum} started`);
       focusActiveQty();
-      // NO LABEL PROMPTS HERE EITHER — a mid-order label cannot say "1 of X"
-      // because X is not yet a fact. Per the user (after the floor tried the
-      // print-at-open version): close the carton, then print. Every box's
-      // label prints at COMPLETION in one run — see doCompleteOrder.
+      // ── THE CLOSED BOX'S LABEL PRINTS NOW ──────────────────────────────
+      // Per the user, spelled out: "when individual carton closes, label to
+      // be out automatically" — carton 1 prints the moment + New Carton
+      // closes it, and so on; only the FINAL carton (printed at completion)
+      // carries "# of #", because the total is not a fact until then. The
+      // contents and piece count ARE facts at this moment, so they are on it.
+      printCartonLabel(closedNum, { silent: true }).catch(() => {});
     } catch (err) {
       showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
     } finally {
@@ -9616,29 +9619,6 @@
       return printCartonLabelDoc(cartonLabelBody(data), label, { silent });
     } catch (err) {
       if (!silent) alert(err.message);
-      return false;
-    }
-  }
-
-  // ── EVERY CARTON'S LABEL, IN ONE RUN AT COMPLETION ────────────────────────
-  // Per the user, after the floor tried the print-at-open version and rightly
-  // objected that it read "0 pcs" and could not say "1 of X": completion is
-  // the one moment when every fact a carton label carries is TRUE — the
-  // contents, the piece count, and "n OF m" (completion closes every carton
-  // and drops an empty trailing one, so m stops moving exactly here). One
-  // document, one print, one page per box.
-  async function printAllCartonLabels(orderNumber, count, { silent } = {}) {
-    try {
-      const bodies = [];
-      for (let n = 1; n <= Math.max(1, Number(count) || 1); n++) {
-        const resp = await fetch(`/api/scan/carton-slip/${encodeURIComponent(orderNumber)}?cartonNum=${n}`, { headers: hdrs() });
-        if (!resp.ok) continue;      // a dropped empty trailing carton 404s — skip, never abort the run
-        bodies.push(cartonLabelBody(await resp.json()));
-      }
-      if (!bodies.length) return false;
-      return printCartonLabelDoc(bodies.join(''), `${orderNumber} — carton labels`, { silent });
-    } catch (e) {
-      if (!silent) alert(e.message);
       return false;
     }
   }
@@ -10883,13 +10863,16 @@
 
         // Update matching transport record
         updateTransportRecordOnOrderCompletion(completedOrder);
-        // ── THE CARTON LABELS PRINT NOW, when their facts exist ──────────
-        // Per the user (and Yvonne's report on the print-at-open version):
-        // close the carton, then print. Completion is when the contents, the
-        // piece counts and "n OF m" all become true, so every box's label —
-        // one page per carton — prints here in a single run. The old "SEAL
-        // FINAL CARTON" screen is replaced by the labels themselves.
-        await printAllCartonLabels(completedOrder.order_number, completedOrder.cartonCount || 1, { silent: true });
+        // ── THE FINAL CARTON'S LABEL PRINTS NOW, as "# of #" ─────────────
+        // Per the user: each box's label already printed when that box was
+        // closed (+ New Carton); completion closes the LAST one, so its label
+        // prints here — and only this one can carry "n OF m", because the
+        // total stops moving exactly at completion. On a single-box order
+        // this is the only label, and it reads "1 OF 1" with the contents.
+        // NO carton number passed, deliberately: completion DROPS an empty
+        // trailing carton server-side, so a stale client-side count could
+        // 404 — the slip endpoint's default is the last REAL box.
+        await printCartonLabel(undefined, { silent: true });
         closeScanOverlay();
         await refreshOrders();
         renderOrdersDash();
