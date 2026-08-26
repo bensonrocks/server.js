@@ -9563,8 +9563,13 @@
                       text-transform: uppercase; color: #444; }
           .ref-no { font-size: 26px; font-weight: 900; line-height: 1.08; word-break: break-all;
                     margin-top: .3mm; }
-          .ref-alt { font-size: 11px; font-weight: 700; color: #444; word-break: break-all; }
-          .ref-cust { font-size: 17px; font-weight: 800; line-height: 1.15; margin-top: .8mm;
+          /* Per the user, from a photo of a printed label: the order number
+             and the customer read AS BIG AS the GI above them — all three are
+             read across a bench, and two small lines under one big one made
+             the small ones look like footnotes. */
+          .ref-alt { font-size: 26px; font-weight: 900; line-height: 1.08; word-break: break-all;
+                     margin-top: .3mm; }
+          .ref-cust { font-size: 26px; font-weight: 900; line-height: 1.08; margin-top: .5mm;
                       word-break: break-word; }
           .qty { display: flex; justify-content: space-between; align-items: baseline;
                  margin-top: 1.6mm; font-size: 13px; }
