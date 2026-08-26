@@ -2573,7 +2573,7 @@
 
       return `<tr class="orders-tr status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}" data-order="${esc(ord.order_number)}">
         <td class="ord-stripe-cell"></td>
-        ${isAdminView ? `<td class="ord-select-cell"><input type="checkbox" class="ord-select" data-order="${esc(ord.order_number)}" ${orderSelection.has(ord.order_number) ? 'checked' : ''} onclick="event.stopPropagation()" /></td>` : ''}
+        <td class="ord-select-cell"><input type="checkbox" class="ord-select" data-order="${esc(ord.order_number)}" ${orderSelection.has(ord.order_number) ? 'checked' : ''} onclick="event.stopPropagation()" /></td>
         <td class="col-order">
           <span class="ord-no-link">${esc(ord.order_number)}</span>${ord.api_source ? ' <span class="api-pill" title="Synced from the marketplace — status relays back to the platform; collection is closed by scanning the waybill, never by tick">API</span>' : ''}
           ${isAdminView && ord.idealscan_code ? `<div class="ord-jobcode"><code class="job-code">${esc(ord.idealscan_code)}</code></div>` : ''}
@@ -2626,7 +2626,12 @@
         <button id="ordersBulkNotOurs" class="btn-secondary btn-sm" title="Mark these as not ours to fulfil — the client ships them at their end. They leave the packers' list and, unlike deleting, they do NOT come back on the next sync.">&#9003; Not ours (client ships)</button>
         <button id="ordersBulkDelete" class="btn-danger btn-sm" title="Request deletion of the selected orders (Master approves)">&#128465; Request Deletion</button>
         <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
-      </div>` : '';
+      </div>` : `
+      <div id="ordersBulkBar" class="orders-bulk-bar hidden">
+        <span id="ordersBulkCount" class="obb-count">0 selected</span>
+        <button id="ordersBulkCartonLabels" class="btn-secondary btn-sm" title="Reprint the CARTON labels for the selected orders — every box, with its contents. Completed orders included: they print the final CTN n / m.">&#127991; Carton Labels</button>
+        <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
+      </div>`;
     document.getElementById('ordersDashList').innerHTML = `
       ${subTabsHTML}
       ${ordersColsToggleHTML()}
@@ -2636,7 +2641,7 @@
           <thead>
             <tr>
               <th style="width:4px;padding:0"></th>
-              ${isAdminView ? `<th class="ord-select-cell"><input type="checkbox" id="ordSelectAll" title="Select all shown" /></th>` : ''}
+              <th class="ord-select-cell"><input type="checkbox" id="ordSelectAll" title="Select all shown" /></th>
               <th data-col="orderno">ORDER NO${rz('orderno')}</th>
               <th class="col-client" data-col="client">CLIENT${rz('client')}</th>
               <th class="col-customer" data-col="customer">CUSTOMER${rz('customer')}</th>
@@ -2779,10 +2784,12 @@
     });
   }
 
-  // ── Orders mass-select + group actions (admin) ─────────────────────────────
+  // ── Orders mass-select + group actions ─────────────────────────────────────
   // Row checkboxes + a header "select all" feed orderSelection; a floating bar
-  // exposes group actions (bulk deletion-request, bulk label printing). Only
-  // rendered for admins (per-row delete is already admin-only).
+  // exposes group actions. Admins get the full bar; WAREHOUSE gets a reduced
+  // one carrying only 🏷 Carton Labels (per the user, the floor reprints
+  // labels too) — the admin actions are absent from their DOM, and the server
+  // enforces each role-gated route regardless.
   function updateOrdersBulkBar() {
     const bar = document.getElementById('ordersBulkBar');
     if (!bar) return;

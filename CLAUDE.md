@@ -3240,7 +3240,10 @@ breaking the default.
     contents and the final "CTN n / m"; an open one prints what is true now
     (number only). ONE print run for the whole selection with a confirm stating
     the real label count first; archived orders are excluded (their batch is
-    off the live db, the endpoint 404s).
+    off the live db, the endpoint 404s). **WAREHOUSE has this too** (per the
+    user): non-admin logins get the tick boxes and a REDUCED bulk bar carrying
+    ONLY 🏷 Carton Labels + Clear — the admin group actions are absent from
+    their DOM, and every role-gated route stays enforced server-side anyway.
   - **ONE LABEL BODY, `cartonLabelBody(data)`.** The single print, the
     auto-print and the pre-print run all render through it, so a change to the
     label can never reach only some of them. The barcode `<svg>` went from an
