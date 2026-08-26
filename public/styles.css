@@ -3752,3 +3752,6 @@ tr.pa-split-row td { border-top: 0; }
 /* The channel says the parcel came back or never got away. Red, because the
    order otherwise reads as shipped and that is the misreading to prevent. */
 .chip-hub-exception { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; font-weight: 700; }
+/* The marketplace cancelled an order the floor already worked — the loudest
+   chip on the row, because the next step it prevents is a physical handover. */
+.chip-platform-cancel { background: #dc2626; color: #fff; border: 1px solid #b91c1c; font-weight: 800; }

@@ -2917,6 +2917,9 @@ function globalOrdersWithState(keep) {
         // The courier brought it back, or never got it away. Recorded from the
         // hub; the order itself is never regressed by it.
         hub_exception:     state.hub_exception      || null,
+        // The MARKETPLACE cancelled it (integrationStatus) — on worked orders
+        // this is a warning to the floor, never a rollback.
+        platform_cancelled: state.platform_cancelled || null,
         // Cancelled by the client from their own portal. Kept for the trail,
         // filtered off the everyday screens by whoever reads this list.
         client_cancelled:  state.client_cancelled  || null,
@@ -19630,6 +19633,92 @@ function handleZortVoid(db, orderNumber, zortId, store) {
   } catch (e) { console.error('[zort] handleZortVoid error:', e.message); }
 }
 
+// ── THE MARKETPLACE CANCELLED IT AND ZORT'S OWN STATUS NEVER MOVED ──────────
+// Proven live (170217257037005, read back with 🔍 Find order, 26 Aug 2026):
+// Lazada showed the order cancelled on the 23rd, the floor packed it on the
+// 24th, and ZORT's own status word read "success" throughout — the hub does
+// NOT void its own record for a marketplace-side cancellation, so the void
+// handler above (which watches `status`) can never catch one. The
+// cancellation lives only in `integrationStatus`, the MARKETPLACE's side of
+// the record — the same two-facts distinction the docs section documents.
+//
+// TWO OUTCOMES, deliberately asymmetric in risk:
+//  - an UNTOUCHED pending order is cancelled exactly the way a hub void is
+//    (unprocessed + reservation released), because acting is cheap and the
+//    alternative is the floor packing a parcel no courier will ever take;
+//  - TOUCHED work (scanned / done / picked up) is NEVER regressed. It gets a
+//    loud red "⚠ Platform cancelled — do not ship" chip, its own audit event
+//    and a store-row count — a wrong warning costs a glance, a wrong
+//    un-completion costs real stock movements. Reclassify is the human's tool
+//    from there. This is the 170217257037005 case: already packed.
+//
+// The exact strings the channels put in integrationStatus are NOT verifiable
+// from here, so the match is loose (/\bcancel/i — "Cancelled", "canceled",
+// "In Cancel") and the WORD SEEN is recorded on the trail. A row carrying no
+// integrationStatus at all leaves this dormant — nothing is invented.
+const ZORT_MP_CANCEL_PAT = /\bcancel/i;
+function zortIntegrationWord(o) {
+  return String(o?.integrationStatus ?? o?.integrationstatus ?? o?.integration_status ?? '').trim();
+}
+function handleMarketplaceCancel(db, orderNumber, zortId, hubOrder, store) {
+  try {
+    const word = zortIntegrationWord(hubOrder);
+    if (!word || !ZORT_MP_CANCEL_PAT.test(word)) return '';
+    const f = lazadaFindOrder(db, orderNumber, '');
+    if (!f) return '';
+    // API-ONLY GATE, same as the collection close: no zort_id, or a different
+    // one, means this is not the order the hub is talking about.
+    if (!f.ord.zort_id) return '';
+    if (zortId && String(f.ord.zort_id) !== String(zortId)) return '';
+    const batch = f.batch, ord = f.ord;
+    // A FRESH IMPORT HAS NO STATE RECORD — create it, or the write silently
+    // does nothing (the standing lazy-state trap, hit five times now).
+    const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+    if (state.status === 'unprocessed') return '';       // already cancelled here — settled
+    // NEVER RE-STAMP the same word — a re-pull must be a no-op.
+    if (state.platform_cancelled && state.platform_cancelled.status === word) return '';
+    const now = new Date().toISOString();
+    const scannedTotal = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
+    const touched = state.status === 'done' || state.status === 'processing' || scannedTotal > 0 || state.pickup;
+    if (touched) {
+      state.platform_cancelled = { at: now, status: word, via: 'zort-pull', local_status: state.status, scanned: scannedTotal };
+      state.updated_at = now;
+      batch.orderStates[orderNumber] = state;
+      journalOrderState(orderNumber, state);
+      logAudit('sync_marketplace_cancel_conflict', {
+        order: orderNumber, client: batch.client_name || '', integrationStatus: word,
+        localStatus: state.status, scanned: scannedTotal, storeId: store?.id || '',
+      });
+      return 'conflict';
+    }
+    // Untouched → the same mechanics as a hub void, with the marketplace named.
+    state.status = 'unprocessed';
+    state.unprocessed_at = now;
+    state.unprocessed_reason = `Cancelled on the marketplace (its status there: "${word}")`;
+    state.platform_cancelled = { at: now, status: word, via: 'zort-pull', acted: 'cancelled' };
+    let releasedSkus = [];
+    if (batch.inventory_tracked && !state.inventory_released && inventory.available()) {
+      const cid = batch.inventory_client || invClientId(batch.client_name);
+      const items = (ord.lines || []).filter(l => l.sku).map(l => ({ sku: l.sku, qty: l.qty }));
+      try {
+        inventory.releaseOrder(cid, { id: orderNumber, items });
+        state.inventory_released = true;
+        releasedSkus = [...new Set(items.map(i => i.sku))];
+      } catch (e) { console.warn('[mp-cancel] release failed for', orderNumber, e.message); }
+    }
+    state.updated_at = now;
+    batch.orderStates[orderNumber] = state;
+    journalOrderState(orderNumber, state);
+    logAudit('sync_marketplace_cancelled', {
+      order: orderNumber, client: batch.client_name || '', integrationStatus: word,
+      released: releasedSkus.length, storeId: store?.id || '',
+    });
+    if (releasedSkus.length) zortNotifyStockChange(db, batch.inventory_client || invClientId(batch.client_name), releasedSkus);
+    return 'cancelled';
+  } catch (e) { console.error('[zort] handleMarketplaceCancel error:', e.message); }
+  return '';
+}
+
 // Pull new/updated orders from one store into a fresh batch.
 async function pullZortStore(db, store, opts = {}) {
   const existing = new Set();
@@ -19659,6 +19748,9 @@ async function pullZortStore(db, store, opts = {}) {
   // Parcels the hub says came back or failed to ship. Reported on the store
   // row, because a count of zero and a count of nine are different mornings.
   const hubExceptions = []; let hubExceptionConflicts = 0;
+  // Marketplace-side cancellations (integrationStatus) — ZORT's own status
+  // never moves for these, so they get their own counters.
+  let mpCancelled = 0; const mpCancelConflicts = [];
   const skippedByStatus = {}; const skippedHandledSample = [];
   let skippedClientOrders = 0; const skippedClientSample = [];
   // Clients this store must not bring in at all — they fulfil their own orders.
@@ -19694,6 +19786,13 @@ async function pullZortStore(db, store, opts = {}) {
       if (stw === 'voided') { skippedVoid++; handleZortVoid(db, number, o.id, store); continue; }
       if (existing.has(number)) {
         skippedExisting++;
+        // THE MARKETPLACE SAYS CANCELLED, whatever ZORT's own status says —
+        // see handleMarketplaceCancel. Checked FIRST: an order the channel
+        // has cancelled must not be arranged, chased for a label or closed
+        // as collected in the same breath.
+        const mpc = handleMarketplaceCancel(db, number, o.id, o, store);
+        if (mpc === 'cancelled') { mpCancelled++; continue; }
+        if (mpc === 'conflict') mpCancelConflicts.push({ order: number, status: zortIntegrationWord(o) });
         // LATE TRACKING NUMBERS: the platform generates the waybill MINUTES
         // after the order exists, so an order pulled promptly often arrives
         // before its tracking does — and skipping it here left the waybill
@@ -19778,6 +19877,15 @@ async function pullZortStore(db, store, opts = {}) {
       if (ZORT_IMPORT_SKIP_STATUSES.has(stw)) {
         skippedByStatus[stw] = (skippedByStatus[stw] || 0) + 1;
         if (skippedHandledSample.length < 20) skippedHandledSample.push({ order: number, status: stw });
+        continue;
+      }
+      // ARRIVING ALREADY CANCELLED ON THE MARKETPLACE — never import it as
+      // floor work. ZORT's own status may still read pending (it does not
+      // void its own record for a marketplace-side cancel), so this is its
+      // own check, not covered by the status skip above.
+      if (ZORT_MP_CANCEL_PAT.test(zortIntegrationWord(o))) {
+        skippedByStatus['marketplace-cancelled'] = (skippedByStatus['marketplace-cancelled'] || 0) + 1;
+        if (skippedHandledSample.length < 20) skippedHandledSample.push({ order: number, status: `marketplace: ${zortIntegrationWord(o)}` });
         continue;
       }
       const lines = o.list || o.orderlist || [];
@@ -20084,6 +20192,10 @@ async function pullZortStore(db, store, opts = {}) {
                        // Parcels the courier brought back or could not ship.
                        hubExceptions: hubExceptions.slice(0, 50),
                        hubExceptionCount: hubExceptions.length, hubExceptionConflicts,
+                       // Marketplace-side cancellations — auto-cancelled
+                       // untouched orders, and worked orders flagged instead.
+                       marketplaceCancelled: mpCancelled,
+                       marketplaceCancelConflicts: mpCancelConflicts.slice(0, 25),
                        skippedByStatus, skippedHandledSample,
                        skippedClientOrders, skippedClientSample, recordOnlyOrders,
                        clients: batchClients, needsAttribution: unsure.slice(0, 50) };
@@ -22268,6 +22380,9 @@ app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) 
     else would = 'import would bring it in on the next pull';
     return { number: n, apiReturns: true, inIdealOne: !!here, ourStatus: hereStatus,
              zortStatus: stw || String(z.status || ''), zortId: z.id,
+             // The MARKETPLACE's own status — a Lazada cancellation lives
+             // here and here only; ZORT's own word never moves for it.
+             integrationStatus: zortIntegrationWord(z),
              tracking: zortTracking(z), channel,
              client: att.client || '', attributedVia: att.via || '',
              lines: (z.list || z.orderlist || []).length,

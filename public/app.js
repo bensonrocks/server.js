@@ -2541,6 +2541,15 @@
         ord.hub_exception
           ? `<span class="chip chip-hub-exception" title="${esc(ord.hub_exception.label)} — the channel reported this on ${ord.hub_exception.at ? new Date(ord.hub_exception.at).toLocaleString('en-GB', { hour12: false }) : 'an unknown date'}.${ord.hub_exception.local_status !== 'done' ? '\nWe never shipped it from here, so this needs a look.' : '\nWhat comes back has to be counted in through Inbound — nothing has moved on stock.'}">${ord.hub_exception.status === 'returned' ? '&#8617;' : '&#9888;'} ${esc(ord.hub_exception.label)}${ord.hub_exception.local_status !== 'done' ? ' — never shipped here' : ''}</span>`
           : '',
+        // THE MARKETPLACE CANCELLED IT AND THE WORK HERE WAS ALREADY UNDER
+        // WAY. Never rolled back automatically — this chip is the warning
+        // that stops the parcel reaching the courier, and ↺ Reclassify is
+        // the human's tool from there. (An UNTOUCHED order is auto-cancelled
+        // instead and shows as unprocessed, so this chip never appears on
+        // one — and a cancelled row already says so, so it is skipped too.)
+        ord.platform_cancelled && ord.scan_status !== 'unprocessed'
+          ? `<span class="chip chip-platform-cancel" title="The MARKETPLACE cancelled this order — its status there reads &quot;${esc(ord.platform_cancelled.status)}&quot;, noticed ${new Date(ord.platform_cancelled.at).toLocaleString('en-GB', { hour12: false })}. ZORT's own status never moves for a marketplace-side cancel, so nothing here was rolled back.\nDo NOT hand this parcel to the courier. Check the channel, then ↺ Reclassify it to Cancelled (stock returns) once confirmed.">&#9888; Platform cancelled — do not ship</span>`
+          : '',
         // WHY this one is not being fulfilled. A list of cancelled orders
         // with no reason on them is a list of questions.
         ord.scan_status === 'unprocessed'
@@ -12763,7 +12772,11 @@
               const bits = [`${r.number}:`];
               if (!r.apiReturns) bits.push('NOT returned by the hub API.');
               else {
-                bits.push(`hub status "${r.zortStatus}"${r.tracking ? `, tracking ${r.tracking}` : ''}${r.channel ? `, channel ${r.channel}` : ''}.`);
+                // TWO STATUSES, both shown: ZORT's own word AND the
+                // marketplace's (integrationStatus). A Lazada cancellation
+                // lives only in the second — proven live on 170217257037005,
+                // where the hub read "success" while Lazada said cancelled.
+                bits.push(`hub status "${r.zortStatus}"${r.integrationStatus ? `, marketplace "${r.integrationStatus}"` : ''}${r.tracking ? `, tracking ${r.tracking}` : ''}${r.channel ? `, channel ${r.channel}` : ''}.`);
                 // WHICH CLIENT it files to is usually the answer when a fresh
                 // order does not appear — the two skip lists are keyed on it.
                 bits.push(`Files to "${r.client || '(could not attribute)'}"${r.attributedVia ? ` (by ${r.attributedVia})` : ''}, ${r.lines} line(s).`);

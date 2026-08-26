@@ -1457,6 +1457,52 @@ query value to PEEK was setting the status to `''`; the audit log is never wiped
 so every assertion needs a `T0` scope; and db.json persistence is deferred, so
 reading the file the instant a request returns can miss what it just wrote.
 
+### The MARKETPLACE cancelled it and ZORT's own status never moved (`handleMarketplaceCancel`)
+
+Proven live (170217257037005, read back with 🔍 Find order, 26 Aug 2026):
+Lazada showed the order cancelled on the 23rd, the floor packed it on the 24th,
+and ZORT's own status word read **"success"** throughout — the hub does NOT
+void its own record for a marketplace-side cancellation, so `handleZortVoid`
+(which watches ZORT's `status`) can never catch one. The cancellation lives
+only in **`integrationStatus`**, the marketplace's side of the record.
+
+- **TWO OUTCOMES, deliberately asymmetric in risk.** An UNTOUCHED pending
+  order is auto-cancelled exactly the way a hub void is (`unprocessed`,
+  `unprocessed_at` stamped, reason naming the marketplace and its own word,
+  reservation released) — acting is cheap, and the alternative is packing a
+  parcel no courier will take. TOUCHED work (scanned / done / picked up) is
+  **NEVER regressed**: `state.platform_cancelled` {at, status, via,
+  local_status, scanned} is stamped, a solid-red **"⚠ Platform cancelled — do
+  not ship"** chip appears on the office row (tooltip points at ↺ Reclassify),
+  and it is audited `sync_marketplace_cancel_conflict`. A wrong warning costs
+  a glance; a wrong un-completion costs real stock movements.
+- **An order ARRIVING already marketplace-cancelled is never imported** as
+  floor work — counted in `skippedByStatus['marketplace-cancelled']`.
+- **The match is deliberately loose** (`ZORT_MP_CANCEL_PAT` = `/\bcancel/i` —
+  "Cancelled"/"canceled"/"In Cancel") because the channels' exact strings are
+  not verifiable from the sandbox; the WORD SEEN is recorded on the trail, and
+  a row with no integrationStatus leaves the guard dormant. NOTE `in_cancel`
+  (buyer requested) currently matches too — same rule as the direct-webhook
+  handlers; if that proves too eager on live data, narrow it there.
+- Never re-stamps the same word (re-pulls are no-ops); the same lazy-state
+  trap as every hub writer (a fresh import has no state record). Checked FIRST
+  in the existing-order branch, so a cancelled order is not arranged / label-
+  chased / collection-closed in the same pass. Counted on
+  `lastResult.marketplaceCancelled` / `.marketplaceCancelConflicts`.
+- **🔍 Find order now prints BOTH statuses** (`hub status "success",
+  marketplace "canceled"`), so the next such report carries its own evidence.
+- The cross-check tool already showed `integration_status`; unchanged.
+
+Verified 20 API checks against a hub whose own status never moves (the
+already-cancelled arrival never imports; the untouched order cancels itself
+with the reason and day stamped; the COMPLETED one — hub reading "success",
+the exact reported shape — stays done and is flagged with the hub's own word;
+lowercase and camelCase field spellings both read; the control order with no
+integrationStatus untouched; both audit events present once; a re-pull
+re-stamps nothing and the trail does not grow; the lookup carries both words)
+plus a browser check that the chip renders solid red with the reclassify
+pointer in its tooltip.
+
 ### The parcel came back, or never got away (`noteHubException`)
 
 `returned` and `failed shipment` are in `ZORT_IMPORT_SKIP_STATUSES`, so they are
