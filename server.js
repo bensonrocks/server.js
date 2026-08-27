@@ -21525,6 +21525,18 @@ async function _zortSendOutboxEntry(db, store, entry) {
             const st = f && f.batch.orderStates?.[f.ord.order_number];
             if (st) { st.zort_pushed_at = new Date().toISOString(); st.zort_push_action = entry.action; }
           } catch (_) {}
+          // ALREADY RTS'd MEANS THE LABEL PROVABLY EXISTS — but the RTS
+          // response (and its detail.link) went to whoever pressed it, not to
+          // us. (Re)queue the label fetch so completion still ends with a
+          // label: the searching paths (label list → order files → shipment
+          // transactions) take it from here. This early exit used to skip the
+          // enqueue entirely, so an order RTS'd before scanning finished —
+          // the reported case — got no label at the one moment it is wanted.
+          if (store.labelSync) {
+            enqueueZortLabel(db, store.id, {
+              orderNumber: entry.orderNumber, zortId: entry.zortId, tracking: entry.tracking,
+            });
+          }
           return true;
         }
         if (!hubStatus || hubStatus === 'pending') {
