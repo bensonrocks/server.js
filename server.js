@@ -22315,6 +22315,35 @@ app.post('/api/master/zort/stores/:id/probe', async (req, res) => {
       steps.push({ name: 'GetShipmentLabels', what: `Is there a label for order ${hubId} yet?`,
         ok: false, error: String(e.message || e).slice(0, 400) });
     }
+    // ── 6. WHERE ELSE COULD THE LABEL LIVE? The updated v4 collection
+    // (2026-01-01) carries order-FILE endpoints — and the hub's own UI fetches
+    // a marketplace AWB via an async "Lazada Label" task, whose output is
+    // suspected to land on the order's file list — plus a Shipment namespace
+    // never read before. Raw replies printed; read-only, like everything here.
+    try {
+      const files = await zortApi.getOrderFiles(store, hubId);
+      steps.push({
+        name: 'GetOrderFiles', what: `Files attached to order ${hubId} (the marketplace-label task may store the AWB here)`,
+        ok: true, shape: `${files.length} file(s)`, sample: JSON.stringify(files).slice(0, 600),
+        verdict: files.length
+          ? 'The order carries files — a label-ish name here (label/awb/shipping) is fetchable and the label pull now tries it automatically.'
+          : 'No files on the order. If the marketplace label has been printed from ZORT’s UI and still nothing is here, the task stores it somewhere the API does not expose.',
+      });
+    } catch (e) {
+      steps.push({ name: 'GetOrderFiles', what: `Files attached to order ${hubId}`, ok: false, error: String(e.message || e).slice(0, 300) });
+    }
+    try {
+      const det2 = await zortApi.getOrderDetail(store, hubId).catch(() => null);
+      const trk = det2 ? zortTracking(det2) : '';
+      const tx = trk ? await zortApi.getShipmentTransactionRows(store, { trackingNos: [trk] }) : [];
+      steps.push({
+        name: 'GetShipmentTransactions',
+        what: trk ? `Shipment transactions for tracking ${trk}` : 'Shipment transactions (no tracking number on the order to query by)',
+        ok: true, shape: `${tx.length} row(s)`, sample: JSON.stringify(tx).slice(0, 600),
+      });
+    } catch (e) {
+      steps.push({ name: 'GetShipmentTransactions', what: 'Shipment transactions', ok: false, error: String(e.message || e).slice(0, 300) });
+    }
   }
 
   const listOk = steps.find(s => s.name === 'GetOrders')?.ok;

@@ -1737,6 +1737,28 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     Verified 8 checks against a mock answering with `shipmentlabellist` /
     `FormatType` / `FileData` (attaches; the old chain returned []) and one
     with no container at all (flagged, keys named, nothing invented).
+  - **THE MARKETPLACE AWB MAY NOT BE IN GetShipmentLabels AT ALL.** From the
+    user's ZORT screens (27 Aug 2026): the label for a marketplace order is
+    printed via a separate **Marketplace → "Print shipping label (PDF)"**
+    action whose Task Manager spawns async **"Lazada Label"** tasks — ZORT
+    fetches the AWB FROM Lazada on demand; no API endpoint triggers that task
+    (checked against the updated 2026-01-01 Postman collection the user
+    supplied — the definitive endpoint list, 134 routes). The collection DOES
+    carry `Order/GetOrderFiles` + `GetOrderFileDetail` (and the inverse
+    `AddOrderShipmentLabelFile`), so label files live on the order's FILE
+    LIST once fetched, plus a never-before-read `Shipment/
+    GetShipmentTransactions` namespace. `fetchLabelPdf` now falls back to
+    BOTH: order files filtered to label-ish names ONLY (label/awb/waybill/
+    shipping — an order's files also hold invoices, and a wrong one-page PDF
+    would attach to a box), detail scanned with the same wide candidate
+    logic; then shipment transactions by tracking. 🧪 Probe prints raw
+    GetOrderFiles + GetShipmentTransactions as steps 6–7. Verified 6 checks:
+    an empty label list with the AWB sitting in order files imports and
+    attaches via `order-file-url`, and the invoice beside it is never
+    fetched. TEST GOTCHA that cost two runs: a STALE mock holding the port
+    serves old fixtures while the pid file points elsewhere — kill by /proc
+    cmdline scan, and give each order's fixture PDF its OWN order number or
+    the text matcher files it under the wrong order (correctly).
   - **AND "GetShipmentLabels SUCCESS" IS NOT "WE GOT A LABEL".** Reported from
     the floor with the hub's log open: the documented call succeeds and no label
     appears here. `fetchLabelPdf` returned a bare `null` for every outcome, and
