@@ -2782,10 +2782,20 @@ function applyNoStockAutoCancel(db, opts = {}) {
       delete st.no_stock_since; delete st.short_stock_since;
       b.orderStates[o.order_number] = st;
       changed = true;
-      cancelled.push({ order: o.order_number, client: b.client_name || '', kind, skus: sk.short.map(s => s.sku).slice(0, 10) });
+      cancelled.push({ order: o.order_number, client: b.client_name || '', kind,
+                       reason: st.unprocessed_reason, skus: sk.short.map(s => s.sku).slice(0, 10) });
     }
   }
   if (cancelled.length) {
+    // TELL THE CHANNEL — the same guarded hook every other cancellation path
+    // uses (off unless the store opted in; structural zort_id/store match;
+    // never on shipped work). Reported live with the client's own screenshot:
+    // "last night order, this morning still not cancelled?" — IdealOne had
+    // auto-cancelled overnight and Lazada still showed the orders Ready To
+    // Ship, because this sweep alone never called the hook.
+    for (const c of cancelled) {
+      try { tellHubWeCancelled(db, c.order, c.reason || 'Cancelled automatically — stock', 'auto-cancel'); } catch (_) {}
+    }
     try { releaseOrphanReservations(db); } catch (_) {}
     try { closeSettledBackorders(db); } catch (_) {}
     logAudit('orders_auto_cancelled_no_stock', {

@@ -1463,7 +1463,12 @@ counting work nobody was going to pick.
 - **The cross-check settle deliberately does NOT tell them** — that tool exists
   because the hub already said the order was handled elsewhere, so voiding it
   would contradict what we just read.
-- Hooked at the office bulk-cancel and the client's own portal withdrawal.
+- Hooked at the office bulk-cancel, the client's own portal withdrawal, the
+  reclassify-to-cancelled path, AND (27 Aug 2026) the no-stock/insufficient
+  auto-cancel sweep — reported live with the client's own Lazada screenshot
+  ("last night order, this morning still not cancelled?"): the sweep alone
+  never called the hook, so an overnight auto-cancel left the order Ready To
+  Ship on the marketplace with nobody ever going to pack it.
 
 Verified 15 API checks against a hub that accepts voids and refuses shipped ones
 (off by default and silent; the switch saving and auditing who; cancelling
