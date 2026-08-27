@@ -2431,9 +2431,9 @@
             </label>
             <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;cursor:pointer">
               <input type="checkbox" id="zfArrangeIntake" style="width:16px;height:16px" />
-              <span><b>&#9889; Arrange shipment at intake (instant waybill + label)</b></span>
+              <span><b>&#9889; Arrange shipment at intake (mark Packed on the hub)</b></span>
             </label>
-            <div class="hint" style="margin:.3rem 0 0">An order that imports without a tracking number gets the store's pack/arrange step triggered immediately, so the platform issues the waybill and label BEFORE picking starts instead of after completion. Never marks Ready-to-Ship &mdash; that still happens when the scan completes.</div>
+            <div class="hint" style="margin:.3rem 0 0">An order that imports still <i>Pending</i> is marked <b>Packed</b> on the hub immediately. HONEST LIMIT, confirmed against ZORT's own docs: Packed is ZORT's internal bookkeeping and <b>mints no waybill and no label</b> &mdash; for Lazada only Ready&nbsp;to&nbsp;Ship does that (the toggle below, or the RTS at scan completion). So with this on and RTS-at-intake off, expect the label to exist only from RTS onwards, not before picking.</div>
             <div class="hint" style="margin:.3rem 0 0">Each synced order's shipping label is fetched and run through the SAME matching as an uploaded label PDF, so it attaches to the order automatically. Queued with retry &mdash; a channel usually generates the label minutes after the order, so it is normal for the first few attempts to find nothing.</div>
             <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;cursor:pointer">
               <input type="checkbox" id="zfRtsAtIntake" style="width:16px;height:16px" />
