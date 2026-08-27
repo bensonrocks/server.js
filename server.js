@@ -21286,10 +21286,15 @@ async function _zortSendOutboxEntry(db, store, entry) {
       // link that will not fetch — is never going to resolve itself, and
       // waiting on it costs a request every few minutes for a day. Reported
       // live as "GetShipmentLabels succeeds but I don't get the labels".
-      if (got && got.why === 'unusable') {
+      if (got && (got.why === 'unusable' || got.why === 'unshaped')) {
+        // 'unshaped' = the reply parsed but carried NO row container we
+        // recognise — a reader gap, not a missing label. The KEY NAMES on the
+        // trail (names only) are exactly the evidence needed to widen the
+        // reader, instead of a silent wait that reads as "not generated yet".
         logAudit('sync_label_unusable', {
           order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
-          offered: (got.offered || []).slice(0, 10), detail: String(got.detail || '').slice(0, 200),
+          why: got.why, keysSeen: (got.keysSeen || []).slice(0, 20),
+          offered: (got.offered || []).slice(0, 10), detail: String(got.detail || '').slice(0, 250),
         });
         throw new Error(`The channel has a label for this order but not in a form we can import — ${got.detail}. Print it from the channel for now.`);
       }

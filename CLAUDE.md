@@ -1722,6 +1722,21 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     times (`store.labelFileFails`) is never asked again — it is undocumented, so
     a store where it does not work is one where it never will. The counter is on
     the store record, so a restart does not relearn it by burning more calls.
+  - **THE LABEL READER TAKES WHATEVER SHAPE THE HUB USES** (27 Aug 2026,
+    reported as "still not attaching even after RTS" with the switch on, the
+    quota healthy and the PDF downloadable by hand — the zortTracking lesson
+    applied to labels). `_labelRows` finds the first ARRAY under any plausible
+    container key (`shipmentlabellist`, `data`, `result`, …, one level deep);
+    row fields are matched case-insensitively; ANY long string is tried as
+    base64 PDF bytes and ANY http(s) string as a label URL — a wrong candidate
+    costs one decode or one fetch and identifies itself. `_asPdf` accepts junk
+    BEFORE the %PDF magic. Store credentials go only to the store's own host.
+    A reply with NO recognisable container is `why: 'unshaped'` — flagged
+    `sync_label_unusable` with the reply's KEY NAMES (names only) on the
+    trail, never mistaken for "not generated yet" and waited on for ever.
+    Verified 8 checks against a mock answering with `shipmentlabellist` /
+    `FormatType` / `FileData` (attaches; the old chain returned []) and one
+    with no container at all (flagged, keys named, nothing invented).
   - **AND "GetShipmentLabels SUCCESS" IS NOT "WE GOT A LABEL".** Reported from
     the floor with the hub's log open: the documented call succeeds and no label
     appears here. `fetchLabelPdf` returned a bare `null` for every outcome, and
