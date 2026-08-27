@@ -22767,6 +22767,83 @@ app.post('/api/master/zort/stores/:id/push-products', express.json(), (req, res)
 
 // Drain the queue NOW rather than waiting for the next tick — for when someone
 // is standing there watching a label that should have arrived.
+// ── "THE LABELS ARE OUT AT THE CHANNEL — FETCH THEM NOW" ────────────────────
+// A plain drain does NOT revive a stalled entry, and a label that waited out
+// its day (or was refused before the reader could take its shape) is exactly
+// the one somebody is now asking for. Tapping every order in turn is not a
+// workflow. So: revive every label job for this store, CREATE one for any
+// synced order still without a label, then drain until they have all been
+// tried — and report per order what happened.
+app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const store = zortStores(db).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  if (!store.labelSync) {
+    return res.status(409).json({ error: 'Label pull is switched off for this store — turn it on first (the store form).' });
+  }
+  const labels = db.orderLabels || {};
+  const wanted = [];
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      if (String(o.zort_store_id || '') !== String(store.id) || !o.zort_id) continue;
+      const st = (b.orderStates || {})[o.order_number] || {};
+      if (st.status === 'unprocessed') continue;          // cancelled — no label wanted
+      if (labels[o.order_number]) continue;               // already has one
+      wanted.push({ orderNumber: o.order_number, zortId: o.zort_id, tracking: o.waybill_number || '' });
+    }
+  }
+  // Revive existing jobs and queue the missing ones. enqueueZortLabel already
+  // clears `stalled` and re-arms an entry it finds, so one call does both.
+  const ob = zortOutbox(db);
+  for (const w of wanted) {
+    const existing = ob.find(e => e.kind === 'label' && e.storeId === store.id && e.orderNumber === w.orderNumber);
+    if (existing) {
+      existing.stalled = false; existing.attempts = 0; existing.waitedMs = 0;
+      existing.nextAttemptAt = new Date().toISOString();
+    } else {
+      enqueueZortLabel(db, store.id, w);
+    }
+  }
+  // A stalled FILE-endpoint memory would keep the undocumented fallback off;
+  // that is deliberate and left alone. What is cleared is the label jobs only.
+  writeDb(db);
+  logAudit('sync_labels_retry_requested', {
+    storeId: store.id, client: store.clientName || '', orders: wanted.length,
+    by: req.userId || _tokenUserId(req) || '',
+  });
+  // Drain until they have all been attempted, bounded so a wedged hub cannot
+  // hold the screen. The 30s ceiling is the operator's patience, not a limit
+  // on the work — anything left keeps its place and the scheduler carries on.
+  const deadline = Date.now() + 30000;
+  for (let pass = 0; pass < 12 && Date.now() < deadline; pass++) {
+    await drainZortOutbox();
+    const left = zortOutbox(readDb()).filter(e =>
+      e.kind === 'label' && e.storeId === store.id && !e.stalled &&
+      wanted.some(w => w.orderNumber === e.orderNumber));
+    if (!left.length) break;
+    await new Promise(r => setTimeout(r, 400));
+  }
+  const after = readDb();
+  const afterLabels = after.orderLabels || {};
+  const afterOb = zortOutbox(after);
+  const got = [], waiting = [], failed = [];
+  for (const w of wanted) {
+    if (afterLabels[w.orderNumber]) { got.push(w.orderNumber); continue; }
+    const e = afterOb.find(x => x.kind === 'label' && x.storeId === store.id && x.orderNumber === w.orderNumber);
+    if (e && e.stalled) failed.push({ order: w.orderNumber, why: String(e.lastError || 'stalled').slice(0, 200) });
+    else waiting.push({ order: w.orderNumber, why: String(e?.lastError || 'still queued').slice(0, 200) });
+  }
+  res.json({
+    ok: true, asked: wanted.length,
+    attached: got.length, orders: got.slice(0, 50),
+    stillWaiting: waiting.slice(0, 50), failed: failed.slice(0, 50),
+    note: wanted.length
+      ? `${got.length} of ${wanted.length} label(s) came in.`
+      : 'Every synced order on this store already has its label.',
+  });
+});
+
 app.post('/api/master/zort/outbox/drain', async (req, res) => {
   if (!checkMaster(req, res)) return;
   await drainZortOutbox();

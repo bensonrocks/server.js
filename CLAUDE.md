@@ -1796,6 +1796,21 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     serves old fixtures while the pid file points elsewhere — kill by /proc
     cmdline scan, and give each order's fixture PDF its OWN order number or
     the text matcher files it under the wrong order (correctly).
+  - **"THE LABELS ARE OUT AT THE CHANNEL — FETCH THEM NOW"**
+    (`POST /api/master/zort/stores/:id/labels/retry`, 🏷 Get Labels on the
+    store row). A plain outbox drain does NOT revive a `stalled` entry, so a
+    label that waited out its day — or was refused before the reader learned
+    its shape — stayed unfetched however many times anyone pressed drain, and
+    the only way in was tapping each order's pill one at a time. This revives
+    every label job for the store, CREATES one for any synced order that still
+    has no label (cancelled orders excluded), drains until they have all been
+    tried (bounded 30s — the operator's patience, not a limit on the work) and
+    reports PER ORDER: came in, still waiting, or refused with the channel's
+    own words. Refuses with a sentence when the store's label pull is off,
+    rather than doing nothing. Audited `sync_labels_retry_requested`.
+    Verified 11 checks: a plain drain leaves a stalled job stalled, the retry
+    pulls that same label in and attaches it, every leftover carries a reason,
+    and the off-switch case is refused in words.
   - **AND "GetShipmentLabels SUCCESS" IS NOT "WE GOT A LABEL".** Reported from
     the floor with the hub's log open: the documented call succeeds and no label
     appears here. `fetchLabelPdf` returned a bare `null` for every outcome, and

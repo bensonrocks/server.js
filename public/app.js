@@ -12719,6 +12719,7 @@
             <button class="btn-secondary btn-sm z-channels" title="Sales channels this client has linked inside their hub account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
             <button class="btn-secondary btn-sm z-hook" title="Let the channel PUSH changes to us instead of us asking every few minutes. One order read per push instead of a full sweep — this is where the daily request limit goes.">&#128225; Push</button>
+            <button class="btn-secondary btn-sm z-labels" title="The labels are out at the channel — fetch every synced order that still has none. Revives jobs that gave up waiting, so you do not have to open each order.">&#127991; Get Labels</button>
             <button class="btn-secondary btn-sm z-probe" title="Ask the hub four questions and show its raw answers — credentials, a plain read, the order list, and reading back one order by the hub's OWN id. Four requests, read-only. Use it when the channel is answering with no order.">&#129514; Probe</button>
             <button class="btn-primary btn-sm z-pull">Pull now</button>
             <button class="btn-secondary btn-sm z-crosscheck" title="Ask the hub the current status of every open synced order here — finds orders the client fulfilled themselves, and offers to settle them">&#128270; Cross-check</button>
@@ -12803,6 +12804,31 @@
           } catch (err) {
             alert('Could not reach the push settings — ' + (err.message || err));
           } finally { btn.disabled = false; }
+        });
+        tr.querySelector('.z-labels').addEventListener('click', async e => {
+          const btn = e.currentTarget;
+          btn.disabled = true; btn.textContent = '⏳ Fetching…';
+          zortStatus('progress', `Asking ${store.clientName} for the labels it has…`);
+          try {
+            const r = await fetch(`/api/master/zort/stores/${id}/labels/retry`, { method: 'POST', headers: zortHdrs() });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.error || 'Could not fetch the labels');
+            const lines = [d.note];
+            if ((d.orders || []).length) lines.push('', 'Came in:', ...d.orders.slice(0, 15).map(o => `  ✓ ${o}`));
+            // A LABEL THAT DID NOT COME IN SAYS WHY, in the channel's own
+            // words — "nothing happened" is what sent people hunting.
+            for (const [title, rows] of [['Still waiting:', d.stillWaiting || []], ['Refused:', d.failed || []]]) {
+              if (!rows.length) continue;
+              lines.push('', title, ...rows.slice(0, 10).map(x => `  • ${x.order} — ${x.why}`));
+            }
+            zortStatus('success', `${d.attached} of ${d.asked} label(s) attached.`);
+            alert(lines.join('\n'));
+            loadZortStores();
+            renderOrdersDash().catch(() => {});
+          } catch (err) {
+            zortStatus('error', err.message);
+            alert('Could not fetch the labels — ' + err.message);
+          } finally { btn.disabled = false; btn.innerHTML = '&#127991; Get Labels'; }
         });
         tr.querySelector('.z-probe').addEventListener('click', async e => {
           e.target.disabled = true;
