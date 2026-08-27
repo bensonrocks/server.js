@@ -309,12 +309,21 @@ Sunday nothing leaves.
 
 ### A marketplace parcel closes itself — `courier-scan` (`closeCollectionFromHub`)
 
-Nobody here can tick a marketplace parcel off: the platform's own courier takes
-it and we observe nothing. `/api/orders/pickup` already REFUSES a hand-tick on
-an API order for exactly that reason — so a finished Lazada/Shopee order sat at
-**Awaiting collection** forever and then turned red **Not collected** days after
-it had actually shipped. The courier's scan does reach ZORT; that is the
-handover we could not see.
+The platform's own courier takes a marketplace parcel and we observe nothing —
+so a finished Lazada/Shopee order sat at **Awaiting collection** forever and
+then turned red **Not collected** days after it had actually shipped. The
+courier's scan does reach ZORT; that is the handover we could not see.
+
+SUPERSEDED RULE, changed per the user (Aug 2026): `/api/orders/pickup` used to
+REFUSE a hand-tick on an API order. **The tick now closes API orders too** —
+Picked Up is an INTERNAL own status, the pickup route pushes NOTHING to the
+platform (never did), and this auto-close never re-stamps a pickup already
+recorded, so a hand-close simply stands. What stays refused, API or uploaded:
+anything not `done` (cancelled work included), and an order carrying
+`platform_cancelled` — the collection queue lists those flagged red ✕
+("do not ship, reclassify it instead") and never offers the tick, and
+`closeCollectionFromHub` skips them too (ZORT saying "success" while the
+marketplace says cancelled is a contradiction for a human, not an auto-close).
 
 - **STAMPED `method: 'courier-scan'`**, never `manual` and never `self-drop`.
   The trail must never claim we handed the parcel over ourselves or that

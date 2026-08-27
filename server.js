@@ -17542,9 +17542,14 @@ app.get('/api/orders/pickup-queue', (req, res) => {
       const due = collectionDayFor(state.endTime, policy);
       rows.push({
         order_number: ord.order_number,
-        // Synced marketplace orders are closed by WAYBILL SCAN only — their
-        // status relays to the platform, so a hand-tick must not touch them.
+        // Informational — the chip on the row. API orders are tickable too
+        // (per the user): Picked Up is an internal status, nothing relays to
+        // the platform, and the hub's courier-scan close never re-stamps a
+        // pickup already recorded here.
         api_source:   !!(ord.zort_id || batch.uploaded_by === 'zort-sync'),
+        // The marketplace cancelled it while it sat packed — it stays VISIBLE
+        // here (the parcel physically exists) but is never offered a tick.
+        platform_cancelled: !!state.platform_cancelled,
         client_name:  batch.client_name || '',
         customer_name: ord.customer_name || '',
         waybill_number: ord.waybill_number || '',
@@ -17608,18 +17613,18 @@ app.post('/api/orders/pickup', express.json(), (req, res) => {
       continue;
     }
     if (state.pickup) { refused.push({ order: num, error: 'Already picked up' }); continue; }
-    // API-SYNCED ORDERS: the collection status feeds the platform relay, so a
-    // hand-tick is disallowed — closing one requires SCANNING its waybill (an
-    // observed physical handover), never a checkbox. Uploaded orders keep the
-    // manual tick exactly as before.
-    {
-      const ord = (batch.orders || []).find(o => String(o.order_number) === num);
-      const apiSource = !!(ord?.zort_id || batch.uploaded_by === 'zort-sync');
-      const method = String(req.body?.method || 'manual');
-      if (apiSource && method !== 'scan') {
-        refused.push({ order: num, error: 'API order — close by scanning its waybill, not by tick' });
-        continue;
-      }
+    // API-SYNCED ORDERS MAY BE TICKED TOO — changed per the user: "Picked Up"
+    // is an INTERNAL own status, and nothing here relays it to the platform
+    // (this route pushes nothing, never has; the hub's own courier-scan close
+    // never re-stamps an existing pickup, so a hand-close simply stands).
+    // What stays refused, for API and uploaded alike: anything not `done`
+    // (cancelled/unprocessed work included — checked above), and an order the
+    // MARKETPLACE has cancelled while it sat packed — closing that off as
+    // collected would record a handover of a parcel the "do not ship" chip
+    // exists to stop.
+    if (state.platform_cancelled) {
+      refused.push({ order: num, error: `Cancelled on the marketplace ("${state.platform_cancelled.status}") — do not ship, reclassify it instead` });
+      continue;
     }
     state.pickup = {
       at, by: req.userId || '',
@@ -19635,6 +19640,13 @@ function closeCollectionFromHub(db, orderNumber, zortId, statusWord, store, hubO
     // — this only decides what to report.
     const state = f.batch.orderStates?.[f.ord.order_number] || { status: 'pending' };
     if (state.pickup) return '';                    // already closed — never re-stamp
+    // THE HUB'S TWO SIDES DISAGREE: its own status says the parcel left while
+    // the marketplace's says the order is CANCELLED (the 170217257037005
+    // shape — ZORT read "success" throughout a Lazada cancellation). Auto-
+    // recording a courier handover against a cancelled order would report an
+    // outcome nobody can stand behind; it stays in the collection queue
+    // flagged red for a human to settle.
+    if (state.platform_cancelled) return '';
     // THE HUB SAYS IT LEFT AND WE HAVE NOT FINISHED PACKING IT. That is a real
     // disagreement, not a collection: flag it for a human rather than banking
     // an unfinished pick as gone (same discipline as a void on worked stock).

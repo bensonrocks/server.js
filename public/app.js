@@ -2584,7 +2584,7 @@
         <td class="ord-stripe-cell"></td>
         <td class="ord-select-cell"><input type="checkbox" class="ord-select" data-order="${esc(ord.order_number)}" ${orderSelection.has(ord.order_number) ? 'checked' : ''} onclick="event.stopPropagation()" /></td>
         <td class="col-order">
-          <span class="ord-no-link">${esc(ord.order_number)}</span>${ord.api_source ? ' <span class="api-pill" title="Synced from the marketplace — status relays back to the platform; collection is closed by scanning the waybill, never by tick">API</span>' : ''}
+          <span class="ord-no-link">${esc(ord.order_number)}</span>${ord.api_source ? ' <span class="api-pill" title="Synced from the marketplace — orders and completion status flow via the hub. Collection can be closed by waybill scan, by tick on the Collection screen (internal record, nothing relayed to the platform), or automatically when the hub reports the courier took it.">API</span>' : ''}
           ${isAdminView && ord.idealscan_code ? `<div class="ord-jobcode"><code class="job-code">${esc(ord.idealscan_code)}</code></div>` : ''}
           ${ord.issue_no ? `<div class="ord-jobcode" title="GI number"><code class="job-code">GI: ${esc(ord.issue_no)}</code></div>` : ''}
           ${ord.transport_id ? `<div class="ord-jobcode" title="Linked Transport delivery job"><code class="job-code job-code-tr">🚚 ${esc(ord.transport_id)}</code></div>` : ''}
@@ -14350,10 +14350,10 @@
           : '';
         lastDue = r.collection_due;
         return head + `<tr class="${r.overdue ? 'pk-late' : ''}">
-          <td>${r.api_source
-            ? '<span title="Synced from the platform — its status relays back automatically; close only by scanning the waybill at handover" style="font-size:10px;font-weight:800;color:#7c3aed;letter-spacing:.03em">API</span>'
+          <td>${r.platform_cancelled
+            ? '<span title="The MARKETPLACE cancelled this order — do not hand it to the courier; reclassify it instead" style="font-size:12px;font-weight:800;color:#dc2626">&#10005;</span>'
             : `<input type="checkbox" class="pk-tick" data-order="${esc(r.order_number)}" ${sel.has(r.order_number) ? 'checked' : ''}>`}</td>
-          <td><b>${esc(r.order_number)}</b>${r.idealscan_code ? `<div class="hint">${esc(r.idealscan_code)}</div>` : ''}</td>
+          <td><b>${esc(r.order_number)}</b>${r.api_source ? ' <span title="Synced from the marketplace. Ticking it here is our own internal record — nothing is relayed to the platform." style="font-size:9px;font-weight:800;color:#7c3aed;letter-spacing:.03em">API</span>' : ''}${r.idealscan_code ? `<div class="hint">${esc(r.idealscan_code)}</div>` : ''}</td>
           <td>${esc(r.client_name || '—')}</td>
           <td>${esc(r.waybill_number || '—')}</td>
           <td style="text-align:right">${r.cartons}</td>
@@ -14372,7 +14372,9 @@
       syncAll();
     }
     function syncAll() {
-      const tickable = rows.filter(r => !r.api_source);
+      // API orders are tickable too (internal record, no platform relay);
+      // only a marketplace-cancelled parcel is never offered.
+      const tickable = rows.filter(r => !r.platform_cancelled);
       const all = tickable.length > 0 && tickable.every(r => sel.has(r.order_number));
       $('pickupPickAll').checked = all;
       $('pickupMarkBtn').textContent = sel.size ? `✓ Mark ${sel.size} Picked Up` : '✓ Mark Picked Up';
@@ -14474,7 +14476,7 @@
     }
 
     return { load, openPolicy, savePolicy, markSelected, scanClose, refreshBadge,
-             selectAll: on => { rows.forEach(r => { if (r.api_source) return; on ? sel.add(r.order_number) : sel.delete(r.order_number); }); render(); } };
+             selectAll: on => { rows.forEach(r => { if (r.platform_cancelled) return; on ? sel.add(r.order_number) : sel.delete(r.order_number); }); render(); } };
   })();
   // switchTab runs earlier in this file than the const above, so it reaches the
   // module through window rather than the binding (a bare reference would hit
