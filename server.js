@@ -2665,12 +2665,18 @@ function orderStockStateSrv(batch, lines, lookup) {
 //    full hour, and stock arriving clears the clock instead of racing it.
 //  • Inventory unreadable → do nothing at all. A lookup failure must never
 //    read as an empty shelf.
-const AUTOCANCEL_DEFAULT_MINS = 60;
+// Per the user (27 Aug 2026): NO stock → 10 minutes; INSUFFICIENT stock
+// (partial — some lines covered, some not) now cancels too, on its own much
+// longer 90-minute clock, because a part-covered order is one a receipt or a
+// human can still rescue. Both are editable on the Connections panel.
+const AUTOCANCEL_DEFAULT_MINS = 10;
+const AUTOCANCEL_PARTIAL_DEFAULT_MINS = 90;
 function autoCancelPolicy(db) {
   const p = db.autoCancelPolicy || {};
   return {
     enabled: p.enabled !== false,                      // on by default, per the user
     minutes: Math.max(5, Number(p.minutes) || AUTOCANCEL_DEFAULT_MINS),
+    partialMinutes: Math.max(5, Number(p.partialMinutes) || AUTOCANCEL_PARTIAL_DEFAULT_MINS),
     reason: p.reason || 'No stock to fulfil — cancelled automatically',
   };
 }
@@ -2684,6 +2690,9 @@ function applyNoStockAutoCancel(db, opts = {}) {
   const override = (opts.minutes === undefined || opts.minutes === null || opts.minutes === '')
     ? null : Math.max(0, Number(opts.minutes) || 0);
   const waitMins = override === null ? pol.minutes : override;
+  // A manual override applies to BOTH clocks — someone pressing "purge at 0"
+  // means everything short right now, however it is short.
+  const waitPartial = override === null ? pol.partialMinutes : override;
   // A manual run with an explicit wait is a decision someone just made, so it
   // proceeds even when the scheduled rule is switched off.
   const manual = override !== null;
@@ -2727,55 +2736,76 @@ function applyNoStockAutoCancel(db, opts = {}) {
       const scanned = Object.values(st.scanned || {}).reduce((s, n) => s + (Number(n) || 0), 0);
       const busy = scanned > 0 || !!claimHolder(st) || !!st.wave_id;
       const sk = orderStockStateSrv(b, o.lines, lookup);
-      if (!sk || sk.state !== 'none' || busy) {
-        // Stock arrived, someone started it, or it is not tracked — the clock
-        // stops and is forgotten rather than paused.
-        if (st.no_stock_since) { delete st.no_stock_since; changed = true; }
+      const kind = sk ? sk.state : null;
+      if (!sk || busy || (kind !== 'none' && kind !== 'partial')) {
+        // Stock arrived, someone started it, or it is not tracked — the
+        // clocks stop and are forgotten rather than paused.
+        if (st.no_stock_since || st.short_stock_since) {
+          delete st.no_stock_since; delete st.short_stock_since; changed = true;
+        }
         continue;
       }
-      if (!st.no_stock_since) {
-        st.no_stock_since = new Date().toISOString();
+      // TWO CLOCKS, per the user: NOTHING on the shelf runs the short (10-min)
+      // clock; PART-covered runs its own longer (90-min) one. A state change
+      // between them restarts on the other clock's full wait — the situations
+      // are different enough that inheriting time from the other would cancel
+      // a rescuable order on an empty-shelf timetable.
+      const sinceKey = kind === 'none' ? 'no_stock_since' : 'short_stock_since';
+      const otherKey = kind === 'none' ? 'short_stock_since' : 'no_stock_since';
+      if (st[otherKey]) { delete st[otherKey]; changed = true; }
+      const wait = kind === 'none' ? waitMins : waitPartial;
+      if (!st[sinceKey]) {
+        st[sinceKey] = new Date().toISOString();
         b.orderStates[o.order_number] = st;      // persist the (possibly new) state
         changed = true;
         // An ad-hoc run with a zero wait means "clear what is short NOW", so a
         // never-armed order is not spared on a technicality. Any other wait
         // still needs time to have passed, so it only arms.
-        if (!(manual && waitMins === 0)) { armed++; continue; }
+        if (!(manual && wait === 0)) { armed++; continue; }
       }
       if (!pol.enabled && !manual) { armed++; continue; }
-      const waited = (now - new Date(st.no_stock_since).getTime()) / 60000;
-      if (waited < waitMins) { armed++; continue; }
+      const waited = (now - new Date(st[sinceKey]).getTime()) / 60000;
+      if (waited < wait) { armed++; continue; }
+      // WHAT it was short of goes on the record AND in the reason — the pill
+      // on the cancelled row renders from this stamp, frozen at cancel time,
+      // so stock arriving later never rewrites why the rule fired.
+      const shortNote = sk.short.slice(0, 6).map(s => `${s.sku} (${s.have} of ${s.need})`).join(', ');
       st.status = 'unprocessed';
-      st.unprocessed_reason = pol.reason;
+      st.unprocessed_reason = kind === 'none'
+        ? pol.reason
+        : `Insufficient stock — short of ${shortNote}${sk.short.length > 6 ? ' …' : ''} — cancelled automatically`;
       st.unprocessed_at = new Date().toISOString();
-      st.auto_cancelled = { at: st.unprocessed_at, why: 'no_stock', waitedMins: Math.round(waited),
-                            manual: manual || undefined, waitUsed: waitMins };
+      st.auto_cancelled = { at: st.unprocessed_at, why: kind === 'none' ? 'no_stock' : 'short_stock',
+                            short: sk.short.slice(0, 10),
+                            waitedMins: Math.round(waited), manual: manual || undefined, waitUsed: wait };
       st.updated_at = st.unprocessed_at;
-      delete st.no_stock_since;
+      delete st.no_stock_since; delete st.short_stock_since;
       b.orderStates[o.order_number] = st;
       changed = true;
-      cancelled.push({ order: o.order_number, client: b.client_name || '', skus: sk.short.map(s => s.sku).slice(0, 10) });
+      cancelled.push({ order: o.order_number, client: b.client_name || '', kind, skus: sk.short.map(s => s.sku).slice(0, 10) });
     }
   }
   if (cancelled.length) {
     try { releaseOrphanReservations(db); } catch (_) {}
     try { closeSettledBackorders(db); } catch (_) {}
     logAudit('orders_auto_cancelled_no_stock', {
-      count: cancelled.length, minutes: waitMins, manual: manual || undefined,
-      orders: cancelled.slice(0, 100),
+      count: cancelled.length, minutes: waitMins, partialMinutes: waitPartial,
+      manual: manual || undefined, orders: cancelled.slice(0, 100),
     });
     for (const c of cancelled) {
+      const label = c.kind === 'partial' ? `insufficient stock (short of ${c.skus.slice(0, 3).join(', ')})` : 'no stock';
+      const wait = c.kind === 'partial' ? waitPartial : waitMins;
       addPoke(db, {
         kind: 'order_auto_cancelled', client: c.client, direction: 'outbound',
         ref: c.order, orders: 1,
         note: manual
-          ? `Cancelled — no stock (run by hand, ${waitMins} min cut-off)`
-          : `Cancelled automatically — no stock for ${waitMins} minutes`,
+          ? `Cancelled — ${label} (run by hand, ${wait} min cut-off)`
+          : `Cancelled automatically — ${label} for ${wait} minutes`,
       });
     }
   }
   if (changed) writeDb(db);
-  return { cancelled, armed, waitUsed: waitMins, manual };
+  return { cancelled, armed, waitUsed: waitMins, partialWaitUsed: waitPartial, manual };
 }
 // Runs on its own clock so the rule holds whether or not anyone is looking,
 // and once shortly after boot so a restart does not reset every timer.
@@ -2929,6 +2959,10 @@ function globalOrdersWithState(keep) {
         unprocessed_at:     cancelledAtOf(state),
         unprocessed_reason: state.unprocessed_reason || '',
         auto_cancelled:     !!state.auto_cancelled,
+        // Why the rule fired, frozen at cancel time — what the cancelled row's
+        // stock pill renders from ("the pill status remains", per the user).
+        auto_cancelled_why:   state.auto_cancelled?.why || null,
+        auto_cancelled_short: state.auto_cancelled?.short || null,
         reopened_at:        state.reopened_at        || null,
         cartons:           state.cartons           || [],
         active_carton_num: state.activeCartonNum   || (state.cartons && state.cartons.length ? state.cartons[state.cartons.length - 1].num : 1),
@@ -20728,9 +20762,13 @@ app.get('/api/master/orders/auto-cancel', (req, res) => {
   const armed = [];
   for (const b of db.batches || []) {
     for (const [num, st] of Object.entries(b.orderStates || {})) {
-      if (st.no_stock_since && (st.status === 'pending' || st.status === 'processing')) {
-        armed.push({ order: num, client: b.client_name || '', since: st.no_stock_since,
+      if (st.status !== 'pending' && st.status !== 'processing') continue;
+      if (st.no_stock_since) {
+        armed.push({ order: num, client: b.client_name || '', since: st.no_stock_since, kind: 'none',
                      minutesLeft: Math.max(0, Math.round(pol.minutes - (Date.now() - new Date(st.no_stock_since).getTime()) / 60000)) });
+      } else if (st.short_stock_since) {
+        armed.push({ order: num, client: b.client_name || '', since: st.short_stock_since, kind: 'partial',
+                     minutesLeft: Math.max(0, Math.round(pol.partialMinutes - (Date.now() - new Date(st.short_stock_since).getTime()) / 60000)) });
       }
     }
   }
@@ -20741,9 +20779,11 @@ app.post('/api/master/orders/auto-cancel/policy', express.json(), (req, res) => 
   const db = readDb();
   const cur = autoCancelPolicy(db);
   const mins = req.body?.minutes === undefined ? cur.minutes : Math.max(5, Number(req.body.minutes) || cur.minutes);
+  const pmins = req.body?.partialMinutes === undefined ? cur.partialMinutes : Math.max(5, Number(req.body.partialMinutes) || cur.partialMinutes);
   db.autoCancelPolicy = {
     enabled: req.body?.enabled === undefined ? cur.enabled : !!req.body.enabled,
     minutes: mins,
+    partialMinutes: pmins,
     reason: String(req.body?.reason || cur.reason).slice(0, 200),
   };
   writeDb(db);
@@ -20807,7 +20847,8 @@ app.post('/api/master/orders/:orderNumber/keep', express.json(), (req, res) => {
     if (st.status === 'done')        return res.status(409).json({ error: 'This order is already completed.' });
     if (st.status === 'unprocessed') return res.status(409).json({ error: 'This order is already cancelled — use Reopen.' });
     st.autocancel_exempt = true;
-    delete st.no_stock_since;                      // off the clock immediately
+    delete st.no_stock_since;                      // off BOTH clocks immediately
+    delete st.short_stock_since;
     st.autocancel_kept_at = new Date().toISOString();
     st.autocancel_kept_by = req.userId || _tokenUserId(req) || '';
     if (reason) st.autocancel_kept_reason = reason.slice(0, 200);

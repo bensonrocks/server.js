@@ -1522,6 +1522,36 @@ re-stamps nothing and the trail does not grow; the lookup carries both words)
 plus a browser check that the chip renders solid red with the reclassify
 pointer in its tooltip.
 
+### Auto-cancel runs TWO clocks — no stock 10 min, insufficient stock 90 min
+
+Per the user (27 Aug 2026). `applyNoStockAutoCancel` (5-min sweep, API orders
+of stock-tracked clients only, untouched work only, exempt-once-reopened):
+
+- **NO stock** (`orderStockStateSrv` = `none`, nothing coverable on the whole
+  order) → cancelled after **10 minutes** (`AUTOCANCEL_DEFAULT_MINS`, was 60).
+- **INSUFFICIENT stock** (`partial` — some lines covered, some not) now
+  cancels too, after **90 minutes** (`partialMinutes`), reason naming exactly
+  what it was short of: "Insufficient stock — short of BCD (0 of 1) —
+  cancelled automatically". Two clocks (`no_stock_since` /
+  `short_stock_since`); a state change between them restarts on the other
+  clock's FULL wait, never inheriting time. Both editable on the Connections
+  ⏳ panel; a manual purge's minutes override applies to both; 🔒 Keep clears
+  both.
+- **THE PILL SAYS WHO** — the amber chip reads "⚠ Short of BCD" (SKUs named,
+  not "Short 1 of 2") — **and REMAINS on the cancelled row**, per the user,
+  rendered from `auto_cancelled.short` FROZEN at cancel time
+  (`cancelledStockChip`): a live verdict would drift to "Stock OK" once the
+  reservation released or stock arrived, and read as a cancellation with no
+  cause.
+
+Verified 18 API checks across three phases (defaults 10/90; first sweep only
+arms with the right kind per order; at 11 min the no-stock order cancels while
+both partials hold; at 91 min the partials cancel with the shortfall named,
+including a quantity shortfall "AC-ABC (1 of 2)"; the covered order untouched
+throughout) plus 8 browser checks (live pills naming the SKUs on all four
+shapes, and the frozen pills still on the Cancelled rows with the
+at-cancellation tooltip).
+
 ### The parcel came back, or never got away (`noteHubException`)
 
 `returned` and `failed shipment` are in `ZORT_IMPORT_SKIP_STATUSES`, so they are

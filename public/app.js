@@ -2144,11 +2144,12 @@
     const from = owners.length ? ` Balances read from ${owners.join(' + ')}.` : '';
     const untracked = all.length - lines.length;
     const alsoUntracked = untracked > 0 ? ` ${untracked} line(s) are in no item master and were not judged.` : '';
-    const short = [], none = [];
+    const short = [], none = [], shortSkus = [];
     for (const l of lines) {
       const oh = Number(l.stock_onhand) || 0, need = Number(l.qty) || 0;
       if (oh >= need) continue;
       (oh <= 0 ? none : short).push(`${l.sku}: ${oh} of ${need}`);
+      shortSkus.push(l.sku);
     }
     if (!short.length && !none.length) {
       return { kind: 'ok', label: '&#10003; Stock OK', title: `Every line can be picked from stock on hand (${lines.length} line(s) checked).${from}${alsoUntracked}` };
@@ -2157,12 +2158,30 @@
     if (none.length === lines.length) {
       return { kind: 'none', label: '&#10007; No stock', title: `Nothing on this order is on the shelf — ${detail}.${from}${alsoUntracked}` };
     }
-    return { kind: 'short', label: `&#9888; Short ${none.length + short.length} of ${lines.length}`, title: `Not enough stock to finish this order — ${detail}.${from}${alsoUntracked}` };
+    // NAMED, per the user — "Short of BCD" beats "Short 1 of 2": the pill
+    // itself says which product is the problem, not just that one exists.
+    const who = shortSkus.slice(0, 2).join(', ') + (shortSkus.length > 2 ? ` +${shortSkus.length - 2}` : '');
+    return { kind: 'short', label: `&#9888; Short of ${esc(who)}`, title: `Not enough stock to finish this order — ${detail}.${from}${alsoUntracked}` };
   }
   function stockChip(ord) {
     const v = orderStockVerdict(ord);
     if (!v) return '';
     return `<span class="chip chip-stock-${v.kind}" title="${esc(v.title)}">${v.label}</span>`;
+  }
+  // THE PILL SURVIVES AN AUTO-CANCEL, frozen — per the user, "the pill status
+  // remains for easy reference". Frozen at cancel time deliberately: stock
+  // arriving later must not quietly rewrite why the rule fired, and a LIVE
+  // verdict on a cancelled row (whose reservation was released) would drift
+  // to "Stock OK" and read as a cancellation with no cause.
+  function cancelledStockChip(ord) {
+    const s = ord.auto_cancelled_short || [];
+    if (!s.length) return '';
+    const none = ord.auto_cancelled_why !== 'short_stock';
+    const names = s.map(x => x.sku);
+    const label = none ? '&#10007; No stock'
+      : `&#9888; Short of ${esc(names.slice(0, 2).join(', '))}${names.length > 2 ? ` +${names.length - 2}` : ''}`;
+    const detail = s.map(x => `${x.sku}: ${x.have} of ${x.need}`).join(' · ');
+    return `<span class="chip chip-stock-${none ? 'none' : 'short'}" title="Why the auto-cancel fired — the balances AT cancellation: ${esc(detail)}. Stock arriving later does not change this record.">${label}</span>`;
   }
   // DID THE MARKETPLACE HEAR THAT WE FINISHED IT? Reported live: an order
   // completed here while the hub's status looked unchanged, with no way to
@@ -2532,7 +2551,8 @@
         // CAN IT BE PICKED? One order-level verdict against live stock, so the
         // answer is visible before anyone walks. Only on work still to do —
         // a finished order already proved it could ship.
-        (ord.scan_status !== 'done' && ord.scan_status !== 'unprocessed') ? stockChip(ord) : '',
+        (ord.scan_status !== 'done' && ord.scan_status !== 'unprocessed') ? stockChip(ord)
+          : (ord.scan_status === 'unprocessed' ? cancelledStockChip(ord) : ''),
         // Marketplace push-back state — only ever on synced orders.
         zortPushChip(ord),
         // THE COURIER BROUGHT IT BACK, OR NEVER GOT IT AWAY. Without this the
@@ -14515,8 +14535,10 @@
         const d = await r.json();
         const en = document.getElementById('acEnabled');
         const mi = document.getElementById('acMinutes');
+        const pm = document.getElementById('acPartialMinutes');
         if (en) en.checked = !!d.policy?.enabled;
-        if (mi) mi.value = d.policy?.minutes ?? 60;
+        if (mi) mi.value = d.policy?.minutes ?? 10;
+        if (pm) pm.value = d.policy?.partialMinutes ?? 90;
         const armed = document.getElementById('acArmed');
         if (armed) {
           // What is ON THE CLOCK right now, and how long the nearest one has —
@@ -14538,7 +14560,7 @@
               <tr>
                 <td><b>${esc(a.order)}</b></td>
                 <td>${esc(a.client)}</td>
-                <td${a.minutesLeft <= 10 ? ' style="color:#b91c1c;font-weight:700"' : ''}>${a.minutesLeft} min</td>
+                <td${a.minutesLeft <= 10 ? ' style="color:#b91c1c;font-weight:700"' : ''}>${a.minutesLeft} min${a.kind === 'partial' ? ' <span class="hint">(insufficient)</span>' : ''}</td>
                 <td><button class="btn-secondary btn-sm ac-keep" data-order="${esc(a.order)}" title="Take this order off the clock — the rule will not cancel it">&#128274; Keep</button></td>
               </tr>`).join('')}</tbody></table>` : '';
           al.querySelectorAll('.ac-keep').forEach(btn => {
@@ -14604,12 +14626,13 @@
         method: 'POST', headers: _acHdrs(),
         body: JSON.stringify({
           enabled: document.getElementById('acEnabled')?.checked,
-          minutes: Number(document.getElementById('acMinutes')?.value) || 60,
+          minutes: Number(document.getElementById('acMinutes')?.value) || 10,
+          partialMinutes: Number(document.getElementById('acPartialMinutes')?.value) || 90,
         }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || 'Could not save');
-      alert(`Saved. The rule is ${d.policy.enabled ? 'ON' : 'OFF'}, waiting ${d.policy.minutes} minutes.`);
+      alert(`Saved. The rule is ${d.policy.enabled ? 'ON' : 'OFF'} — no stock: ${d.policy.minutes} min, insufficient stock: ${d.policy.partialMinutes} min.`);
       loadAutoCancelPanel();
     } catch (e) { alert(e.message); }
   });
