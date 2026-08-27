@@ -2146,7 +2146,10 @@
     const alsoUntracked = untracked > 0 ? ` ${untracked} line(s) are in no item master and were not judged.` : '';
     const short = [], none = [], shortSkus = [];
     for (const l of lines) {
-      const oh = Number(l.stock_onhand) || 0, need = Number(l.qty) || 0;
+      // WHAT THIS ORDER CAN HAVE, not what is merely on the shelf — stock
+      // promised to an earlier order cannot fill this one, and the pill must
+      // agree with the rule that auto-cancels on exactly that basis.
+      const oh = Number(l.stock_free ?? l.stock_onhand) || 0, need = Number(l.qty) || 0;
       if (oh >= need) continue;
       (oh <= 0 ? none : short).push(`${l.sku}: ${oh} of ${need}`);
       shortSkus.push(l.sku);
@@ -14537,8 +14540,8 @@
         const mi = document.getElementById('acMinutes');
         const pm = document.getElementById('acPartialMinutes');
         if (en) en.checked = !!d.policy?.enabled;
-        if (mi) mi.value = d.policy?.minutes ?? 10;
-        if (pm) pm.value = d.policy?.partialMinutes ?? 90;
+        if (mi) mi.value = d.policy?.minutes ?? 30;
+        if (pm) pm.value = d.policy?.partialMinutes ?? 30;
         const armed = document.getElementById('acArmed');
         if (armed) {
           // What is ON THE CLOCK right now, and how long the nearest one has —
@@ -14626,8 +14629,8 @@
         method: 'POST', headers: _acHdrs(),
         body: JSON.stringify({
           enabled: document.getElementById('acEnabled')?.checked,
-          minutes: Number(document.getElementById('acMinutes')?.value) || 10,
-          partialMinutes: Number(document.getElementById('acPartialMinutes')?.value) || 90,
+          minutes: Number(document.getElementById('acMinutes')?.value) || 30,
+          partialMinutes: Number(document.getElementById('acPartialMinutes')?.value) || 30,
         }),
       });
       const d = await r.json().catch(() => ({}));

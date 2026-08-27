@@ -2627,16 +2627,46 @@ function _makeSkuLookup() {
 // upload. Physical on-hand is the measure (the packer's question is "is it on
 // the shelf"); `null` means this client's stock is not tracked here, which is
 // an arrangement, not a shortage, and must never read as one.
-function orderStockStateSrv(batch, lines, lookup) {
+// STOCK PROMISED TO AN EARLIER ORDER IS NOT STOCK THIS ONE CAN HAVE.
+// Per the user: judge a landing order against AVAILABLE stock, not what is
+// physically on the shelf. The naive reading — `available_qty` — is a trap:
+// intake reserves the order's own quantity, so every order would count its own
+// reservation as missing stock and condemn itself.
+//
+// The honest per-order answer already exists. `reserveOrder` computes
+// `availableBefore` at the moment it reserves — first come, first served — and
+// records the shortfall as a BACKORDER. So the second order for the last unit
+// carries an open backorder and the first does not, which is exactly the
+// distinction needed. It is also self-clearing: `releaseBackorders` pays it
+// down when stock is received, so an order that becomes coverable stops
+// reading short without anything else being recomputed.
+function _makeBackorderIndex(db) {
+  const idx = new Map();
+  for (const bo of (db.backorders || [])) {
+    if (bo.status !== 'open' || !(Number(bo.remaining) > 0)) continue;
+    let m = idx.get(bo.order_number);
+    if (!m) { m = new Map(); idx.set(bo.order_number, m); }
+    m.set(String(bo.sku), { ordered: Number(bo.ordered) || 0, remaining: Number(bo.remaining) || 0 });
+  }
+  return idx;
+}
+function orderStockStateSrv(batch, lines, lookup, opts = {}) {
   let tracked = false, shortLines = 0, zeroLines = 0, counted = 0;
   const short = [];
+  // What THIS order was short of when it reserved, if anything.
+  const boMap = (opts.backorders && opts.orderNumber) ? opts.backorders.get(opts.orderNumber) : null;
   for (const l of lines || []) {
     if (!l || !l.sku) continue;
     const hit = lookup(batch, l.sku);
     if (!hit || !hit.found || hit.stock === null) continue;
     tracked = true; counted++;
     const need = Number(l.qty) || 0;
-    const have = Number(hit.stock) || 0;
+    let have = Number(hit.stock) || 0;
+    // The WORSE of the two views: what is on the shelf, and what this order
+    // actually got a claim on. Never the better of them — stock standing on
+    // the shelf under someone else's name cannot fill this order.
+    const bo = boMap && boMap.get(String(l.sku));
+    if (bo) have = Math.min(have, Math.max(0, (bo.ordered || need) - bo.remaining));
     if (have <= 0)      { zeroLines++;  short.push({ sku: l.sku, need, have }); }
     else if (have < need) { shortLines++; short.push({ sku: l.sku, need, have }); }
   }
@@ -2669,8 +2699,8 @@ function orderStockStateSrv(batch, lines, lookup) {
 // (partial — some lines covered, some not) now cancels too, on its own much
 // longer 90-minute clock, because a part-covered order is one a receipt or a
 // human can still rescue. Both are editable on the Connections panel.
-const AUTOCANCEL_DEFAULT_MINS = 10;
-const AUTOCANCEL_PARTIAL_DEFAULT_MINS = 90;
+const AUTOCANCEL_DEFAULT_MINS = 30;
+const AUTOCANCEL_PARTIAL_DEFAULT_MINS = 30;
 function autoCancelPolicy(db) {
   const p = db.autoCancelPolicy || {};
   return {
@@ -2698,6 +2728,7 @@ function applyNoStockAutoCancel(db, opts = {}) {
   const manual = override !== null;
   if (!inventory.available()) return { cancelled: [], armed: 0 };   // cannot judge → do nothing
   const lookup = _makeSkuLookup();
+  const boIdx = _makeBackorderIndex(db);
   const now = Date.now();
   const cancelled = [];
   let armed = 0, changed = false;
@@ -2735,7 +2766,7 @@ function applyNoStockAutoCancel(db, opts = {}) {
       if (st.autocancel_exempt) continue;
       const scanned = Object.values(st.scanned || {}).reduce((s, n) => s + (Number(n) || 0), 0);
       const busy = scanned > 0 || !!claimHolder(st) || !!st.wave_id;
-      const sk = orderStockStateSrv(b, o.lines, lookup);
+      const sk = orderStockStateSrv(b, o.lines, lookup, { orderNumber: o.order_number, backorders: boIdx });
       const kind = sk ? sk.state : null;
       if (!sk || busy || (kind !== 'none' && kind !== 'partial')) {
         // Stock arrived, someone started it, or it is not tracked — the
@@ -2819,7 +2850,7 @@ function applyNoStockAutoCancel(db, opts = {}) {
 }
 // Runs on its own clock so the rule holds whether or not anyone is looking,
 // and once shortly after boot so a restart does not reset every timer.
-setInterval(() => { try { applyNoStockAutoCancel(readDb()); } catch (e) { console.error('[auto-cancel]', e.message); } }, 5 * 60000);
+setInterval(() => { try { applyNoStockAutoCancel(readDb()); } catch (e) { console.error('[auto-cancel]', e.message); } }, 2 * 60000);
 setTimeout(() => { try { applyNoStockAutoCancel(readDb()); } catch (_) {} }, 90000);
 
 // WHEN AN ORDER WAS CANCELLED — one chain, used by every screen that dates a
@@ -2866,6 +2897,10 @@ function globalOrdersWithState(keep) {
   }
   const seen        = new Set();
   const out         = [];
+  // The office row's stock chip must say what the auto-cancel rule says —
+  // a green "Stock OK" on an order the rule is about to cancel is exactly the
+  // disagreement that made this reportable.
+  const _goBo = _makeBackorderIndex(db);
   for (const batch of db.batches) {
     const states = batch.orderStates || {};
     const wbSet  = batchWaybillSet(batch.id);
@@ -2917,6 +2952,15 @@ function globalOrdersWithState(keep) {
           // for stock this very order correctly reserved). null = not tracked.
           stock_onhand:    hit.found ? hit.stock     : null,
           stock_available: hit.found ? hit.available : null,
+          // WHAT THIS ORDER CAN ACTUALLY HAVE — on-hand capped by what it won
+          // at intake. Stock physically present but promised to an earlier
+          // order is not stock this one can be picked from, and the pill has
+          // to say so or it contradicts the rule that cancels it.
+          stock_free:      hit.found ? (() => {
+            const bo = _goBo.get(ord.order_number)?.get(String(l.sku));
+            const need = Number(l.qty) || 0;
+            return bo ? Math.min(hit.stock, Math.max(0, (bo.ordered || need) - bo.remaining)) : hit.stock;
+          })() : null,
           // WHICH ACCOUNT answered — so the pill can say where it looked
           // instead of leaving "no stock" as an unexplained verdict.
           stock_owner:     hit.found ? (hit.owner || '') : null,
@@ -5245,6 +5289,7 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
   let waitingStockOrders = 0, waitingStockPieces = 0;
   const waitingStockSample = [];
   const _ovLookup = _makeSkuLookup();
+  const _ovBo = _makeBackorderIndex(db);
   const since30 = Date.now() - 30 * 86400000;
 
   for (const b of db.batches || []) {
@@ -5270,7 +5315,7 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
         // goods are not on the shelf is waiting for stock, however it arrived
         // (API or upload), and saying "in progress" of it is a promise we are
         // not keeping.
-        const sk = orderStockStateSrv(b, o.lines, _ovLookup);
+        const sk = orderStockStateSrv(b, o.lines, _ovLookup, { orderNumber: o.order_number, backorders: _ovBo });
         if (sk && sk.state !== 'ok') {
           waitingStockOrders++; waitingStockPieces += qty;
           if (waitingStockSample.length < 20) {
@@ -5453,6 +5498,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient.trim().toLowerCase();
   const db = readDb();
   const _lookup = _makeSkuLookup();
+  const _poBo = _makeBackorderIndex(db);
   // Reconcile before answering, so a self-drop day can never show the client a
   // parcel as still sitting here — same reason the office queue does it.
   if (applyAutoPickups(db)) writeDb(db);
@@ -5489,7 +5535,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
       // it is picked and gone, a stock verdict is history and would only
       // confuse. Same computation as the office row, so the two cannot differ.
       const _sk = (st.status === 'done' || st.status === 'unprocessed')
-        ? null : orderStockStateSrv(b, o.lines, _lookup);
+        ? null : orderStockStateSrv(b, o.lines, _lookup, { orderNumber: o.order_number, backorders: _poBo });
       out.push({
         order_number: o.order_number, date: o.date || b.uploaded_at,
         status: st.status || 'pending', total_qty: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
@@ -20352,6 +20398,14 @@ async function pullZortStore(db, store, opts = {}) {
   // what earlier-uploaded label pages were waiting for (the labels arrive in
   // one PDF; the orders and their tracking numbers trickle in per pull).
   if (orders.length || updatedTracking) scheduleLabelAutoRematch('store-sync');
+  // CHECK THE MOMENT IT LANDS, per the user: an order that arrives with no
+  // stock (or only part of it) starts its clock NOW, not at the next sweep.
+  // Reported live — an order that dropped at 20:00 was still not cancelled
+  // when the client pulled their report the next morning, because IdealOne
+  // only saw it on the morning pull and the wait began from there.
+  if (orders.length) {
+    try { applyNoStockAutoCancel(db); } catch (e) { console.warn('[intake-stock-check]', e.message); }
+  }
   return store.lastResult;
 }
 

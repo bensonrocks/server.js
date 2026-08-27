@@ -1527,15 +1527,43 @@ re-stamps nothing and the trail does not grow; the lookup carries both words)
 plus a browser check that the chip renders solid red with the reclassify
 pointer in its tooltip.
 
-### Auto-cancel runs TWO clocks — no stock 10 min, insufficient stock 90 min
+### Auto-cancel: judged on what the order CAN HAVE, flipped within 30 min
 
 Per the user (27 Aug 2026). `applyNoStockAutoCancel` (5-min sweep, API orders
 of stock-tracked clients only, untouched work only, exempt-once-reopened):
 
+SUPERSEDES the 10/90 split of earlier the same day — per the user: *"as soon
+as order lands into IdealOne, check against available stock. if no stock or
+partial stock only, status to be flipped accordingly within 30mins."*
+
+- **BOTH waits are 30 minutes** (`AUTOCANCEL_DEFAULT_MINS` /
+  `AUTOCANCEL_PARTIAL_DEFAULT_MINS`), the sweep runs every **2 minutes**, and
+  `pullZortStore` runs the check **the moment orders land** — so the clock
+  starts at intake, not at the next sweep. Reported live: an order that
+  dropped at 20:00 was still not cancelled when the client pulled their report
+  the next morning, because IdealOne only saw it on the morning pull.
+- **AVAILABLE, NOT ON-HAND — and the naive reading is a trap.** Intake
+  reserves the order's own quantity, so judging on `available_qty` would make
+  every order count its own reservation as missing stock and condemn itself.
+  The honest per-order answer already exists: `reserveOrder` computes
+  `availableBefore` **first come, first served** and records the gap as a
+  BACKORDER. So `_makeBackorderIndex(db)` supplies the haircut — a line's
+  `have` is the WORSE of on-hand and what that order actually won at intake.
+  The second order for the last unit reads short; the first does not. It is
+  self-clearing too: `releaseBackorders` pays the backorder down when stock is
+  received, so an order that becomes coverable stops reading short.
+  KNOWN EDGE, stated rather than hidden: stock freed by *cancelling* another
+  order does not pay down a backorder, so a reprieve from that direction is
+  not automatic.
+- **ALL THREE READERS SHARE THE INDEX** — the auto-cancel rule, the portal
+  overview's "waiting for stock" and the portal order pill — and the office
+  chip reads a new per-line `stock_free` for the same reason. A green
+  "Stock OK" on an order the rule is about to cancel is exactly the
+  disagreement that made this reportable.
 - **NO stock** (`orderStockStateSrv` = `none`, nothing coverable on the whole
-  order) → cancelled after **10 minutes** (`AUTOCANCEL_DEFAULT_MINS`, was 60).
+  order) → cancelled after **30 minutes**.
 - **INSUFFICIENT stock** (`partial` — some lines covered, some not) now
-  cancels too, after **90 minutes** (`partialMinutes`), reason naming exactly
+  cancels too, on its own **30-minute** clock (`partialMinutes`), reason naming exactly
   what it was short of: "Insufficient stock — short of BCD (0 of 1) —
   cancelled automatically". Two clocks (`no_stock_since` /
   `short_stock_since`); a state change between them restarts on the other
@@ -1549,7 +1577,11 @@ of stock-tracked clients only, untouched work only, exempt-once-reopened):
   reservation released or stock arrived, and read as a cancellation with no
   cause.
 
-Verified 18 API checks across three phases (defaults 10/90; first sweep only
+Verified 14 API checks on the availability rule (two orders for ONE unit: the
+first can have it and is on no clock, the second can have nothing and arms the
+moment it lands, and only the second is cancelled at 31 min — under the old
+on-hand rule BOTH read "Stock OK" and neither moved until the first shipped),
+plus 18 API checks across three phases (defaults, since re-set to 30/30; first sweep only
 arms with the right kind per order; at 11 min the no-stock order cancels while
 both partials hold; at 91 min the partials cancel with the shortfall named,
 including a quantity shortfall "AC-ABC (1 of 2)"; the covered order untouched
