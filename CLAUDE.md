@@ -2082,6 +2082,23 @@ status we hold on that client's orders.
   automatically after `PORTAL_SESSION_IDLE_MIN` (15) idle minutes so a closed
   browser can never lock a client out of their own account, and the office can
   free it at once from the onboarding screen.
+  - **UNLESS THE LOGIN IS GRANTED MULTI-DEVICE** (`portalUsers[].multi_session`,
+    per the user: toggleable per login from Onboard Client → Portal logins —
+    the "One device at a time / Multiple devices" dropdown under Access).
+    Default stays one-seat. When on, each sign-in mints its OWN session key —
+    `portal:<tenant>:<userId>@<6hex>|<client>` — so devices hold separate
+    tokens instead of fighting over one; `parsePortalSessionKey` strips the
+    `@device` suffix (a user id can never contain `@`), so every downstream
+    reader sees the plain id. Capped at `PORTAL_MULTI_MAX` (8) live devices,
+    refused with the count named; idle variants are swept at each login so
+    persisted sessions cannot grow for ever. **Every teardown site goes
+    through `deletePortalSessions`** (sign-out is per-device; switch-off,
+    remove, ⏏ release, profile wipe and turning multi OFF kill ALL the
+    login's keys — a variant that survives its login is the bug this helper
+    exists to prevent). Turning the toggle OFF asks first on the office
+    screen, signs every device out, and the next sign-in retakes the single
+    seat. The row pill reads "● in use ×N". Verified 21 API + 6 browser
+    checks, including the ninth-device refusal and the off-toggle teardown.
 - Session key is `portal:<tenant>:<userId>|<client>`. The **pipe** matters: a
   client name may contain a colon, and a pre-existing session (no pipe) still
   parses as the legacy single account instead of taking the first word of the

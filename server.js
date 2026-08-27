@@ -3975,6 +3975,9 @@ const PORTAL_ACCESS = new Set(['full', 'view']);
 // the account over. Without this, "one place at a time" would lock a client out
 // of their own account until a session they can no longer reach expires.
 const PORTAL_SESSION_IDLE_MIN = 15;
+// How many devices a MULTI-DEVICE portal login may hold at once. A backstop,
+// not a plan — idle seats free themselves on the same 15-minute rule.
+const PORTAL_MULTI_MAX = 8;
 
 // ── WHAT EACH LOGIN MAY SEE — per user, granted by us ──────────────────────
 // Access (full / view) says what a login may DO. This is the other question:
@@ -4093,14 +4096,20 @@ function portalUsers(profile) {
 }
 // What the office may see. NEVER the salt or the hash.
 function portalUserPublic(u, live, profile) {
+  // `live` is either the one-seat meta or the ARRAY livePortalSessionsAll
+  // returns for a multi-device login — normalised here so the office row can
+  // say "signed in on 3 devices" without a second shape.
+  const list = Array.isArray(live) ? live : (live ? [{ meta: live }] : []);
   return {
     id: u.id, name: u.name || u.id, email: u.email || '',
     access: u.access === 'view' ? 'view' : 'full',
     enabled: u.enabled !== false,
     hasPassword: !!u.passwordHash,
+    multi_session: !!u.multi_session,
     last_login_at: u.last_login_at || null,
-    signed_in: !!live,                        // someone is using it right now
-    signed_in_at: live?.at || null,
+    signed_in: list.length > 0,               // someone is using it right now
+    signed_in_at: list[0]?.meta?.at || null,
+    sessions: list.length,
     // What THIS login sees. Resolved, not raw, so the screen shows the same
     // answer the middleware will give rather than an empty object.
     visibility: portalUserVisibility(profile, u),
@@ -4130,9 +4139,38 @@ function parsePortalSessionKey(sessionKey) {
   const tenantId = sep >= 0 ? rest.slice(0, sep) : tenantStore.DEFAULT_TENANT_ID;
   const tail = sep >= 0 ? rest.slice(sep + 1) : rest;
   const pipe = tail.indexOf('|');
-  return pipe >= 0
-    ? { tenantId, userId: tail.slice(0, pipe), client: tail.slice(pipe + 1) }
-    : { tenantId, userId: 'main', client: tail };   // a session from before accounts existed
+  if (pipe < 0) return { tenantId, userId: 'main', client: tail };   // a session from before accounts existed
+  let userId = tail.slice(0, pipe);
+  // A MULTI-DEVICE login mints one key PER DEVICE — `userId@a1b2c3` — so two
+  // phones hold two tokens instead of fighting over one seat. The id itself
+  // can never contain '@' (portalUserId strips to [a-z0-9-]), so this suffix
+  // is unambiguous, and every reader past this point sees the plain user id.
+  const at = userId.indexOf('@');
+  if (at >= 0) userId = userId.slice(0, at);
+  return { tenantId, userId, client: tail.slice(pipe + 1) };
+}
+// EVERY key this login holds: the exact one-seat key plus any per-device
+// variants. One place, because five call sites (sign-out, switch-off, remove,
+// release, profile wipe) each deleting only the exact key is how a variant
+// session would outlive the login it belongs to.
+function portalSessionKeysFor(tenantId, userId, client) {
+  const exact = portalSessionKey(tenantId, userId, client);
+  const prefix = `portal:${tenantId}:${userId}@`;
+  const suffix = `|${client}`;
+  const keys = [];
+  for (const key of activeSessions.keys()) {
+    if (key === exact || (key.startsWith(prefix) && key.endsWith(suffix))) keys.push(key);
+  }
+  return keys;
+}
+function deletePortalSessions(tenantId, userId, client) {
+  const keys = portalSessionKeysFor(tenantId, userId, client);
+  for (const key of keys) { activeSessions.delete(key); portalSessionMeta.delete(key); }
+  return keys.length;
+}
+function _portalMetaLive(meta) {
+  const seen = new Date(meta?.lastSeenAt || meta?.at || 0).getTime();
+  return !!seen && Date.now() - seen <= PORTAL_SESSION_IDLE_MIN * 60000;
 }
 // Is this account already in use somewhere? Idle sessions are not "in use" —
 // see PORTAL_SESSION_IDLE_MIN.
@@ -4140,9 +4178,17 @@ function livePortalSession(tenantId, client, userId) {
   const key = portalSessionKey(tenantId, userId, client);
   if (!activeSessions.has(key)) return null;
   const meta = portalSessionMeta.get(key);
-  const seen = new Date(meta?.lastSeenAt || meta?.at || 0).getTime();
-  if (!seen || Date.now() - seen > PORTAL_SESSION_IDLE_MIN * 60000) return null;
-  return meta || { at: null, lastSeenAt: null };
+  return _portalMetaLive(meta) ? (meta || { at: null, lastSeenAt: null }) : null;
+}
+// All LIVE sessions this login holds, device variants included — what the
+// office row's "signed in" pill and the multi-device cap both count.
+function livePortalSessionsAll(tenantId, client, userId) {
+  const out = [];
+  for (const key of portalSessionKeysFor(tenantId, userId, client)) {
+    const meta = portalSessionMeta.get(key);
+    if (_portalMetaLive(meta)) out.push({ key, meta: meta || { at: null, lastSeenAt: null } });
+  }
+  return out;
 }
 
 // ── Admin: the client's portal accounts (max 5) ─────────────────────────────
@@ -4440,8 +4486,7 @@ app.post('/api/master/client-data/wipe', express.json(), (req, res) => {
     const gone = clientProfiles(db).filter(p => mine(p.client));
     for (const p of gone) {
       for (const u of portalUsers(p)) {
-        const key = portalSessionKey(tenantId, u.id, p.client);
-        activeSessions.delete(key); portalSessionMeta.delete(key);
+        deletePortalSessions(tenantId, u.id, p.client);
         bump('portal_users', 1);
       }
     }
@@ -4491,7 +4536,7 @@ app.get('/api/master/client-profiles/:client/portal-users', (req, res) => {
   res.json({
     max: PORTAL_MAX_USERS,
     enabled: !!p.portal?.enabled,
-    users: users.map(u => portalUserPublic(u, livePortalSession(tenantId, p.client, u.id), p)),
+    users: users.map(u => portalUserPublic(u, livePortalSessionsAll(tenantId, p.client, u.id), p)),
     // Which sections exist — the same payload the editor renders from, so the
     // office never has to guess which keys there are. What each login SEES
     // rides on that login's own row.
@@ -4550,12 +4595,25 @@ app.post('/api/master/client-profiles/:client/portal-users', express.json(), (re
     u.salt = uuidv4().slice(0, 8);
     u.passwordHash = hashPass(pw, u.salt);
   }
-  // Switching an account off must also end whatever session it is holding —
-  // otherwise a revoked login keeps working until its next request.
+  // MULTI-DEVICE, per login — the same-user-several-sessions arrangement the
+  // user asked to toggle from the onboarding screen. Turning it OFF tears the
+  // login's sessions down: the extra devices exist only under this grant, and
+  // one of them re-signs-in under the one-seat rule.
   const tenantId = tenantContext.currentTenantId();
+  let multiChanged = null;
+  if (b.multi_session !== undefined) {
+    const next = !!b.multi_session;
+    if (!!u.multi_session !== next) {
+      multiChanged = next;
+      u.multi_session = next;
+      if (!next && deletePortalSessions(tenantId, u.id, p.client)) persistSessions();
+    }
+  }
+  // Switching an account off must also end whatever session it is holding —
+  // otherwise a revoked login keeps working until its next request. ALL its
+  // keys, device variants included.
   if (u.enabled === false) {
-    const key = portalSessionKey(tenantId, u.id, p.client);
-    activeSessions.delete(key); portalSessionMeta.delete(key); persistSessions();
+    if (deletePortalSessions(tenantId, u.id, p.client)) persistSessions();
   }
   p.portal = p.portal || {};
   if (p.portal.enabled === undefined) p.portal.enabled = true;
@@ -4563,6 +4621,7 @@ app.post('/api/master/client-profiles/:client/portal-users', express.json(), (re
   logAudit('client_portal_user_saved', {
     client: p.client, user: u.id, access: u.access, enabled: u.enabled !== false,
     passwordSet: !!pw, by: req.userId || 'master',
+    ...(multiChanged !== null ? { multiSession: multiChanged } : {}),
   });
   if (visChanged) {
     // Its own event: what a person may SEE is a different decision from what
@@ -4575,7 +4634,7 @@ app.post('/api/master/client-profiles/:client/portal-users', express.json(), (re
       changed: visChanged, by: req.userId || 'master',
     });
   }
-  res.json({ ok: true, user: portalUserPublic(u, livePortalSession(tenantId, p.client, u.id), p) });
+  res.json({ ok: true, user: portalUserPublic(u, livePortalSessionsAll(tenantId, p.client, u.id), p) });
 });
 
 app.delete('/api/master/client-profiles/:client/portal-users/:userId', (req, res) => {
@@ -4588,8 +4647,7 @@ app.delete('/api/master/client-profiles/:client/portal-users/:userId', (req, res
   if (!u) return res.status(404).json({ error: 'login not found' });
   p.portalUsers = users.filter(x => x.id !== u.id);
   const tenantId = tenantContext.currentTenantId();
-  const key = portalSessionKey(tenantId, u.id, p.client);
-  activeSessions.delete(key); portalSessionMeta.delete(key); persistSessions();
+  deletePortalSessions(tenantId, u.id, p.client); persistSessions();
   writeDb(db);
   logAudit('client_portal_user_removed', { client: p.client, user: u.id, by: req.userId || 'master' });
   res.json({ ok: true });
@@ -4603,12 +4661,12 @@ app.post('/api/master/client-profiles/:client/portal-users/:userId/release', (re
   const p = clientProfiles(db).find(x => x.client === req.params.client);
   if (!p) return res.status(404).json({ error: 'client not found' });
   const tenantId = tenantContext.currentTenantId();
-  const key = portalSessionKey(tenantId, req.params.userId, p.client);
-  const had = activeSessions.delete(key);
-  portalSessionMeta.delete(key);
-  if (had) persistSessions();
-  logAudit('client_portal_session_released', { client: p.client, user: req.params.userId, had, by: req.userId || 'master' });
-  res.json({ ok: true, released: had });
+  // ALL of the login's seats, device variants included — releasing one of
+  // three phones is not what anyone pressing this button means.
+  const n = deletePortalSessions(tenantId, req.params.userId, p.client);
+  if (n) persistSessions();
+  logAudit('client_portal_session_released', { client: p.client, user: req.params.userId, had: n > 0, sessions: n, by: req.userId || 'master' });
+  res.json({ ok: true, released: n > 0, sessions: n });
 });
 
 function _findClientAcrossTenants(clientNorm) {
@@ -4705,23 +4763,45 @@ app.post('/api/portal/login', express.json(), (req, res) => {
     return res.status(401).json({ error: 'Invalid password' });
   }
 
-  // ONE PLACE AT A TIME. Per the user, an account already signed in elsewhere
-  // cannot be used from a second device. Refused rather than silently kicking
-  // the first device off, so nobody loses a half-finished upload without being
-  // told — and released automatically once that session goes idle, so a closed
-  // browser can never lock a client out of their own account.
-  const live = livePortalSession(found.tenantId, p.client, user.id);
-  if (live) {
-    tenantContext.run(found.tenantId, () => logAudit('portal_login_blocked_in_use', { client: p.client, user: user.id }));
-    return res.status(409).json({
-      error: `"${user.name || user.id}" is already signed in on another device. Sign out there first, or wait ${PORTAL_SESSION_IDLE_MIN} minutes and try again.`,
-      inUse: true,
-    });
+  // ONE PLACE AT A TIME — unless this LOGIN has been granted multi-device on
+  // the onboarding screen. Per the user, both arrangements are real: the
+  // default account is refused a second seat rather than silently kicking the
+  // first device off (nobody loses a half-finished upload without being told,
+  // and the seat frees itself once idle); a multi-device login instead mints
+  // one session key PER DEVICE, so a warehouse contact's phone and a finance
+  // contact's desktop can share the login at the same time.
+  let key;
+  if (user.multi_session) {
+    // Sweep this login's IDLE variants first — an idle seat is a dead seat
+    // (same rule the one-seat model applies), and without the sweep every
+    // login would leave one persisted session entry behind for ever.
+    const tid = found.tenantId;
+    for (const k of portalSessionKeysFor(tid, user.id, p.client)) {
+      if (!_portalMetaLive(portalSessionMeta.get(k))) { activeSessions.delete(k); portalSessionMeta.delete(k); }
+    }
+    const liveNow = livePortalSessionsAll(tid, p.client, user.id);
+    if (liveNow.length >= PORTAL_MULTI_MAX) {
+      tenantContext.run(tid, () => logAudit('portal_login_blocked_in_use', { client: p.client, user: user.id, devices: liveNow.length }));
+      return res.status(409).json({
+        error: `"${user.name || user.id}" is already signed in on ${liveNow.length} devices — the most one login may hold. Sign out somewhere first.`,
+        inUse: true,
+      });
+    }
+    key = `portal:${tid}:${user.id}@${crypto.randomBytes(3).toString('hex')}|${p.client}`;
+  } else {
+    const live = livePortalSession(found.tenantId, p.client, user.id);
+    if (live) {
+      tenantContext.run(found.tenantId, () => logAudit('portal_login_blocked_in_use', { client: p.client, user: user.id }));
+      return res.status(409).json({
+        error: `"${user.name || user.id}" is already signed in on another device. Sign out there first, or wait ${PORTAL_SESSION_IDLE_MIN} minutes and try again.`,
+        inUse: true,
+      });
+    }
+    key = portalSessionKey(found.tenantId, user.id, p.client);
   }
 
   loginSuccess(req, 'ptl:' + cNorm);
   const token = uuidv4();
-  const key = portalSessionKey(found.tenantId, user.id, p.client);
   activeSessions.set(key, token);
   const now = new Date().toISOString();
   portalSessionMeta.set(key, { at: now, lastSeenAt: now, ip: clientInfo(req).ip });

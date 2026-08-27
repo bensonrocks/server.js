@@ -12025,7 +12025,7 @@
       $('obUserList').innerHTML = `<table class="tbl" style="width:100%;border-collapse:collapse;font-size:.83rem">
         <thead><tr><th>Name</th><th>Email</th><th>Access</th><th>Last signed in</th><th></th></tr></thead>
         <tbody>${obUsers.map(u => `<tr>
-          <td><b>${esc(u.name)}</b>${u.signed_in ? ' <span class="cs-pill ok" title="Signed in right now">● in use</span>' : ''}
+          <td><b>${esc(u.name)}</b>${u.signed_in ? ` <span class="cs-pill ok" title="Signed in right now">● in use${u.sessions > 1 ? ` ×${u.sessions}` : ''}</span>` : ''}
               ${u.enabled ? '' : ' <span class="cs-pill bad">off</span>'}
               ${u.hasPassword ? '' : ' <span class="cs-pill warn">no password</span>'}
               <div class="hint">${esc(u.id)}</div>${visSummary(u)}</td>
@@ -12034,6 +12034,10 @@
             <select class="ob-user-access" data-id="${esc(u.id)}" style="padding:.3rem .45rem;border:1px solid #e2e8f0;border-radius:6px">
               <option value="full" ${u.access === 'full' ? 'selected' : ''}>Full access</option>
               <option value="view" ${u.access === 'view' ? 'selected' : ''}>View only</option>
+            </select>
+            <select class="ob-user-multi" data-id="${esc(u.id)}" title="How many places this login may be signed in at once. One-at-a-time refuses a second device; multiple lets the same login run on several phones/desktops together." style="display:block;margin-top:.25rem;padding:.3rem .45rem;border:1px solid #e2e8f0;border-radius:6px">
+              <option value="" ${u.multi_session ? '' : 'selected'}>One device at a time</option>
+              <option value="1" ${u.multi_session ? 'selected' : ''}>Multiple devices</option>
             </select>
           </td>
           <td class="hint">${u.last_login_at ? new Date(u.last_login_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : 'never'}</td>
@@ -12054,6 +12058,19 @@
         const d = await r.json();
         if (!r.ok) { msg(d.error || 'Could not change access', true); loadPortalUsers(); return; }
         msg(`${d.user.name} is now ${d.user.access === 'view' ? 'view only' : 'full access'}.`);
+        loadPortalUsers();
+      }));
+      // SAME LOGIN, SEVERAL DEVICES — per login, toggled here. Switching it
+      // back to one-at-a-time signs the extra devices out, so it asks first.
+      $('obUserList').querySelectorAll('.ob-user-multi').forEach(sel => sel.addEventListener('change', async () => {
+        const on = sel.value === '1';
+        if (!on && !confirm('Back to one device at a time?\n\nAnything this login is signed in on is signed out now, and the next sign-in takes the single seat.')) {
+          loadPortalUsers(); return;
+        }
+        const r = await save(sel.dataset.id, { multi_session: on });
+        const d = await r.json();
+        if (!r.ok) { msg(d.error || 'Could not change it', true); loadPortalUsers(); return; }
+        msg(`${d.user.name} may now sign in on ${on ? 'several devices at once' : 'one device at a time'}.`);
         loadPortalUsers();
       }));
       // The report ticks only mean anything while Reports itself is on.
