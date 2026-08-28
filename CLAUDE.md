@@ -6897,6 +6897,14 @@ and CAPTURES the PDF the page loads.
   captures one real label, reporting KB captured or the exact failure. The
   store list carries `webLabelReady` / `webLoginFailed` / `webWorkerAvailable`
   so the form states plainly whether auto-fetch will work.
+- **THE TEST PICKS AN ORDER THAT CAN ACTUALLY HAVE A LABEL.** Reported live:
+  the test said "169695681367365 no label" and read as a login failure — it
+  had grabbed the FIRST synced order, which was not Ready-to-Ship, so no label
+  could exist for it. The test now scans synced orders (waybill-carrying
+  first, capped at 20), tries each through the API until one hands back a
+  label-page URL, and drives the browser on that one; if NONE is RTS'd it says
+  so as guidance ("checked N orders and none has a label out yet … this is NOT
+  a login failure"). A named non-RTS order gets the same clear reason.
 
 Verified with a real Chromium against a mock ZORT-web (login page + a
 script-shell print viewer whose PDF is served ONLY with the session cookie —
