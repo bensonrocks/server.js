@@ -21359,6 +21359,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
           tried: (got.tried || []).slice(0, 6),
           probe: (got.probe || []).slice(0, 6),
           keys: (got.keysSeen || []).slice(0, 12),
+          files: (got.filesSeen || []).slice(0, 10),
         };
         // 'unshaped' = the reply parsed but carried NO row container we
         // recognise — a reader gap, not a missing label. The KEY NAMES on the

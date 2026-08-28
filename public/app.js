@@ -12826,11 +12826,16 @@
                 bits.push(`      ${t.field} → ${t.host || '?'} ${t.status ?? ''}${t.type ? ' ' + t.type : ''}`
                   + `${t.bytes !== undefined ? ' ' + t.bytes + 'b' : ''}${t.head ? ' “' + t.head + '”' : ''}`
                   + `${t.htmlLinks !== undefined ? ` · ${t.htmlLinks} link(s) inside` : ''}${t.error ? ' ' + t.error : ''}`);
+                for (const h of (t.hops || [])) {
+                  bits.push(`        ↳ ${h.url} → ${h.status ?? '?'}${h.type ? ' ' + h.type : ''}`
+                    + `${h.bytes !== undefined ? ' ' + h.bytes + 'b' : ''}${h.head ? ' “' + h.head + '”' : ''}${h.error ? ' ' + h.error : ''}`);
+                }
                 if (t.hint) bits.push(`      ⚠ ${t.hint}`);
               }
               for (const pv of (x.diag?.probe || [])) {
                 bits.push(`      ${pv.field} = ${pv.len ? `“${pv.head}”` : '(empty)'}`);
               }
+              if ((x.diag?.files || []).length) bits.push(`      files on the order: ${x.diag.files.join(', ')}`);
               return bits.length ? '\n' + bits.join('\n') : '';
             };
             for (const [title, rows] of [['Still waiting:', d.stillWaiting || []], ['Refused:', d.failed || []]]) {

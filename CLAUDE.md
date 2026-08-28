@@ -1818,6 +1818,16 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     not more retries. Verified 5 checks: the print-page hop fetches and
     attaches the PDF (cookie-gated asset included, via `list-url-html`), and
     the sign-in page names itself instead of retrying.
+  - **EVERY HOP REPORTS ITSELF TOO** (28 Aug 2026 — the live retry read
+    "2 link(s) inside" with no outcome per link, the last blind spot). Each
+    hop records url tail / status / content-type / bytes / first bytes, and
+    two hints are told apart in words: a page announcing a sign-in form, vs a
+    SCRIPT-SHELL browser app whose PDF only loads inside a logged-in session —
+    the latter suggesting the one-click workflow (print from ZORT's screen
+    first, then 🏷 Get Labels imports everything). `filesSeen` now rides on
+    the unusable verdict too, so the dialog says whether ZORT's own print has
+    ever stored files on the order — the fact that decides which world we are
+    in.
   - **AND EVERY LINK NOW SAYS WHAT IT DID.** "linkurl was empty" and "the link
     answered 403 with HTML" are different faults that looked identical from
     outside, which is what cost the round trips. Each URL fetch records
