@@ -22856,15 +22856,60 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
     return res.status(409).json({ error: 'Label pull is switched off for this store — turn it on first (the store form).' });
   }
   const labels = db.orderLabels || {};
-  const wanted = [];
+  // ONLY THE ORDERS A LABEL CAN EXIST FOR — per the user. A marketplace label
+  // is minted at READY-TO-SHIP and not before, so an order still short of
+  // stock / part-covered / on a virtual warehouse / a pre-order is not a
+  // candidate: none of those get RTS'd. We gate on two things:
+  //   1. OUR OWN stock verdict — skip 'none'/'partial' outright (cheap, no
+  //      hub call, and it also covers virtual-warehouse/pre-order which read
+  //      as short here since we hold no stock for them);
+  //   2. ZORT'S OWN STATUS — the authoritative signal. Only waiting (RTS'd) /
+  //      shipping / success can have a label. Read in ONE getOrdersByNumbers
+  //      call per 100, never one-per-order.
+  const _lookup = _makeSkuLookup();
+  const _bo = _makeBackorderIndex(db);
+  const candidates = [], skippedStock = [];
   for (const b of db.batches || []) {
     for (const o of b.orders || []) {
       if (String(o.zort_store_id || '') !== String(store.id) || !o.zort_id) continue;
       const st = (b.orderStates || {})[o.order_number] || {};
       if (st.status === 'unprocessed') continue;          // cancelled — no label wanted
       if (labels[o.order_number]) continue;               // already has one
-      wanted.push({ orderNumber: o.order_number, zortId: o.zort_id, tracking: o.waybill_number || '' });
+      // Our own view of coverage — 'none'/'partial' are not label-ready.
+      const sk = orderStockStateSrv(b, o.lines, _lookup, { orderNumber: o.order_number, backorders: _bo });
+      if (sk && (sk.state === 'none' || sk.state === 'partial')) {
+        skippedStock.push({ order: o.order_number, why: sk.state === 'none'
+          ? 'no stock — not ready to ship' : `short of ${(sk.short || []).slice(0, 3).map(s => s.sku).join(', ')} — not ready to ship` });
+        continue;
+      }
+      candidates.push({ orderNumber: o.order_number, zortId: o.zort_id, tracking: o.waybill_number || '' });
     }
+  }
+  // Ask ZORT where each candidate stands — a label only exists from RTS on.
+  const wanted = [], notReady = [];
+  try {
+    const byId = new Map();
+    for (let i = 0; i < candidates.length; i += 100) {
+      const nums = candidates.slice(i, i + 100).map(c => c.orderNumber);
+      const d = await zortApi.getOrdersByNumbers(store, nums);
+      for (const z of d.list || d.orders || []) byId.set(String(z.number || '').trim(), z);
+    }
+    for (const c of candidates) {
+      const z = byId.get(c.orderNumber);
+      const stw = z ? zortStatusWord(z.status) : '';
+      if (z && ZORT_RTS_DONE.includes(stw)) {
+        // Backfill tracking off the hub if we lack it — the browser worker's
+        // page link is keyed on it.
+        const trk = zortTracking(z);
+        wanted.push({ ...c, tracking: c.tracking || trk || '' });
+      } else {
+        notReady.push({ order: c.orderNumber, why: z
+          ? `ZORT status "${stw || 'unknown'}" — not Ready to Ship yet, so no marketplace label exists`
+          : 'ZORT does not return this order — cannot confirm Ready to Ship' });
+      }
+    }
+  } catch (e) {
+    return res.status(502).json({ error: `Could not read ZORT to check which orders are Ready to Ship — ${String(e.message || e).slice(0, 200)}` });
   }
   // Revive existing jobs and queue the missing ones. enqueueZortLabel already
   // clears `stalled` and re-arms an entry it finds, so one call does both.
@@ -22908,13 +22953,19 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
     if (e && e.lastDiag) row.diag = e.lastDiag;
     if (e && e.stalled) failed.push(row); else waiting.push(row);
   }
+  const skippedTotal = notReady.length + skippedStock.length;
   res.json({
     ok: true, asked: wanted.length,
     attached: got.length, orders: got.slice(0, 50),
     stillWaiting: waiting.slice(0, 50), failed: failed.slice(0, 50),
-    note: wanted.length
-      ? `${got.length} of ${wanted.length} label(s) came in.`
-      : 'Every synced order on this store already has its label.',
+    // Orders a label CANNOT exist for yet — reported, never chased, so a
+    // browser session is never spent on a label that is not there.
+    notReady: notReady.slice(0, 50), skippedStock: skippedStock.slice(0, 50),
+    skippedCount: skippedTotal,
+    note: (wanted.length
+      ? `${got.length} of ${wanted.length} Ready-to-Ship label(s) came in.`
+      : 'No Ready-to-Ship orders are waiting for a label.')
+      + (skippedTotal ? ` ${skippedTotal} order(s) skipped — not Ready to Ship in ZORT yet.` : ''),
   });
 });
 

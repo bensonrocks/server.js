@@ -1836,6 +1836,21 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     both ride on the outbox entry (`lastDiag`) and are printed per order by the
     🏷 Get Labels dialog. **Never on the audit trail** — a label URL carries the
     customer's address and the trail is permanent and emailed.
+  - **A LABEL IS ONLY CHASED FOR AN ORDER THAT CAN HAVE ONE** (per the user:
+    "only after RTS in zort then you can download the Marketplace label"). The
+    marketplace label is minted at Ready-to-Ship and not before, so 🏷 Get
+    Labels now TALLIES each candidate against two gates before spending a fetch
+    (and, crucially, a browser session): (1) OUR OWN stock verdict — an order
+    reading `none`/`partial` is skipped, which also covers virtual-warehouse
+    and pre-order orders since we hold no stock for them; (2) ZORT'S OWN STATUS,
+    read in ONE `getOrdersByNumbers` call per 100 — only `waiting` (RTS'd) /
+    `shipping` / `success` is pursued. Everything skipped is REPORTED
+    (`notReady` / `skippedStock`) with the reason, so a "missing" order is never
+    a mystery — it is named as "ZORT status pending — not Ready to Ship yet".
+    Verified 5 checks: an RTS'd, in-stock order with a label is fetched and
+    attached; an RTS'd order whose label is not out yet waits; a Pending order
+    is skipped as not-ready; a short-stock order is skipped even though RTS'd;
+    and neither skipped order is chased.
   - **"THE LABELS ARE OUT AT THE CHANNEL — FETCH THEM NOW"**
     (`POST /api/master/zort/stores/:id/labels/retry`, 🏷 Get Labels on the
     store row). A plain outbox drain does NOT revive a `stalled` entry, so a

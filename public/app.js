@@ -12842,6 +12842,14 @@
               if (!rows.length) continue;
               lines.push('', title, ...rows.slice(0, 6).map(x => `  • ${x.order} — ${x.why}${diagOf(x)}`));
             }
+            // NOT READY TO SHIP — a label cannot exist yet, so it was never
+            // chased. Named so nobody wonders why an order is "missing".
+            const skips = [...(d.notReady || []), ...(d.skippedStock || [])];
+            if (skips.length) {
+              lines.push('', `Not ready (${skips.length}) — no label until Ready to Ship in ZORT:`,
+                ...skips.slice(0, 8).map(x => `  – ${x.order} — ${x.why}`));
+              if (skips.length > 8) lines.push(`  …and ${skips.length - 8} more`);
+            }
             zortStatus('success', `${d.attached} of ${d.asked} label(s) attached.`);
             alert(lines.join('\n'));
             loadZortStores();
