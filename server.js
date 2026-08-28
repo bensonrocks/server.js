@@ -21351,6 +21351,15 @@ async function _zortSendOutboxEntry(db, store, entry) {
       // waiting on it costs a request every few minutes for a day. Reported
       // live as "GetShipmentLabels succeeds but I don't get the labels".
       if (got && (got.why === 'unusable' || got.why === 'unshaped')) {
+        // WHAT EACH LINK ACTUALLY DID is the evidence that ends this class of
+        // bug — kept on the ENTRY (read back by the retry action's report),
+        // never on the audit trail, since a label URL carries the customer's
+        // address and the trail is permanent and emailed.
+        entry.lastDiag = {
+          tried: (got.tried || []).slice(0, 6),
+          probe: (got.probe || []).slice(0, 6),
+          keys: (got.keysSeen || []).slice(0, 12),
+        };
         // 'unshaped' = the reply parsed but carried NO row container we
         // recognise — a reader gap, not a missing label. The KEY NAMES on the
         // trail (names only) are exactly the evidence needed to widen the
@@ -22831,8 +22840,9 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
   for (const w of wanted) {
     if (afterLabels[w.orderNumber]) { got.push(w.orderNumber); continue; }
     const e = afterOb.find(x => x.kind === 'label' && x.storeId === store.id && x.orderNumber === w.orderNumber);
-    if (e && e.stalled) failed.push({ order: w.orderNumber, why: String(e.lastError || 'stalled').slice(0, 200) });
-    else waiting.push({ order: w.orderNumber, why: String(e?.lastError || 'still queued').slice(0, 200) });
+    const row = { order: w.orderNumber, why: String(e?.lastError || (e ? 'still queued' : 'no job')).slice(0, 200) };
+    if (e && e.lastDiag) row.diag = e.lastDiag;
+    if (e && e.stalled) failed.push(row); else waiting.push(row);
   }
   res.json({
     ok: true, asked: wanted.length,

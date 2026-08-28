@@ -1796,6 +1796,21 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     serves old fixtures while the pid file points elsewhere — kill by /proc
     cmdline scan, and give each order's fixture PDF its OWN order number or
     the text matcher files it under the wrong order (correctly).
+  - **`format: url` — AND THE URL IS NESTED.** Proven live (28 Aug 2026) by
+    the 🏷 Get Labels report itself: "0 of 17 came in … the channel offered
+    **lazada/url** (row keys: linkurl, type, list, data, format)". The row is
+    NOT flat — `list` is a nested array — and the reader only took top-level
+    scalars, so the actual label URL was never seen. `_rowToPdf` now walks the
+    whole row (arrays and objects, 3 levels), so any URL or base64 anywhere in
+    it is a candidate.
+  - **AND EVERY LINK NOW SAYS WHAT IT DID.** "linkurl was empty" and "the link
+    answered 403 with HTML" are different faults that looked identical from
+    outside, which is what cost the round trips. Each URL fetch records
+    `{field, host, status, content-type, bytes, first bytes}` and each url-ish
+    field that was NOT a fetchable URL records its length and first 60 chars;
+    both ride on the outbox entry (`lastDiag`) and are printed per order by the
+    🏷 Get Labels dialog. **Never on the audit trail** — a label URL carries the
+    customer's address and the trail is permanent and emailed.
   - **"THE LABELS ARE OUT AT THE CHANNEL — FETCH THEM NOW"**
     (`POST /api/master/zort/stores/:id/labels/retry`, 🏷 Get Labels on the
     store row). A plain outbox drain does NOT revive a `stalled` entry, so a

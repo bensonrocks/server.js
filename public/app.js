@@ -12817,9 +12817,23 @@
             if ((d.orders || []).length) lines.push('', 'Came in:', ...d.orders.slice(0, 15).map(o => `  ✓ ${o}`));
             // A LABEL THAT DID NOT COME IN SAYS WHY, in the channel's own
             // words — "nothing happened" is what sent people hunting.
+            // WHAT THE LINK ACTUALLY DID, not just that it did not work —
+            // "linkurl was empty" and "the link answered 403 with HTML" are
+            // different faults and a screenshot has to be able to say which.
+            const diagOf = (x) => {
+              const bits = [];
+              for (const t of (x.diag?.tried || [])) {
+                bits.push(`      ${t.field} → ${t.host || '?'} ${t.status ?? ''}${t.type ? ' ' + t.type : ''}`
+                  + `${t.bytes !== undefined ? ' ' + t.bytes + 'b' : ''}${t.head ? ' “' + t.head + '”' : ''}${t.error ? ' ' + t.error : ''}`);
+              }
+              for (const pv of (x.diag?.probe || [])) {
+                bits.push(`      ${pv.field} = ${pv.len ? `“${pv.head}”` : '(empty)'}`);
+              }
+              return bits.length ? '\n' + bits.join('\n') : '';
+            };
             for (const [title, rows] of [['Still waiting:', d.stillWaiting || []], ['Refused:', d.failed || []]]) {
               if (!rows.length) continue;
-              lines.push('', title, ...rows.slice(0, 10).map(x => `  • ${x.order} — ${x.why}`));
+              lines.push('', title, ...rows.slice(0, 6).map(x => `  • ${x.order} — ${x.why}${diagOf(x)}`));
             }
             zortStatus('success', `${d.attached} of ${d.asked} label(s) attached.`);
             alert(lines.join('\n'));
