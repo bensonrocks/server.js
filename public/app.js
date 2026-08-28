@@ -12824,7 +12824,9 @@
               const bits = [];
               for (const t of (x.diag?.tried || [])) {
                 bits.push(`      ${t.field} → ${t.host || '?'} ${t.status ?? ''}${t.type ? ' ' + t.type : ''}`
-                  + `${t.bytes !== undefined ? ' ' + t.bytes + 'b' : ''}${t.head ? ' “' + t.head + '”' : ''}${t.error ? ' ' + t.error : ''}`);
+                  + `${t.bytes !== undefined ? ' ' + t.bytes + 'b' : ''}${t.head ? ' “' + t.head + '”' : ''}`
+                  + `${t.htmlLinks !== undefined ? ` · ${t.htmlLinks} link(s) inside` : ''}${t.error ? ' ' + t.error : ''}`);
+                if (t.hint) bits.push(`      ⚠ ${t.hint}`);
               }
               for (const pv of (x.diag?.probe || [])) {
                 bits.push(`      ${pv.field} = ${pv.len ? `“${pv.head}”` : '(empty)'}`);

@@ -1803,6 +1803,21 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
     scalars, so the actual label URL was never seen. `_rowToPdf` now walks the
     whole row (arrays and objects, 3 levels), so any URL or base64 anywhere in
     it is a candidate.
+  - **THE LINK IS A PRINT PAGE, NOT THE PDF — follow it ONE hop.** The
+    diagnostics above earned their keep on their first outing: `linkurl →
+    secure.zortout.com 200 text/html 26844b "<!DOCTYPE html>"`. The hub's
+    label link opens its own print-VIEWER page; the PDF is referenced inside
+    it. A fetched URL that answers HTML (<1MB) is now scanned for label-ish
+    URLs (absolute, href/src, meta-refresh — never css/js/images), each tried
+    once — ONE hop only, never HTML into HTML. The page's OWN cookies ride on
+    a same-host hop (a viewer that sets a session then serves the asset is a
+    normal shape); API credentials still go nowhere but the store's API host.
+    A page with no label-ish link that talks about signing in is reported in
+    words — "needs a browser session, not an API call" — the honest dead end,
+    at which point the label needs ZORT's UI (or ZORT support's API answer),
+    not more retries. Verified 5 checks: the print-page hop fetches and
+    attaches the PDF (cookie-gated asset included, via `list-url-html`), and
+    the sign-in page names itself instead of retrying.
   - **AND EVERY LINK NOW SAYS WHAT IT DID.** "linkurl was empty" and "the link
     answered 403 with HTML" are different faults that looked identical from
     outside, which is what cost the round trips. Each URL fetch records
