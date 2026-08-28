@@ -6838,3 +6838,53 @@ records it, so the name and the sha can never drift apart.
 - Master key: `process.env.MASTER_KEY || '201432547E'`
 - User auth: `x-auth-token` header checked against `activeSessions` Map
 - Admin routes use `checkMaster(req, res)`
+
+### The browser-automation worker — the Lazada label ZORT keeps behind its login (lib/zort-web.js)
+
+Proven, exhaustively, that ZORT's v4 API does NOT serve the Lazada shipping-label
+PDF (the per-hop diagnostics traced `linkurl` to a secure.zortout.com print
+VIEWER — a signed-in browser app; the order carries no files; every documented
+and undocumented endpoint was tried). Per the user, the fallback: **do what a
+person at a browser does**. `zort-web.js` (Playwright/Chromium) signs into
+secure.zortout.com with the store's ZORT WEB credentials, opens the label page,
+and CAPTURES the PDF the page loads.
+
+- **WEB CREDENTIALS ARE A SEPARATE SECRET** from the API key/secret —
+  `store.webEmail` / `store.webPassword`, set on the store form (👁 masked,
+  password never returned). Saving either half clears the breaker and forgets
+  the saved browser session (`zortWeb.forgetSession`).
+- **THE WORKER IS THE LAST FALLBACK IN `fetchLabelPdf`'s caller** — only on a
+  `why: 'unusable'` result carrying a real https print-page link, only when the
+  store has a web login AND Chromium is installed AND the breaker is clear. It
+  never runs for a genuine "not generated yet".
+- **CAPTURE IS BY ROUTING, NOT LISTENING.** A page's own script consumes the
+  response body stream, so `response.body()` on a listener came back EMPTY
+  (0 bytes — caught in testing). `context.route` lets the worker fetch the
+  response, keep the bytes, and fulfil the page with the same bytes.
+- **ONE BROWSER, CLOSED WHEN IDLE** (`ZORT_WEB_IDLE_MS`, 60s) — Chromium must
+  never idle hot. The session (cookies/storage) persists at
+  `DATA_DIR/zort-web/<storeId>.json`, so a restart does not re-login; re-login
+  happens only when the saved session stops working, ONCE per attempt, never a
+  loop (a hammered wrong password locks the ZORT account).
+- **A LOGIN FAILURE TRIPS A BREAKER** (`store.webLoginFailed`, audited
+  `zort_web_login_failed`) — not retried until the credentials are re-saved.
+  Every other failure leaves a debug screenshot at `DATA_DIR/zort-web/debug-<id>.png`
+  and reports itself in words; credentials are never logged, never in a
+  message, never in a filename.
+- **GUARDED INSTALL**: `playwright` is a production dep with a postinstall
+  `playwright install chromium || echo …` — a failed browser download must
+  never fail the deploy; the worker then reports itself unavailable and the
+  store form says so. Honors `ZORT_BROWSER_PATH` / `PLAYWRIGHT_BROWSERS_PATH`.
+- **DELETABLE**: if ZORT ever answers the support question with a real API
+  endpoint for the marketplace label, this whole module goes.
+- UI: the store form has a "🔑 ZORT web login" block (email + password) and a
+  **🧪 Test label fetch** button (`POST .../web-label-test`) that signs in and
+  captures one real label, reporting KB captured or the exact failure. The
+  store list carries `webLabelReady` / `webLoginFailed` / `webWorkerAvailable`
+  so the form states plainly whether auto-fetch will work.
+
+Verified with a real Chromium against a mock ZORT-web (login page + a
+script-shell print viewer whose PDF is served ONLY with the session cookie —
+the exact live shape): the worker signs in and captures the 15,738-byte PDF,
+a second label reuses the saved session without re-login, and a wrong password
+is reported in words rather than hung on.

@@ -2429,6 +2429,16 @@
               <input type="checkbox" id="zfLabelSync" style="width:16px;height:16px" />
               <span><b>&#127991; Pull carrier labels for synced orders</b></span>
             </label>
+            <!-- THE WEB-LABEL WORKER. ZORT's API does not serve the Lazada
+                 label PDF — it is behind the web login. These are the ZORT
+                 WEBSITE credentials (secure.zortout.com), NOT the API key. -->
+            <div style="margin-top:.6rem;padding-top:.6rem;border-top:1px dashed #bfdbfe">
+              <div class="hint" style="margin-bottom:.4rem"><b>&#128273; ZORT web login</b> &mdash; only needed to fetch <b>Lazada shipping labels</b>, which ZORT keeps behind its website login (its API does not serve them). This is the email &amp; password you use at <b>secure.zortout.com</b> &mdash; NOT the API key above. Once set, labels are fetched automatically; nobody keys anything per order.</div>
+              <input id="zfWebEmail" type="email" autocomplete="off" placeholder="ZORT website email" style="width:100%;padding:.4rem .5rem;border:1px solid #cbd5e1;border-radius:6px;margin-bottom:.35rem">
+              <input id="zfWebPassword" type="password" autocomplete="new-password" placeholder="ZORT website password (leave blank to keep)" style="width:100%;padding:.4rem .5rem;border:1px solid #cbd5e1;border-radius:6px">
+              <div id="zfWebStatus" class="hint" style="margin-top:.35rem"></div>
+              <button type="button" id="zfWebTest" class="btn-secondary btn-sm" style="margin-top:.4rem">&#129514; Test label fetch</button>
+            </div>
             <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;cursor:pointer">
               <input type="checkbox" id="zfArrangeIntake" style="width:16px;height:16px" />
               <span><b>&#9889; Arrange shipment at intake (mark Packed on the hub)</b></span>

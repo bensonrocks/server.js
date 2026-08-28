@@ -13076,6 +13076,21 @@
     document.getElementById('zfStatusCodeWrap').classList.toggle('hidden', (store?.completeAction || 'none') !== 'status');
     document.getElementById('zfStockSync').checked = !!store?.stockSync;
     document.getElementById('zfLabelSync').checked = !!store?.labelSync;
+    // Web-label worker credentials + live status.
+    document.getElementById('zfWebEmail').value = store?.webEmail || '';
+    document.getElementById('zfWebPassword').value = '';
+    document.getElementById('zfWebPassword').placeholder = store?.webPasswordSet
+      ? 'saved — leave blank to keep' : 'ZORT website password';
+    {
+      const st = document.getElementById('zfWebStatus');
+      if (st) {
+        if (!store) st.innerHTML = '';
+        else if (!store.webWorkerAvailable) st.innerHTML = `<span style="color:#b45309">⚠ the label browser is not installed on the server (${esc(store.webWorkerWhy || '')}) — labels can\'t be auto-fetched until it is</span>`;
+        else if (!store.webPasswordSet) st.innerHTML = '<span style="color:#64748b">No web login set — Lazada labels won\'t be fetched automatically.</span>';
+        else if (store.webLoginFailed) st.innerHTML = '<span style="color:#dc2626">⚠ last sign-in failed — re-enter the password to try again.</span>';
+        else st.innerHTML = '<span style="color:#16a34a">✓ web login set — labels are fetched automatically.</span>';
+      }
+    }
     document.getElementById('zfArrangeIntake').checked = !!store?.arrangeAtIntake;
     // Default ON for a NEW store and for one saved before this existed —
     // a marketplace parcel has no other way of ever being closed off.
@@ -13166,6 +13181,25 @@
   document.getElementById('zortChannelsCancelBtn')?.addEventListener('click', () =>
     document.getElementById('zortChannelsModal').classList.add('hidden'));
 
+  // Test the web-label worker. The store must be SAVED first (the worker reads
+  // the credentials off the store record) — a blank password on the form keeps
+  // the saved one, so testing after Save works even without retyping it.
+  document.getElementById('zfWebTest')?.addEventListener('click', async () => {
+    const id = document.getElementById('zfId').value;
+    const st = document.getElementById('zfWebStatus');
+    if (!id) { if (st) st.innerHTML = '<span style="color:#b45309">Save the store first, then test.</span>'; return; }
+    const btn = document.getElementById('zfWebTest');
+    btn.disabled = true; const was = btn.innerHTML; btn.innerHTML = '⏳ Signing in…';
+    if (st) st.innerHTML = '<span style="color:#64748b">Signing in to ZORT and fetching one label… this can take up to a minute.</span>';
+    try {
+      const r = await fetch(`/api/master/zort/stores/${id}/web-label-test`, { method: 'POST', headers: zortHdrs(), body: '{}' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { if (st) st.innerHTML = `<span style="color:#dc2626">✗ ${esc(d.error || 'Test failed')}</span>`; return; }
+      if (st) st.innerHTML = `<span style="color:#16a34a">✓ ${esc(d.note || 'Worked')}</span>`;
+    } catch (e) {
+      if (st) st.innerHTML = `<span style="color:#dc2626">✗ ${esc(e.message)}</span>`;
+    } finally { btn.disabled = false; btn.innerHTML = was; }
+  });
   document.getElementById('zortSaveStoreBtn')?.addEventListener('click', async () => {
     const body = {
       id: document.getElementById('zfId').value || undefined,
@@ -13178,6 +13212,8 @@
       completeStatusCode: parseInt(document.getElementById('zfStatusCode').value, 10) || 1,
       stockSync: document.getElementById('zfStockSync').checked,
       labelSync: document.getElementById('zfLabelSync').checked,
+      webEmail: document.getElementById('zfWebEmail').value.trim(),
+      webPassword: document.getElementById('zfWebPassword').value,
       arrangeAtIntake: document.getElementById('zfArrangeIntake').checked,
       collectionSync: document.getElementById('zfCollectionSync')?.checked ?? true,
       rtsAtIntake: document.getElementById('zfRtsAtIntake')?.checked ?? false,

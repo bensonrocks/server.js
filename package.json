@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "audit": "npm audit --omit=dev",
-    "audit:report": "npm audit --omit=dev --json > audit-report.json || true"
+    "audit:report": "npm audit --omit=dev --json > audit-report.json || true",
+    "postinstall": "playwright install chromium || echo \"chromium not installed - the ZORT web-label worker will report itself unavailable\""
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.2",
@@ -32,9 +33,7 @@
     "sharp": "^0.33.5",
     "tesseract.js": "^5.1.1",
     "uuid": "^9.0.0",
-    "xlsx": "^0.18.5"
-  },
-  "devDependencies": {
+    "xlsx": "^0.18.5",
     "playwright": "^1.61.1"
   }
 }

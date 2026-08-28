@@ -19477,6 +19477,7 @@ app.post('/api/master/shopee/config', express.json(), (req, res) => {
 // completion the status can be pushed back to THAT client's store. Secrets
 // live only in db.json (never in git); API responses mask them.
 const zortApi = require('./lib/zort.js');
+const zortWeb = require('./lib/zort-web.js');
 
 function zortStores(db) { return db.zortStores || (db.zortStores = []); }
 function zortMask(s) { s = String(s || ''); return s.length <= 6 ? '••••' : s.slice(0, 3) + '••••' + s.slice(-3); }
@@ -19486,6 +19487,18 @@ function zortStorePublic(s, db) {
     apikeyMasked: zortMask(s.apikey), apisecretMasked: zortMask(s.apisecret),
     endpoint: s.endpoint || '', enabled: !!s.enabled,
     labelSync: !!s.labelSync, labelPath: s.labelPath || '',
+    // THE WEB-LABEL WORKER. ZORT's v4 API does not serve the Lazada label PDF
+    // (proven live) — it lives behind the web login. These are the ZORT WEB
+    // credentials, separate from the API key/secret, masked like them; the
+    // password is never returned. `webLabelReady` says whether both the login
+    // is set AND the browser is installed on this deployment; `webLoginFailed`
+    // is the breaker — a bad login is not retried until the credentials change.
+    webEmail: s.webEmail || '',
+    webPasswordSet: !!s.webPassword,
+    webLoginFailed: !!s.webLoginFailed,
+    webLabelReady: !!(s.webEmail && s.webPassword) && zortWeb.available().ok,
+    webWorkerAvailable: zortWeb.available().ok,
+    webWorkerWhy: zortWeb.available().ok ? '' : zortWeb.available().why,
     arrangeAtIntake: !!s.arrangeAtIntake,
     // Default ON (absent reads as on): a marketplace parcel has no other way
     // of ever being closed off, so leaving it off by default would leave the
@@ -21339,8 +21352,44 @@ async function _zortSendOutboxEntry(db, store, entry) {
         });
       }
     }
-    const pdf = got && got.pdf;
-    if (got && got.via && got.via !== 'file') {
+    let pdf = got && got.pdf;
+    let webVia = '';
+    // ── THE WORKER: WHAT THE API CANNOT REACH, THE BROWSER CAN ───────────────
+    // The API gave a print-page URL it could not turn into a PDF (proven live:
+    // secure.zortout.com serves a signed-in browser app). If this store has a
+    // web login and the browser is installed, sign in and capture the PDF the
+    // page loads — the one thing the manual daily run was for. Only on
+    // 'unusable' with a real https link the diagnostics found; never on a
+    // genuine "not generated yet", and never while the login breaker is set.
+    if (!pdf && got && got.why === 'unusable' && store.webEmail && store.webPassword
+        && !store.webLoginFailed && zortWeb.available().ok) {
+      const link = (got.tried || []).map(t => t && t.url).find(u => /^https?:\/\//i.test(String(u)))
+        || String(entry.labelUrl || '').trim();
+      // `tried` stores a shortened url tail for display; the full link is the
+      // one the API handed us as labelUrl, else re-read it from the row.
+      const fullLink = /^https?:\/\//i.test(String(entry.labelUrl)) ? entry.labelUrl : link;
+      if (/^https?:\/\//i.test(String(fullLink))) {
+        try {
+          const w = await zortWeb.fetchLabelPdfViaBrowser(store, fullLink);
+          if (w && w.pdf) { pdf = w.pdf; webVia = 'web-browser'; }
+        } catch (e) {
+          const msg = String(e.message || e);
+          // A LOGIN failure trips the breaker — do not hammer their sign-in.
+          if (/sign.?in|password|web email|web login/i.test(msg)) {
+            const f = lazadaFindOrder(readDb(), entry.orderNumber, '');
+            const dbw = readDb();
+            const sw = zortStores(dbw).find(s => s.id === store.id);
+            if (sw) { sw.webLoginFailed = true; writeDb(dbw); store.webLoginFailed = true; }
+            logAudit('zort_web_login_failed', { storeId: store.id, client: store.clientName || '', detail: msg.slice(0, 200) });
+          }
+          entry.webError = msg.slice(0, 200);
+          console.warn('[zort-web-label]', entry.orderNumber, msg);
+        }
+      }
+    }
+    if (pdf && webVia) {
+      logAudit('sync_label_via_fallback', { order: entry.orderNumber, storeId: store.id, via: webVia });
+    } else if (got && got.via && got.via !== 'file') {
       logAudit('sync_label_via_fallback', { order: entry.orderNumber, storeId: store.id, via: got.via });
     }
     if (!pdf) {
@@ -21937,6 +21986,20 @@ app.post('/api/master/zort/stores', (req, res) => {
   if (b.apikey)    store.apikey    = String(b.apikey).trim();
   if (b.apisecret) store.apisecret = String(b.apisecret).trim();
   if (b.endpoint !== undefined) store.endpoint = String(b.endpoint || '').trim();
+  // ZORT WEB LOGIN for the label worker (separate from the API key/secret).
+  // Saving either half clears the breaker AND forgets the stored browser
+  // session, so the next attempt starts clean with the new credentials —
+  // and a blank password on edit keeps the stored one, exactly like the keys.
+  {
+    let touched = false;
+    if (b.webEmail !== undefined) { store.webEmail = String(b.webEmail || '').trim().slice(0, 160); touched = true; }
+    if (b.webPassword) { store.webPassword = String(b.webPassword); touched = true; }
+    if (b.webPassword === '') { /* blank = keep */ }
+    if (touched) {
+      store.webLoginFailed = false;
+      try { zortWeb.forgetSession(store.id); } catch (_) {}
+    }
+  }
   // Pull the carrier label for each synced order and run it through the normal
   // label matching. `labelPath` overrides the endpoint if the default 404s —
   // correctable from this screen without a redeploy.
@@ -22853,6 +22916,55 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
       ? `${got.length} of ${wanted.length} label(s) came in.`
       : 'Every synced order on this store already has its label.',
   });
+});
+
+// TEST THE WEB-LABEL WORKER against one real order — signs in with the store's
+// web login and tries to capture a label PDF, reporting the outcome in words.
+// Read-only: it fetches a label, changes nothing.
+app.post('/api/master/zort/stores/:id/web-label-test', express.json(), async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const store = zortStores(db).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  const avail = zortWeb.available();
+  if (!avail.ok) return res.status(503).json({ error: `The label browser is not installed on the server — ${avail.why}` });
+  if (!store.webEmail || !store.webPassword) return res.status(400).json({ error: 'Set the ZORT web email and password first, then Save.' });
+  // Find a synced order that has a label page URL — the caller may name one.
+  const wantOrder = String(req.body?.order || '').trim();
+  let target = null;
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      if (String(o.zort_store_id || '') !== String(store.id) || !o.zort_id) continue;
+      if (wantOrder && o.order_number !== wantOrder) continue;
+      target = { orderNumber: o.order_number, zortId: o.zort_id, tracking: o.waybill_number || '' };
+      if (wantOrder) break;
+    }
+    if (target && wantOrder) break;
+  }
+  if (!target) return res.status(404).json({ error: 'No synced order found to test with. Pull orders first, or name one that exists.' });
+  // Ask the API for the label page URL (the one the browser then opens).
+  let link = '';
+  try {
+    const got = await zortApi.fetchLabelPdf(store, { id: target.zortId, number: target.orderNumber, tracking: target.tracking, skipFileEndpoint: true });
+    if (got && got.pdf) return res.json({ ok: true, order: target.orderNumber, note: 'The API returned the label directly — the browser worker was not even needed for this one.' });
+    link = (got?.tried || []).map(t => t && t.field === 'linkurl' ? null : t?.url).filter(Boolean)[0]
+      || (got?.tried || []).map(t => t?.url).filter(Boolean)[0] || '';
+  } catch (_) {}
+  if (!/^https?:\/\//i.test(link)) return res.status(409).json({ error: `The channel gave no label page for ${target.orderNumber} yet. Print it from ZORT once, then test again.` });
+  try {
+    const w = await zortWeb.fetchLabelPdfViaBrowser(store, link);
+    if (w && w.pdf && w.pdf.length) {
+      return res.json({ ok: true, order: target.orderNumber, bytes: w.pdf.length,
+        note: `Signed in and captured the label PDF (${(w.pdf.length / 1024).toFixed(0)} KB). Automatic fetching will work for this store.` });
+    }
+    return res.status(502).json({ error: 'Signed in but no PDF came back — see the server debug screenshot.' });
+  } catch (e) {
+    const msg = String(e.message || e);
+    if (/sign.?in|password|web login/i.test(msg)) {
+      store.webLoginFailed = true; writeDb(db);
+    }
+    return res.status(502).json({ error: msg.slice(0, 300) });
+  }
 });
 
 app.post('/api/master/zort/outbox/drain', async (req, res) => {
