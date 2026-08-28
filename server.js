@@ -22980,28 +22980,44 @@ app.post('/api/master/zort/stores/:id/web-label-test', express.json(), async (re
   const avail = zortWeb.available();
   if (!avail.ok) return res.status(503).json({ error: `The label browser is not installed on the server — ${avail.why}` });
   if (!store.webEmail || !store.webPassword) return res.status(400).json({ error: 'Set the ZORT web email and password first, then Save.' });
-  // Find a synced order that has a label page URL — the caller may name one.
+  // Find a synced order that ACTUALLY HAS A LABEL PAGE to open. The caller may
+  // name one; otherwise the test must pick a good candidate itself, or a store
+  // whose first synced order happens not to be Ready-to-Ship reads as "no
+  // label" and the login looks broken when it is fine. So: gather synced
+  // orders (waybill-carrying first — more likely RTS'd), and try each through
+  // the API until one hands back a real label-page URL, capped so the test is
+  // quick. Report clearly which case we are in.
   const wantOrder = String(req.body?.order || '').trim();
-  let target = null;
+  const candidates = [];
   for (const b of db.batches || []) {
     for (const o of b.orders || []) {
       if (String(o.zort_store_id || '') !== String(store.id) || !o.zort_id) continue;
+      const st = (b.orderStates || {})[o.order_number] || {};
+      if (st.status === 'unprocessed') continue;
       if (wantOrder && o.order_number !== wantOrder) continue;
-      target = { orderNumber: o.order_number, zortId: o.zort_id, tracking: o.waybill_number || '' };
-      if (wantOrder) break;
+      candidates.push({ orderNumber: o.order_number, zortId: o.zort_id, tracking: o.waybill_number || '', hasWaybill: !!o.waybill_number });
     }
-    if (target && wantOrder) break;
   }
-  if (!target) return res.status(404).json({ error: 'No synced order found to test with. Pull orders first, or name one that exists.' });
-  // Ask the API for the label page URL (the one the browser then opens).
-  let link = '';
-  try {
-    const got = await zortApi.fetchLabelPdf(store, { id: target.zortId, number: target.orderNumber, tracking: target.tracking, skipFileEndpoint: true });
-    if (got && got.pdf) return res.json({ ok: true, order: target.orderNumber, note: 'The API returned the label directly — the browser worker was not even needed for this one.' });
-    link = (got?.tried || []).map(t => t && t.field === 'linkurl' ? null : t?.url).filter(Boolean)[0]
-      || (got?.tried || []).map(t => t?.url).filter(Boolean)[0] || '';
-  } catch (_) {}
-  if (!/^https?:\/\//i.test(link)) return res.status(409).json({ error: `The channel gave no label page for ${target.orderNumber} yet. Print it from ZORT once, then test again.` });
+  if (!candidates.length) return res.status(404).json({ error: 'No synced order found to test with. Pull orders first, or name one that exists.' });
+  // Waybill-carrying orders are more likely to be Ready-to-Ship, so try those
+  // first — the test finds a working example faster.
+  candidates.sort((a, b2) => (b2.hasWaybill ? 1 : 0) - (a.hasWaybill ? 1 : 0));
+  const cap = wantOrder ? candidates.length : Math.min(candidates.length, 20);
+  let target = null, link = '', scanned = 0;
+  for (const c of candidates.slice(0, cap)) {
+    scanned++;
+    try {
+      const got = await zortApi.fetchLabelPdf(store, { id: c.zortId, number: c.orderNumber, tracking: c.tracking, skipFileEndpoint: true });
+      if (got && got.pdf) return res.json({ ok: true, order: c.orderNumber, note: 'The API returned the label directly — the browser worker was not even needed for this one.' });
+      const l = (got?.tried || []).map(t => t?.url).filter(u => /^https?:\/\//i.test(u))[0] || '';
+      if (l) { target = c; link = l; break; }
+    } catch (_) {}
+  }
+  if (!target || !/^https?:\/\//i.test(link)) {
+    return res.status(409).json({ error: wantOrder
+      ? `${wantOrder} has no marketplace label out yet — it is not Ready to Ship on ZORT (a label only exists from RTS on). Print it from ZORT once, or pick an order that is RTS'd, then test again.`
+      : `Checked ${scanned} synced order(s) and none has a marketplace label out yet — a label only exists once an order is Ready to Ship on ZORT. Get one order to RTS (or print it from ZORT once), then test again. This is NOT a login failure.` });
+  }
   try {
     const w = await zortWeb.fetchLabelPdfViaBrowser(store, link);
     if (w && w.pdf && w.pdf.length) {
