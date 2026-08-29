@@ -17987,17 +17987,29 @@
       });
     }
 
+    // Where a SKU sits. A SKU with binned stock shows its bin(s) (biggest first,
+    // up to two, "+N more" beyond); one with NO bin shows an amber "not binned"
+    // — the visible answer to "why is the wave-pick location blank": there is no
+    // location because nothing was ever put away.
+    function invLocCell(r) {
+      const locs = Array.isArray(r.bin_locations) ? r.bin_locations : [];
+      if (!locs.length) return `<span style="color:#d97706" title="No bin holds this SKU — it has not been put away, so a pick list has no location to point at">— not binned</span>`;
+      const shown = locs.slice(0, 2).map(l => `${esc(l.location_id)}<span style="color:#94a3b8">·${l.qty}</span>`).join('<br>');
+      const more = locs.length > 2 ? `<div style="color:#94a3b8;font-size:.74rem">+${locs.length - 2} more bin(s)</div>` : '';
+      return shown + more;
+    }
     function renderList() {
       const tb = $('invTbody'); if (!tb) return;
       const q = ($('invSearch')?.value || '').toLowerCase();
       const rows = sortItems(items.filter(r => !q || r.sku.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q)));
-      if (!rows.length) { tb.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:2rem;color:#94a3b8">${!clientId ? 'Enter a client above and tap Load stock.' : (items.length ? 'No match.' : 'No stock yet — upload a file to add some.')}</td></tr>`; return; }
+      if (!rows.length) { tb.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:2rem;color:#94a3b8">${!clientId ? 'Enter a client above and tap Load stock.' : (items.length ? 'No match.' : 'No stock yet — upload a file to add some.')}</td></tr>`; return; }
       tb.innerHTML = rows.map(r => `<tr>
         <td style="font-family:monospace;font-weight:600">${esc(r.sku)}</td>
         <td>${esc(r.name || '')}</td>
         <td style="text-align:right">${r.stock_qty}</td>
         <td style="text-align:right;color:#d97706">${r.reserved_qty}</td>
         <td style="text-align:right;font-weight:700;color:${r.available_qty <= 0 ? '#dc2626' : '#059669'}">${r.available_qty}</td>
+        <td style="font-family:monospace;font-size:.82rem">${invLocCell(r)}</td>
         <td style="text-align:right"><span class="inv-upc-edit" data-sku="${esc(r.sku)}" title="Units per carton — click to edit (powers carton-aware picking)" style="cursor:pointer;border-bottom:1px dashed #94a3b8">${Number(r.units_per_carton) > 1 ? r.units_per_carton : '—'}</span></td>
         <td style="text-align:right"><button class="btn-secondary btn-sm inv-adjust" data-sku="${esc(r.sku)}"
               title="Correct this quantity by hand — needs the Administrator password and a reason">Adjust</button></td>

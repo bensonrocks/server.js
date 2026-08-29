@@ -25103,7 +25103,13 @@ app.get('/api/inventory', requireAuth, (req, res) => {
   if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
   const { category, search, lowStock, sort, dir } = req.query;
   const rows = inventory.getAll({ category, search, lowStock: lowStock === 'true', clientId });
-  res.json(sortStockRows(rows, sort, dir));
+  // WHERE each SKU sits, so the list can show a Location — and, just as usefully,
+  // show NOTHING for a SKU that was never put away (on-hand 0, no bin), which is
+  // the case that leaves a wave-pick location blank.
+  let binMap = new Map();
+  try { binMap = inventory.binLocationsBySku(clientId); } catch (_) {}
+  const withBins = rows.map(r => ({ ...r, bin_locations: binMap.get(r.sku) || [] }));
+  res.json(sortStockRows(withBins, sort, dir));
 });
 
 // Office stock export. Registered BEFORE the /:sku routes — Express matches in
@@ -25119,6 +25125,12 @@ app.get('/api/inventory/export', requireAuth, (req, res) => {
     rows = inventory.getAll({ category, search, lowStock: lowStock === 'true', clientId });
     lastMove = inventory.lastMovementBySku(clientId);
   } catch (e) { return res.status(503).json({ error: 'Inventory store unavailable' }); }
+  let binMap = new Map();
+  try { binMap = inventory.binLocationsBySku(clientId); } catch (_) {}
+  const locStr = (sku) => {
+    const l = binMap.get(sku) || [];
+    return l.length ? l.map(x => `${x.location_id} (${x.qty})`).join(', ') : 'not binned';
+  };
   const now = Date.now();
   rows = rows.map(r => {
     const last = lastMove.get(r.sku) || r.first_added_at || null;
@@ -25134,10 +25146,11 @@ app.get('/api/inventory/export', requireAuth, (req, res) => {
     ['Every SKU in this client\u2019s item master is listed. One with no stock shows 0 \u2014 it is not left out.'],
     [],
     ['SKU', 'Product', 'Barcode', 'Brand', 'Category', 'UOM', 'On hand', 'Reserved', 'Available',
-     'Reorder point', 'Status', 'Last movement', 'Days since movement'],
+     'Location', 'Reorder point', 'Status', 'Last movement', 'Days since movement'],
     ...rows.map(r => [
       r.sku, r.name || '', r.barcode || '', r.brand || '', r.category || '', r.uom || '',
       Number(r.stock_qty) || 0, Number(r.reserved_qty) || 0, Number(r.available_qty) || 0,
+      locStr(r.sku),
       r.reorder_point ?? 10,
       (Number(r.available_qty) || 0) <= 0 ? 'Out of stock'
         : ((Number(r.available_qty) || 0) <= (r.reorder_point ?? 10) ? 'Low' : 'OK'),
@@ -25151,7 +25164,7 @@ app.get('/api/inventory/export', requireAuth, (req, res) => {
   ];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{ wch: 24 }, { wch: 40 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 8 },
-    { wch: 9 }, { wch: 10 }, { wch: 10 }, { wch: 13 }, { wch: 13 }, { wch: 15 }, { wch: 20 }];
+    { wch: 9 }, { wch: 10 }, { wch: 10 }, { wch: 22 }, { wch: 13 }, { wch: 13 }, { wch: 15 }, { wch: 20 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Stock');
   const safe = String(clientId).replace(/[^A-Za-z0-9_-]+/g, '_');
