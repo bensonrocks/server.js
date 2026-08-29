@@ -19215,7 +19215,14 @@
         if (rf.ok) { currentWave = await rf.json(); renderDetail(); }
       } catch (_) { /* print what we have rather than block */ }
       const w = currentWave;
-      const binText = p => (p.bins && p.bins.length) ? p.bins.map(b => `${b.location_id} ×${b.qty}${b.expiry_date ? ' exp ' + b.expiry_date : ''}`).join(' / ') : (p.location || '—');
+      // No bin? Say WHY, so a blank is never mistaken for a broken linkage:
+      // the SKU has stock on the books but was never put away, or it has no
+      // stock at all. Neither has a location this can invent.
+      const noBinText = p => p.location ? esc(p.location)
+        : p.location_status === 'not-put-away' ? 'on hand · not put away'
+        : p.location_status === 'no-stock' ? 'no stock'
+        : '—';
+      const binText = p => (p.bins && p.bins.length) ? p.bins.map(b => `${b.location_id} ×${b.qty}${b.expiry_date ? ' exp ' + b.expiry_date : ''}`).join(' / ') : noBinText(p);
       // NO order-number column. A wave is picked BY SKU — one consolidated
       // quantity per product, sorted to orders afterwards through Scan & Check —
       // so order numbers are not something the picker acts on, and on a printed

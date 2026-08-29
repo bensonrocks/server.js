@@ -26498,6 +26498,14 @@ function enrichWaveWithBins(db, wave) {
       row.bins = byLoc;
       row.bin_shortfall = a.shortfall;
       row.bin_location = a.picks.length ? a.picks[0].location_id : '';
+      // WHY a line has no bin, so a blank never reads as a linkage bug. The
+      // allocator read current bin_lots — if it found nothing, either the SKU
+      // has stock on the books but was never put away, or it has no stock at
+      // all. Say which; both are data gaps this cannot invent a location for.
+      if (!row.bin_location) {
+        const onHand = Number((inventory.get(binSku, m.clientId) || {}).stock_qty) || 0;
+        row.location_status = onHand > 0 ? 'not-put-away' : 'no-stock';
+      }
     } catch (_) { /* leave printed location as the guide */ }
   }
   // Re-sort the walk by real bin (natural order); rows with a bin come first,
