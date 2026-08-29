@@ -16,6 +16,7 @@ const signals                        = require('./lib/signals');
 const { init: initDb, hasDb, pool }  = require('./lib/db');
 const hitpay                         = require('./lib/hitpay');
 const mtBridge                       = require('./lib/mtBridge');
+const freight                        = require('./lib/freight');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -617,6 +618,39 @@ app.get('/api/mt/status', requireSubscriptionAPI, (req, res) => {
   res.json({ ok: true, ...mtBridge.getStatus() });
 });
 
+// ── Freight rates (Singapore → South East Asia) ────────────────────────
+// Key-guarded rather than subscriber-guarded: these calls consume carrier API
+// quota, so they are for internal/ops use, not the public dashboard.
+function requireFreightKey(req, res, next) {
+  const key = process.env.FREIGHT_API_KEY;
+  if (!key) return res.status(503).json({ ok: false, error: 'FREIGHT_API_KEY not configured on server' });
+  const provided = req.get('X-Freight-Key') || req.query.key;
+  if (provided !== key) return res.status(401).json({ ok: false, error: 'Invalid freight key' });
+  next();
+}
+
+// Which providers are wired up, and what each is still missing.
+app.get('/api/freight/status', requireFreightKey, (req, res) => {
+  res.json({ ok: true, ...freight.status() });
+});
+
+// Live rates. ?destination=all|MYPKG,IDJKT  &equipment=40GP  &date=YYYY-MM-DD
+app.get('/api/freight/rates', requireFreightKey, async (req, res) => {
+  try {
+    const result = await freight.getRates({
+      origin:        req.query.origin,
+      destination:   req.query.destination,
+      equipment:     req.query.equipment || '40GP',
+      departureDate: req.query.date,
+      providers:     req.query.providers,
+      refresh:       req.query.refresh === 'true',
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
 // ── Start ──────────────────────────────────────────────────────────────
 initDb()
   .then(() => {
@@ -626,6 +660,8 @@ initDb()
       console.log(`Payment: ${useHitPay ? 'HitPay' : stripe ? 'Stripe' : 'dev mode (no payment)'}`);
       console.log(`Live data: ${process.env.ALPHA_VANTAGE_API_KEY ? 'YES' : 'NO — demo mode'}`);
       console.log(`MT bridge: ${process.env.MT_BRIDGE_KEY ? 'ENABLED (key set)' : 'DISABLED — set MT_BRIDGE_KEY to enable'}`);
+      const freightReady = freight.status().providers.filter(p => p.configured).map(p => p.name);
+      console.log(`Freight: ${freightReady.length ? freightReady.join(', ') : 'no providers configured'}`);
     });
   })
   .catch(err => {

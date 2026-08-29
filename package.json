@@ -7,7 +7,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "analyze:metals": "node scripts/analyze-gold-silver.js",
-    "demo": "node scripts/demo-analysis.js"
+    "demo": "node scripts/demo-analysis.js",
+    "test": "node --test test/*.test.js",
+    "freight": "node scripts/fetch-freight-rates.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
