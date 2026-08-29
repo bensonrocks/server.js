@@ -5473,6 +5473,21 @@ call with no ledger behaves exactly as before) plus 10 end-to-end checks
 through the real upload → wave → pick-list endpoints, asserting the wave AND
 the per-order pick list both ask 24/4 and never exceed what a bin holds.
 
+### The wave pick SHEET re-fetches before printing (fresh bins)
+
+Reported live: a printed Wave Pick Sheet showed "—" for the Location on every
+line, on an order whose stock was **being put away** at the time. Bins are
+resolved live on every wave READ (`enrichWaveWithBins` → `allocatePick` reads
+`bin_lots`), so a wave loaded BEFORE its putaway finished carries pick rows
+with no location — and the client's cached `currentWave` kept showing "—"
+even once the bins existed. `waveUI.print()` now re-fetches the wave (and
+re-renders the detail) before building the sheet, so a putaway that completed
+after the wave was opened is picked up. If a location is STILL blank after the
+putaway is genuinely done, the cause is a SKU or client-casing mismatch
+between the order line and the bins — `binLotsForSku`/`inventory.get` both do
+an EXACT `(client_id, sku)` match (SQLite `=`, case-sensitive), and
+`invClientId` does not fold case — not a stale sheet.
+
 ### A row with a bin is NOT an unlocated row (`waveLocationStats`)
 
 Reported from a photo of the wave screen: "**6 line(s) have no location**" in

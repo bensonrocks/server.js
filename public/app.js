@@ -19183,7 +19183,17 @@
       load();
     }
 
-    function print() {
+    async function print() {
+      // ALWAYS PRINT FRESH BINS. `currentWave` may have been loaded before the
+      // stock was put away, so its pick rows can carry no location even though
+      // the bins now exist — bins are resolved live on every wave READ
+      // (enrichWaveWithBins), so a re-fetch picks up a putaway that finished
+      // after the wave was opened. Reported live: a pick sheet showing "—" for
+      // every location on an order whose stock was being put away.
+      try {
+        const rf = await fetch('/api/waves/' + encodeURIComponent(currentWave.id));
+        if (rf.ok) { currentWave = await rf.json(); renderDetail(); }
+      } catch (_) { /* print what we have rather than block */ }
       const w = currentWave;
       const binText = p => (p.bins && p.bins.length) ? p.bins.map(b => `${b.location_id} ×${b.qty}${b.expiry_date ? ' exp ' + b.expiry_date : ''}`).join(' / ') : (p.location || '—');
       // NO order-number column. A wave is picked BY SKU — one consolidated
