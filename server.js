@@ -26443,6 +26443,20 @@ function enrichWaveWithBins(db, wave) {
       for (const c of candidates) {
         try { if (inventory.binnedQty(m.clientId, c) > 0) { binSku = c; break; } } catch (_) {}
       }
+      // Last resort — the exact-match ladder above uses SQLite `=`, which is
+      // CASE-SENSITIVE, so a putaway keyed under a different case ("rcmmrc101…"
+      // vs "RCMMRC101…") silently misses. resolveBinnedSku matches the SKU
+      // case-insensitively (returning the exact stored spelling) and, failing
+      // that, joins bin_lots→inventory on the barcode. Only consulted when the
+      // ladder found nothing, so it never overrides a genuine exact match.
+      if (binSku === row.sku) {
+        try {
+          if (inventory.binnedQty(m.clientId, row.sku) <= 0) {
+            const rb = inventory.resolveBinnedSku(m.clientId, { sku: row.sku, barcode: bc });
+            if (rb) binSku = rb;
+          }
+        } catch (_) {}
+      }
       row.resolved_sku = binSku !== row.sku ? binSku : undefined;
       // Barcode for display: the catalogue's, else what the order carried.
       row.barcode = bc;
