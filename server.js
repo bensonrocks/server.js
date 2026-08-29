@@ -25406,12 +25406,15 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     r.stockqty ?? r.qty ?? r.quantity ?? r.stock ?? r.onhand ??
     r.available ?? r.availablelhu ?? r.availableqty ?? r.lhu ?? r.balance ?? 0
   ) || 0;
-  // Does this sheet carry LOCATIONS this uploader cannot apply? This route only
-  // writes on-hand figures — it never touches bins — so a Location column is
-  // silently dropped here. That silence is exactly what left stock on the books
-  // with no bin and no pickable location. Count them and say so, pointing at
-  // Put away by file, which DOES read Location (+ Available LHU) and bins it.
-  const locationRows = rows.filter(r => String(r.location ?? r.bin ?? r.locationid ?? '').trim()).length;
+  // ONE LEDGER, NOT TWO. If the sheet carries a Location column, this upload
+  // records the POSITION — quantity AND where it sits — in the same action, so
+  // "upload with locations" ends with the SKU both in stock and binned, exactly
+  // like inbound + putaway. The on-hand write below is unchanged; afterwards we
+  // bin that on-hand at the sheet's locations (locateExistingStock — capped at
+  // on-hand, never inflates). No Location column = on-hand only, as before.
+  const locOf = r => String(r.location ?? r.bin ?? r.locationid ?? r.binlocation ?? '').trim();
+  const posRows = [];   // {sku, location, qty} for rows that name a bin
+  const locationRows = rows.filter(r => locOf(r)).length;
   let applied = 0, skipped = 0; const errors = []; const affected = new Set();
   const additions = {}; // sku -> positive stock increase (for backorder release)
   // ── AN UPLOAD NOBODY CAN UNDO IS A TRAP ──────────────────────────────────
@@ -25440,7 +25443,17 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
         else if (qty !== 0) { inventory.adjust(sku, cid, qty, 'upload', 'Stock upload'); if (qty > 0) additions[sku] = (additions[sku] || 0) + qty; }
       }
       applied++; affected.add(sku);
+      const loc = locOf(r);
+      if (loc) posRows.push({ sku, location: loc, qty });
     } catch (e) { skipped++; errors.push({ row: i + 2, sku, error: e.message }); }
+  }
+  // RECORD THE LOCATIONS in the same upload — bin the on-hand just written at
+  // the sheet's bins, so the position is combined (in stock AND located) and
+  // the wave pick shows a location. Capped at on-hand, quantities untouched.
+  let located = null;
+  if (posRows.length) {
+    try { located = inventory.locateExistingStock(cid, posRows, { operator: req.userId || _tokenUserId(req) || '' }); }
+    catch (e) { errors.push({ row: 0, sku: '', error: 'Locations could not be recorded: ' + e.message }); }
   }
   // Uploaded stock can satisfy orders waiting on it → pay down backorders (FIFO).
   if (Object.keys(additions).length) {
@@ -25488,12 +25501,20 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     if (rdb.stockImports.length > 500) rdb.stockImports.length = 500;
     writeDb(rdb);
   }
-  logAudit('inventory_stock_uploaded', { clientId: cid, mode, applied, skipped, pushedToZort: pushToZort, by: req.userId || '', txnId, locationsIgnored: locationRows });
+  logAudit('inventory_stock_uploaded', { clientId: cid, mode, applied, skipped, pushedToZort: pushToZort, by: req.userId || '', txnId,
+    locationsRecorded: located ? located.located : 0, locationUnits: located ? located.units : 0, binsCreated: located ? located.binsCreated : 0 });
   res.json({ applied, skipped, mode, clientId: cid, pushedToZort: pushToZort, enqueued: pushed,
              txnId, reversibleHours: STOCK_IMPORT_REVERSE_HOURS, errors: errors.slice(0, 20),
-             locationsIgnored: locationRows,
-             locationWarning: locationRows
-               ? `This file has a Location column on ${locationRows} row(s), but "Upload stock file" only sets on-hand quantities — it does NOT put stock into bins. Those locations were NOT applied. To bin the stock (so it shows a Location and can be wave-picked), upload the SAME sheet through Inventory → Putaway → "Put away by file", which reads SKU + Location + Available LHU.`
+             // ONE LEDGER: if the sheet carried locations, they were recorded in
+             // this same upload — the SKUs are now both in stock AND binned.
+             locationRows,
+             locationsRecorded: located ? located.located : 0,
+             locationUnits: located ? located.units : 0,
+             binsCreated: located ? located.binsCreated : 0,
+             notLocated: located ? located.notInMaster.slice(0, 50) : [],
+             locationNote: located
+               ? `📍 Locations recorded: ${located.units} unit(s) across ${located.located} SKU(s) binned at the sheet's locations${located.binsCreated ? `, ${located.binsCreated} new bin(s) created` : ''}. Quantities and locations are now both on record — these show a Location on the wave pick.`
+                 + (located.notInMaster.length ? ` (${located.notInMaster.length} SKU(s) in the sheet are not in the item master and were skipped.)` : '')
                : '' });
 });
 

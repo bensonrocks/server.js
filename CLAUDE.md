@@ -5154,8 +5154,21 @@ named in the sheet are created if missing. Audit `stock_locations_applied`. UI:
 a **📍 Apply LOCATIONS to existing stock** radio in the Put away by file modal
 (its own endpoint — must NOT go through the add/supersede stock-writing path).
 After it runs, every located SKU shows its bin on the Stock & SKUs Location
-column and on the wave pick. Also: `import-file` now recognises "Available LHU"
-as a quantity and WARNS (never silently drops) when a Location column is present.
+column and on the wave pick.
+
+**ONE LEDGER — the plain "Upload stock file" now records locations too.** Per
+the user: inventory and its locations should be combined, so uploading with
+locations (any path) ends the same way — the SKU is in stock AND binned.
+`/api/inventory/import-file` now recognises "Available LHU" as a quantity AND,
+when the sheet carries a `Location` column, bins the on-hand it just wrote at
+those locations **in the same upload** (via `locateExistingStock`, capped at
+on-hand). So the two ways to get located stock in — **inbound + putaway**, or a
+**single stock-file upload carrying locations** — both end with on-hand and
+`bin_lots` in sync and the wave pick showing a location. A sheet with no
+Location column still sets on-hand only (an explicit "not located" state, fixed
+later by the 📍 tool above). It does NOT go through the add/supersede
+whole-position path — it only bins what it just added, so it can never zero an
+uncovered SKU.
 
 ## Put away by file — a whole stock position from a spreadsheet
 

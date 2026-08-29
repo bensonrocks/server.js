@@ -18154,12 +18154,19 @@
         if (d.pushedToZort) msg += ` · ${d.enqueued} stock update(s) queued to the sales channels`;
         if (d.errors && d.errors.length) msg += ` · first issue: row ${d.errors[0].row} (${d.errors[0].sku}) — ${d.errors[0].error}`;
         if (d.txnId) msg += ` · undoable for ${d.reversibleHours || 72}h below`;
-        if (d.locationsIgnored) {
-          // Loud, not a footnote — a dropped Location column is exactly what
-          // leaves stock on the books with no bin and no pickable location.
-          st.className = 'status-bar error';
-          st.textContent = `⚠ ${msg} — but ${d.locationsIgnored} row(s) had LOCATIONS that were NOT applied. This uploader only sets quantities.`;
-          alert(d.locationWarning || 'This file has a Location column that was not applied — use Put away by file to bin the stock.');
+        if (d.locationsRecorded) {
+          // ONE LEDGER: the sheet carried locations and they were recorded in
+          // the same upload — the SKUs are now both in stock AND binned.
+          msg += ` · 📍 ${d.locationsRecorded} SKU(s) located`;
+          st.className = 'status-bar success'; st.textContent = msg;
+          if (d.notLocated && d.notLocated.length) {
+            alert((d.locationNote || '') + `\n\nNot in item master (skipped): ${d.notLocated.slice(0, 20).join(', ')}${d.notLocated.length > 20 ? '…' : ''}`);
+          }
+        } else if (d.locationRows) {
+          // The sheet had a Location column but nothing could be binned (e.g.
+          // every SKU already fully located, or on-hand was 0). Say so plainly.
+          st.className = 'status-bar success';
+          st.textContent = `${msg} · locations in the file were already on record (nothing new to bin)`;
         } else {
           st.className = 'status-bar success'; st.textContent = msg;
         }
