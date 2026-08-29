@@ -26534,30 +26534,34 @@ function enrichWaveWithBins(db, wave) {
       ].map(x => String(x || '').trim()).filter(Boolean))];
       // The SKU that has bins wins; fall back to the row's own SKU so a genuine
       // shortfall still reports against it.
-      let binSku = row.sku;
+      let binSku = row.sku, binClient = m.clientId;
       for (const c of candidates) {
         try { if (inventory.binnedQty(m.clientId, c) > 0) { binSku = c; break; } } catch (_) {}
       }
       // Last resort — the exact-match ladder above uses SQLite `=`, which is
-      // CASE-SENSITIVE, so a putaway keyed under a different case ("rcmmrc101…"
-      // vs "RCMMRC101…") silently misses. resolveBinnedSku matches the SKU
-      // case-insensitively (returning the exact stored spelling) and, failing
-      // that, joins bin_lots→inventory on the barcode. Only consulted when the
-      // ladder found nothing, so it never overrides a genuine exact match.
+      // CASE-SENSITIVE on BOTH keys: the SKU ("rcmmrc101…" vs "RCMMRC101…")
+      // AND the client_id. Reported live: bins recorded and visible on the
+      // Bin Locations screen under one client spelling while the wave resolved
+      // its client from the BATCH under a case-variant — same client, and
+      // every bin lookup missed, so the sheet showed no location for stock the
+      // system plainly held. resolveBinnedFor folds case on both (the standing
+      // one-client-one-spelling rule) and returns the EXACT stored spellings,
+      // so the exact-match allocatePick below finds the same rows. Only
+      // consulted when the ladder found nothing — never overrides a real match.
       if (binSku === row.sku) {
         try {
           if (inventory.binnedQty(m.clientId, row.sku) <= 0) {
-            const rb = inventory.resolveBinnedSku(m.clientId, { sku: row.sku, barcode: bc });
-            if (rb) binSku = rb;
+            const ref = inventory.resolveBinnedFor(m.clientId, { sku: row.sku, barcode: bc });
+            if (ref) { binSku = ref.sku; binClient = ref.client_id; }
           }
         } catch (_) {}
       }
       row.resolved_sku = binSku !== row.sku ? binSku : undefined;
       // Barcode for display: the catalogue's, else what the order carried.
       row.barcode = bc;
-      const upc = Number((inventory.get(binSku, m.clientId) || {}).units_per_carton) || 1;
+      const upc = Number((inventory.get(binSku, binClient) || {}).units_per_carton) || 1;
       row.units_per_carton = upc;
-      const a = inventory.allocatePick(m.clientId, binSku, row.total_qty, m.strategy, upc, claim);
+      const a = inventory.allocatePick(binClient, binSku, row.total_qty, m.strategy, upc, claim);
       // Aggregate lot picks into one row per bin for display.
       const byLoc = []; const bidx = {};
       for (const p of a.picks) { if (bidx[p.location_id] === undefined) { bidx[p.location_id] = byLoc.length; byLoc.push({ location_id: p.location_id, qty: 0, expiry_date: p.expiry_date || null }); } const e = byLoc[bidx[p.location_id]]; e.qty += p.qty; if (p.expiry_date && (!e.expiry_date || p.expiry_date < e.expiry_date)) e.expiry_date = p.expiry_date; }
@@ -26569,7 +26573,7 @@ function enrichWaveWithBins(db, wave) {
       // has stock on the books but was never put away, or it has no stock at
       // all. Say which; both are data gaps this cannot invent a location for.
       if (!row.bin_location) {
-        const onHand = Number((inventory.get(binSku, m.clientId) || {}).stock_qty) || 0;
+        const onHand = Number((inventory.get(binSku, binClient) || {}).stock_qty) || 0;
         row.location_status = onHand > 0 ? 'not-put-away' : 'no-stock';
       }
     } catch (_) { /* leave printed location as the guide */ }

@@ -5514,6 +5514,29 @@ call with no ledger behaves exactly as before) plus 10 end-to-end checks
 through the real upload → wave → pick-list endpoints, asserting the wave AND
 the per-order pick list both ask 24/4 and never exceed what a bin holds.
 
+### The wave pick reads CURRENT recorded bins, folding case on SKU AND CLIENT
+
+Proven live and by e2e: bins recorded and visible on the Bin Locations screen
+under one client spelling ("Mayer2026") while the wave resolved its client from
+the BATCH under a case-variant ("MAYER2026") — same client, and every bin
+lookup missed because `bin_lots` is matched with case-sensitive `=` on BOTH
+keys. So the pick list showed no location for stock the system plainly held,
+which reads exactly like "the recorded locations are not being used".
+
+`inventory.resolveBinnedFor(clientId, {sku, barcode})` is the ONE bridge: exact
+match first, then case-folded CLIENT + SKU, then the barcode join (client
+case-folded on both sides) — returning `{client_id, sku}` in the EXACT stored
+spellings so the exact-match `allocatePick` that follows finds the same rows.
+Folding the client is the standing one-client-one-spelling rule, never a
+loosening: it unites case-variants only, and can never hand over a different
+client's stock (asserted). `enrichWaveWithBins` consults it as the last resort
+and threads the resolved `binClient` through `allocatePick`/`get`. A line that
+STILL has no bin gets `location_status`: `'not-put-away'` (on-hand > 0, never
+binned — assign a location) vs `'no-stock'` (nothing on the books) — rendered
+in words on the wave sheet so a blank is never mistaken for a linkage bug.
+E2E-verified through the real endpoints: batch "MAYER2026" + bins under
+"Mayer2026" → the wave shows `AA-014-003-C ×2`, zero unlocated lines.
+
 ### The wave pick location is resolved through the BARCODE, and the sheet shows it
 
 Reported live with the data on screen: a Wave Pick Sheet showed "—" for every
