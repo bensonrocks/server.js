@@ -18132,7 +18132,15 @@
         if (d.pushedToZort) msg += ` · ${d.enqueued} stock update(s) queued to the sales channels`;
         if (d.errors && d.errors.length) msg += ` · first issue: row ${d.errors[0].row} (${d.errors[0].sku}) — ${d.errors[0].error}`;
         if (d.txnId) msg += ` · undoable for ${d.reversibleHours || 72}h below`;
-        st.className = 'status-bar success'; st.textContent = msg;
+        if (d.locationsIgnored) {
+          // Loud, not a footnote — a dropped Location column is exactly what
+          // leaves stock on the books with no bin and no pickable location.
+          st.className = 'status-bar error';
+          st.textContent = `⚠ ${msg} — but ${d.locationsIgnored} row(s) had LOCATIONS that were NOT applied. This uploader only sets quantities.`;
+          alert(d.locationWarning || 'This file has a Location column that was not applied — use Put away by file to bin the stock.');
+        } else {
+          st.className = 'status-bar success'; st.textContent = msg;
+        }
         load(); // refresh totals + table
         loadInvImports();
       } catch (e) { st.className = 'status-bar error'; st.textContent = 'Upload error: ' + e.message; }

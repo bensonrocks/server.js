@@ -25354,7 +25354,19 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     return res.status(400).json({ error: 'Could not parse file: ' + e.message });
   }
 
-  const qtyOf = r => Number(r.stockqty ?? r.qty ?? r.quantity ?? r.stock ?? r.onhand ?? r.available ?? 0) || 0;
+  // Quantity synonyms. "Available LHU" (normalised to availablelhu) is a REAL
+  // client header (Mayer's stock export) — without it those rows came in as
+  // on-hand 0, which read on screen as "no stock" and left the wave pick blank.
+  const qtyOf = r => Number(
+    r.stockqty ?? r.qty ?? r.quantity ?? r.stock ?? r.onhand ??
+    r.available ?? r.availablelhu ?? r.availableqty ?? r.lhu ?? r.balance ?? 0
+  ) || 0;
+  // Does this sheet carry LOCATIONS this uploader cannot apply? This route only
+  // writes on-hand figures — it never touches bins — so a Location column is
+  // silently dropped here. That silence is exactly what left stock on the books
+  // with no bin and no pickable location. Count them and say so, pointing at
+  // Put away by file, which DOES read Location (+ Available LHU) and bins it.
+  const locationRows = rows.filter(r => String(r.location ?? r.bin ?? r.locationid ?? '').trim()).length;
   let applied = 0, skipped = 0; const errors = []; const affected = new Set();
   const additions = {}; // sku -> positive stock increase (for backorder release)
   // ── AN UPLOAD NOBODY CAN UNDO IS A TRAP ──────────────────────────────────
@@ -25431,9 +25443,13 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     if (rdb.stockImports.length > 500) rdb.stockImports.length = 500;
     writeDb(rdb);
   }
-  logAudit('inventory_stock_uploaded', { clientId: cid, mode, applied, skipped, pushedToZort: pushToZort, by: req.userId || '', txnId });
+  logAudit('inventory_stock_uploaded', { clientId: cid, mode, applied, skipped, pushedToZort: pushToZort, by: req.userId || '', txnId, locationsIgnored: locationRows });
   res.json({ applied, skipped, mode, clientId: cid, pushedToZort: pushToZort, enqueued: pushed,
-             txnId, reversibleHours: STOCK_IMPORT_REVERSE_HOURS, errors: errors.slice(0, 20) });
+             txnId, reversibleHours: STOCK_IMPORT_REVERSE_HOURS, errors: errors.slice(0, 20),
+             locationsIgnored: locationRows,
+             locationWarning: locationRows
+               ? `This file has a Location column on ${locationRows} row(s), but "Upload stock file" only sets on-hand quantities — it does NOT put stock into bins. Those locations were NOT applied. To bin the stock (so it shows a Location and can be wave-picked), upload the SAME sheet through Inventory → Putaway → "Put away by file", which reads SKU + Location + Available LHU.`
+               : '' });
 });
 
 // ── Backorders — the "awaiting stock" queue ──────────────────────────────────
