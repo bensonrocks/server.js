@@ -5129,6 +5129,34 @@ an unqualified `client_id` in the WHERE clause made the whole query ambiguous
 and SQLite refused it. The `catch` around it was silent, so the report came back
 empty — indistinguishable from a quiet month. It now logs.
 
+## "Stock OK but no location" — bin existing on-hand from a location sheet
+
+Reported live (Mayer, wave pick): orders read **✓ Stock OK** yet the wave pick
+showed **no location**. Root cause is TWO SEPARATE LEDGERS: "Stock OK" is judged
+on `inventory.stock_qty` (on-hand); the wave/pick location is read from
+`bin_lots`. Stock loaded through the plain **Inventory → "Upload stock file"**
+(`/api/inventory/import-file`) sets on-hand but **drops the Location column and
+never writes `bin_lots`**, so on-hand is positive while the SKU has no bin — and
+`setStockPositions` reconciles on-hand = SUM(bin_lots) only for SKUs IT touches,
+so these never got reconciled either. No location was stored anywhere; it can't
+be "read from current data" because it isn't there.
+
+`POST /api/putaway/apply-locations` (multipart + `client`, admin/master) is the
+fix: `inventory.locateExistingStock(clientId, rows)` reads a **SKU + Location
+(+qty)** sheet (same `parseStockPositionRows` as putaway-by-file) and **bins the
+on-hand ALREADY on the books** at those locations. It **changes NO quantities**
+(on-hand untouched — not a receipt) and **never bins beyond a SKU's on-hand**
+(room = on-hand − already-binned, capped), so it can neither inflate nor move
+stock — it only records WHERE stock sits. A SKU already fully binned is skipped
+(`alreadyLocated`); one not in the item master is reported, never created
+(`notInMaster`); an over-quantity row is capped and reported (`overflow`). Bins
+named in the sheet are created if missing. Audit `stock_locations_applied`. UI:
+a **📍 Apply LOCATIONS to existing stock** radio in the Put away by file modal
+(its own endpoint — must NOT go through the add/supersede stock-writing path).
+After it runs, every located SKU shows its bin on the Stock & SKUs Location
+column and on the wave pick. Also: `import-file` now recognises "Available LHU"
+as a quantity and WARNS (never silently drops) when a Location column is present.
+
 ## Put away by file — a whole stock position from a spreadsheet
 
 `POST /api/putaway/import` (multipart + `client`) takes the shape a warehouse

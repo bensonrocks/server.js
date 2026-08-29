@@ -14206,6 +14206,28 @@
     if (!client || !_paImportFile) return;
     const modeChoice = document.querySelector('input[name="paImportMode"]:checked')?.value || 'plan';
     const btn = _paImp('paImportGo'); btn.disabled = true;
+    // APPLY LOCATIONS TO EXISTING STOCK — bins the on-hand already on the books
+    // at the sheet's locations, quantities untouched. Its own endpoint, because
+    // it must NOT go through the add/supersede stock-writing path.
+    if (modeChoice === 'locate') {
+      const lfd = new FormData();
+      lfd.append('file', _paImportFile); lfd.append('client', client);
+      try {
+        const r = await fetchT('/api/putaway/apply-locations', {
+          method: 'POST',
+          headers: { 'x-auth-token': localStorage.getItem('wms_token') || '', 'x-master-key': LOG_PASSWORD },
+          body: lfd,
+        }, 60000);
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { show(d.error || 'Could not apply locations.'); btn.disabled = false; return; }
+        _paImp('paImportOverlay').classList.add('hidden');
+        btn.disabled = false;
+        alert('✓ Locations applied to existing stock.\n\n' + (d.note || '')
+          + (d.notInMaster && d.notInMaster.length ? `\n\nNot in item master (skipped): ${d.notInMaster.slice(0, 20).join(', ')}${d.notInMaster.length > 20 ? '…' : ''}` : '')
+          + '\n\nThese SKUs now show a Location on the wave pick.');
+      } catch (e) { show('Apply failed: ' + e.message); btn.disabled = false; }
+      return;
+    }
     const fd = new FormData();
     fd.append('file', _paImportFile); fd.append('client', client);
     if (modeChoice !== 'plan') {

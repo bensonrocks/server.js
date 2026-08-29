@@ -13539,6 +13539,51 @@ function pruneStockImportSnapshots(db) {
   }
 }
 
+// APPLY LOCATIONS TO EXISTING STOCK — the "Stock OK but no location" fix.
+// Reported live: inventory was loaded through the plain stock-file uploader
+// (which sets on-hand but drops the Location column), so orders read "Stock
+// OK" yet the wave pick showed no location — the stock has a quantity but no
+// bin. This reads a SKU + Location(+qty) sheet and BINS THE ON-HAND ALREADY ON
+// THE BOOKS at those locations. It changes NO quantities (on-hand is left
+// exactly as it is) and never bins beyond what a SKU already holds, so it can
+// neither inflate nor move stock — it only records WHERE the stock sits, which
+// is the one thing the plain upload failed to capture. Admin or master.
+app.post('/api/putaway/apply-locations', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const client = String(req.body?.client || req.body?.clientId || '').trim();
+  if (!client) return res.status(400).json({ error: 'Name the client whose stock this is.' });
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable' });
+  let rows;
+  try { rows = parseStockPositionRows(req.file.buffer, req.file.originalname); }
+  catch (e) { return res.status(400).json({ error: 'Could not read that file: ' + e.message }); }
+  if (!rows.length) {
+    return res.status(400).json({
+      error: 'No SKU + Location rows found. The sheet needs a SKU column and a Location column '
+           + '(a quantity column — Available LHU / Qty / On hand — is used when present, else the SKU’s whole on-hand is binned at the named location).',
+    });
+  }
+  const db = readDb();
+  const cid = invClientId(canonicalClientName(db, client));
+  let out;
+  try { out = inventory.locateExistingStock(cid, rows, { operator: req.userId || _tokenUserId(req) || '' }); }
+  catch (e) { return res.status(500).json({ error: e.message }); }
+  logAudit('stock_locations_applied', {
+    clientId: cid, filename: req.file.originalname || '', located: out.located, units: out.units,
+    binsCreated: out.binsCreated, notInMaster: out.notInMaster.length, alreadyLocated: out.alreadyLocated.length,
+    by: req.userId || _tokenUserId(req) || '',
+  });
+  res.json({
+    ok: true, client: cid, filename: req.file.originalname || '',
+    rows: rows.length, located: out.located, units: out.units, binsCreated: out.binsCreated,
+    skus: out.skus.length, notInMaster: out.notInMaster.slice(0, 100), alreadyLocated: out.alreadyLocated.slice(0, 100),
+    overflow: out.overflow.slice(0, 50),
+    note: `Located ${out.units} unit(s) across ${out.skus.length} SKU(s)${out.binsCreated ? `, ${out.binsCreated} new bin(s) created` : ''}. Quantities were not changed — this only recorded where the stock sits.`
+      + (out.notInMaster.length ? ` ${out.notInMaster.length} SKU(s) in the sheet are not in this client's item master and were skipped.` : '')
+      + (out.alreadyLocated.length ? ` ${out.alreadyLocated.length} SKU(s) were already fully binned.` : ''),
+  });
+});
+
 // Recent mass uploads, newest first — what feeds the "Recent stock uploads"
 // list with each one's reverse button and time left on its window.
 app.get('/api/putaway/imports', (req, res) => {
