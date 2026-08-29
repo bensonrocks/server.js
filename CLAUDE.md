@@ -5473,6 +5473,33 @@ call with no ledger behaves exactly as before) plus 10 end-to-end checks
 through the real upload → wave → pick-list endpoints, asserting the wave AND
 the per-order pick list both ask 24/4 and never exceed what a bin holds.
 
+### The wave pick location is resolved through the BARCODE, and the sheet shows it
+
+Reported live with the data on screen: a Wave Pick Sheet showed "—" for every
+Location, while Inventory plainly had the stock binned. The cause was NOT a
+stale sheet — it was a SKU MISMATCH. The order line's SKU
+(`FS1605XXXXBKML`, a marketplace variant, harvested as a bin-less placeholder
+with the code as its own name) is NOT the SKU the stock was put away under
+(`FS1610DRXXBKML`, the in-house catalogue SKU with the real name and the
+bins). `enrichWaveWithBins`/`allocatePick` do an EXACT `(client, sku)` match,
+so they can never bridge two different codes.
+
+THE BRIDGE IS THE BARCODE. `enrichWaveWithBins` now resolves each pick row to
+where the stock ACTUALLY sits: `catalogueLookup` for the SKU's record, then
+`inventory.skusForBarcode(client, barcode)` — EVERY SKU carrying that barcode,
+not just one (`getByBarcode` returns a single row and can return the bin-less
+placeholder, exactly the shadow that hid FS1610). Among the candidates
+(`row.sku`, the catalogue SKU, and all barcode-sharing SKUs) it bins under
+whichever has `binnedQty > 0`, stamping `resolved_sku` and `barcode` on the
+row. HONEST LIMIT: this only works if the two codes SHARE a barcode in the
+item master — if the order's SKU and the stocked SKU have no barcode in
+common, nothing links them and it is a genuine data fix (add the barcode to
+the master, or correct the order's SKU).
+
+The pick SHEET now prints the **barcode under the SKU** (per the user — the
+picker scans it, and on a marketplace order it is the only reliable bridge to
+the stock). `buildWave` carries `line.barcode` onto each row.
+
 ### The wave pick SHEET re-fetches before printing (fresh bins)
 
 Reported live: a printed Wave Pick Sheet showed "—" for the Location on every

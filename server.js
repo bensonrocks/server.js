@@ -26414,9 +26414,41 @@ function enrichWaveWithBins(db, wave) {
     const m = first && meta[first.order_number];
     if (!m || !m.clientId) continue;
     try {
-      const upc = Number((inventory.get(row.sku, m.clientId) || {}).units_per_carton) || 1;
+      // WHICH SKU IS THE STOCK ACTUALLY BINNED UNDER? The order line's SKU is
+      // often NOT the in-house SKU the stock sits under — a marketplace variant
+      // code (FS1605XXXXBKML) vs the catalogue SKU the putaway used
+      // (FS1610DRXXBKML). Reported live: a wave sheet with a location for every
+      // line missing, while the stock was plainly binned in Inventory. Exact
+      // (client, sku) match can never bridge that. So resolve the real product
+      // through the catalogue — by SKU, then by BARCODE — and BIN under
+      // whichever code actually has stock on the shelf. The barcode is stamped
+      // on the row too, for the picklist.
+      const rec = catalogueLookup(m.clientId, row.sku, row.barcode);
+      // The barcode is the bridge. When the order's variant SKU and the
+      // in-house SKU share a barcode, EVERY SKU carrying that barcode is a
+      // candidate for where the stock actually sits — getByBarcode alone
+      // returns just one and can return the bin-less placeholder, so gather
+      // them all and pick whichever HAS bins.
+      const bc = String((rec && rec.barcode) || row.barcode || '').trim();
+      let barcodeSkus = [];
+      try { barcodeSkus = bc ? inventory.skusForBarcode(m.clientId, bc) : []; } catch (_) {}
+      const candidates = [...new Set([
+        row.sku,
+        rec && rec.sku,
+        ...barcodeSkus,
+      ].map(x => String(x || '').trim()).filter(Boolean))];
+      // The SKU that has bins wins; fall back to the row's own SKU so a genuine
+      // shortfall still reports against it.
+      let binSku = row.sku;
+      for (const c of candidates) {
+        try { if (inventory.binnedQty(m.clientId, c) > 0) { binSku = c; break; } } catch (_) {}
+      }
+      row.resolved_sku = binSku !== row.sku ? binSku : undefined;
+      // Barcode for display: the catalogue's, else what the order carried.
+      row.barcode = bc;
+      const upc = Number((inventory.get(binSku, m.clientId) || {}).units_per_carton) || 1;
       row.units_per_carton = upc;
-      const a = inventory.allocatePick(m.clientId, row.sku, row.total_qty, m.strategy, upc, claim);
+      const a = inventory.allocatePick(m.clientId, binSku, row.total_qty, m.strategy, upc, claim);
       // Aggregate lot picks into one row per bin for display.
       const byLoc = []; const bidx = {};
       for (const p of a.picks) { if (bidx[p.location_id] === undefined) { bidx[p.location_id] = byLoc.length; byLoc.push({ location_id: p.location_id, qty: 0, expiry_date: p.expiry_date || null }); } const e = byLoc[bidx[p.location_id]]; e.qty += p.qty; if (p.expiry_date && (!e.expiry_date || p.expiry_date < e.expiry_date)) e.expiry_date = p.expiry_date; }

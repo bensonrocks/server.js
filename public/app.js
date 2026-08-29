@@ -19200,7 +19200,12 @@
       // quantity per product, sorted to orders afterwards through Scan & Check —
       // so order numbers are not something the picker acts on, and on a printed
       // sheet they squeezed the Location, SKU and Description columns that are.
-      const rows = w.picks.map(p => `<tr><td style="font-family:monospace;font-weight:700;font-size:1.05rem">${esc(binText(p))}</td><td style="font-weight:600">${esc(p.sku)}</td><td>${esc(p.description)}</td><td style="text-align:right;font-size:1.15rem;font-weight:700">${p.total_qty}</td><td style="width:2.2rem;border:1px solid #999"></td></tr>`).join('');
+      // SKU with the product BARCODE beneath it — per the user, the picker
+      // scans the barcode, and on marketplace orders the order SKU and the
+      // barcode are the only reliable bridge to the stock (which may be binned
+      // under a different in-house SKU).
+      const skuCell = p => `${esc(p.sku)}${p.barcode ? `<div style="font-family:monospace;font-weight:400;font-size:.8rem;color:#334155">&#9647; ${esc(p.barcode)}</div>` : ''}`;
+      const rows = w.picks.map(p => `<tr><td style="font-family:monospace;font-weight:700;font-size:1.05rem">${esc(binText(p))}</td><td style="font-weight:600">${skuCell(p)}</td><td>${esc(p.description)}</td><td style="text-align:right;font-size:1.15rem;font-weight:700">${p.total_qty}</td><td style="width:2.2rem;border:1px solid #999"></td></tr>`).join('');
       const win = window.open('', '_blank');
       win.document.write(`<html><head><title>Wave Pick — ${esc(w.name)}</title><style>
         body{font-family:sans-serif;padding:20px} h1{font-size:1.3rem}
