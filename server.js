@@ -24429,13 +24429,59 @@ try {
   const _freed = releaseOrphanReservations(_rdb);
   if (_freed) console.log(`[IdealOne] Inventory: released ${_freed} unit(s) reserved by orders that no longer exist`);
 } catch (e) { console.error('[IdealOne] reservation reconcile failed:', e.message); }
+// ONE LEDGER: bins are the breakdown of on-hand, never a second total. At boot
+// this REPORTS divergence, never rewrites it — a static overage is ambiguous
+// (the bins may be the truth and on-hand the error), and destroying either
+// side unasked would erase a location somebody deliberately recorded. The
+// event-driven trims (adjust-down, set-mode) stay automatic, because there the
+// on-hand drop is a known event. Same TDZ zone as above.
+try {
+  const _bo = inventory.reconcileBinOverage();
+  if (_bo.found.length) {
+    console.log(`[IdealOne] Inventory: ${_bo.found.length} SKU(s) have bins claiming ${_bo.overUnits} unit(s) more than on-hand — reported, not touched`);
+    logAudit('bin_overage_detected', { skus: _bo.found.length, units: _bo.overUnits, detail: _bo.found.slice(0, 50) });
+  }
+} catch (e) { console.error('[IdealOne] bin-overage check failed:', e.message); }
 
 // 3PL model: ALL stock is client-owned. Orders/batches carry only a free-text
 // client_name, while the inventory store keys on client_id — so we derive a
 // stable client_id from the client name (one helper, used everywhere). An
 // empty/blank name falls back to 'GENERAL' so nothing is ever silently
 // unscoped.
-function invClientId(name) { return String(name || '').trim() || 'GENERAL'; }
+//
+// CASE-INSENSITIVE AGAINST THE STOCK ACCOUNTS THAT EXIST. Caught by e2e: an
+// upload naming the client "Mayer2026" while the item master sat under
+// "MAYER2026" landed the whole batch UNTRACKED — no catalogue enrichment, no
+// reservation, no pick locations — because this returned the raw spelling and
+// every inventory read then missed. Same client, one case apart, everything
+// off. So when an inventory account exists whose id differs only by case, that
+// STORED spelling is the id (the standing one-client-one-spelling rule at the
+// one choke point every caller goes through). Exact match still wins untouched;
+// a name with no stock account at all passes through as before. Two accounts
+// differing only by case cannot coexist — mergeInventoryClientCasing folds
+// them at boot — so the fold target is unique. Cached briefly: this is called
+// in per-order loops, and the account list changes rarely.
+const _invCidCache = new Map();   // tenantId -> { at, ids } — the store is per-tenant, so the fold map must be too
+function invClientId(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return 'GENERAL';
+  try {
+    if (inventory.available()) {
+      const tid = tenantContext.currentTenantId();
+      const now = Date.now();
+      let c = _invCidCache.get(tid);
+      if (!c || now - c.at > 5000) {
+        const m = new Map();
+        for (const id of inventory.listClientIds() || []) m.set(String(id).toLowerCase(), String(id));
+        c = { at: now, ids: m };
+        _invCidCache.set(tid, c);
+      }
+      const hit = c.ids.get(raw.toLowerCase());
+      if (hit && hit !== raw) return hit;
+    }
+  } catch (_) { /* the raw spelling is always a safe answer */ }
+  return raw;
+}
 
 // The same client spelled with different capitalisation is ONE client. Files
 // arrive from different sources — one writes "BETIME", another "Betime" — and
@@ -24714,6 +24760,23 @@ function reserveIntakeOrders(db, clientId, clientName, orders, batchId, strategy
   return { tracked, reservedSkus };
 }
 
+// ONE BRIDGE FOR EVERY PICK SURFACE. Where is this product's stock actually
+// binned — folding SKU case, CLIENT case and the barcode (the standing
+// one-client-one-spelling rule; it can only unite case-variants, never another
+// client's stock). Every reader AND writer of pick locations must resolve
+// through this so planning (allocatePickLocations, enrichWaveWithBins) and
+// per-scan consumption (reconcileBinConsumption) always land on the SAME rows
+// — a plan that bridges while consumption does not would leave bins that never
+// come down. Falls back to the raw ref, so a genuine shortfall still reports
+// against the order's own SKU.
+function resolveBinnedRef(clientId, sku, barcode) {
+  try {
+    const ref = inventory.resolveBinnedFor(clientId, { sku, barcode });
+    if (ref) return { client: ref.client_id, sku: ref.sku };
+  } catch (_) {}
+  return { client: clientId, sku };
+}
+
 function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait') {
   if (!inventory.available()) return;
   // ONE LEDGER FOR THE WHOLE BATCH. allocatePick reads bin_lots and decrements
@@ -24722,13 +24785,28 @@ function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait')
   // that asks a 24-unit bin for more than it holds while another bin is never
   // visited.
   const claim = inventory.newPickClaim();
-  const stagingLeft = {}; // sku -> staging units still unallocated this batch
-  const stagingFor = sku => (stagingLeft[sku] !== undefined ? stagingLeft[sku] : (stagingLeft[sku] = inventory.stagingQty(clientId, sku)));
+  const refCache = new Map();  // order sku -> resolved {client, sku}
+  const refFor = l => {
+    const k = String(l.sku).toUpperCase();
+    if (!refCache.has(k)) refCache.set(k, resolveBinnedRef(clientId, l.sku, l.barcode || l.source_barcode || ''));
+    return refCache.get(k);
+  };
+  const stagingLeft = {}; // resolved client|sku -> staging units still unallocated this batch
+  const stagingFor = ref => {
+    const k = `${ref.client}|${ref.sku}`;
+    if (stagingLeft[k] === undefined) stagingLeft[k] = inventory.stagingQty(ref.client, ref.sku);
+    return { k, left: stagingLeft[k] };
+  };
   for (const order of (orders || [])) {
     for (const l of (order.lines || [])) {
       if (!l.sku) continue;
       try {
-        const upc = Number((inventory.get(l.sku, clientId) || {}).units_per_carton) || 1;
+        // Resolve WHERE the stock actually sits (SKU case / client case /
+        // barcode) once per SKU, and plan against that ref throughout — the
+        // same bridge the wave and per-scan consumption use.
+        const ref = refFor(l);
+        if (ref.sku !== l.sku) l.resolved_sku = ref.sku;
+        const upc = Number((inventory.get(ref.sku, ref.client) || {}).units_per_carton) || 1;
         l.units_per_carton = upc;
         const lineQty = Number(l.qty) || 0;
         // CASE-BREAK: if the order's LOOSE-piece need exceeds what's on the pick
@@ -24740,12 +24818,12 @@ function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait')
           const looseNeed = lineQty >= upc ? (lineQty % upc) : lineQty;
           if (looseNeed > 0) {
             try {
-              const br = inventory.caseBreakReplenish(clientId, l.sku, looseNeed, upc);
+              const br = inventory.caseBreakReplenish(ref.client, ref.sku, looseNeed, upc);
               if (br) l.case_break = { from: br.from, to: br.to, cartons: br.cartons, qty: br.qty, take: looseNeed, leave: Math.max(0, br.left_on_shelf) };
             } catch (_) { /* fall back to normal allocation */ }
           }
         }
-        const a = inventory.allocatePick(clientId, l.sku, lineQty, strategy, upc, claim);
+        const a = inventory.allocatePick(ref.client, ref.sku, lineQty, strategy, upc, claim);
         // Aggregate the lot-level picks into one row per bin (preserving plan order:
         // bulk case-picks first, then pick-face eaches).
         const byLoc = []; const idx = {};
@@ -24759,9 +24837,10 @@ function allocatePickLocations(clientId, orders, strategy, stagingMode = 'wait')
         let shortfall = a.shortfall;
         l.awaiting_putaway_qty = 0;
         if (shortfall > 0) {
-          const fromStaging = Math.min(shortfall, stagingFor(l.sku));
+          const st = stagingFor(ref);
+          const fromStaging = Math.min(shortfall, st.left);
           if (fromStaging > 0) {
-            stagingLeft[l.sku] -= fromStaging;
+            stagingLeft[st.k] -= fromStaging;
             shortfall -= fromStaging;
             if (stagingMode === 'staging') l.pick_locations.push({ location_id: 'STAGING', qty: fromStaging, expiry_date: null });
             else l.awaiting_putaway_qty = fromStaging;
@@ -24783,7 +24862,13 @@ function reconcileBinConsumption(db, batch, ord, state, sku) {
   if (!sku || !batch || !batch.inventory_tracked || !inventory.available()) return;
   const cid = batch.inventory_client || invClientId(batch.client_name);
   const strat = batch.pick_strategy || 'fefo';
-  const upc = Number((inventory.get(sku, cid) || {}).units_per_carton) || 1;
+  // Consume from the SAME resolved ref the pick plan was built against (SKU
+  // case / client case / barcode) — otherwise a bridged plan's bins would
+  // never come down as the order is scanned. State stays keyed on the order's
+  // own SKU; only the physical bin reads/writes use the resolved ref.
+  const _line = (ord.lines || []).find(x => x.sku === sku) || {};
+  const bref = resolveBinnedRef(cid, sku, _line.barcode || _line.source_barcode || '');
+  const upc = Number((inventory.get(bref.sku, bref.client) || {}).units_per_carton) || 1;
   const ordered = (ord.lines || []).filter(l => l.sku === sku).reduce((s, l) => s + (Number(l.qty) || 0), 0);
   const target = Math.min(Number(state.scanned?.[sku] || 0), ordered);   // never consume beyond ordered
   state.bin_consumed = state.bin_consumed || {};
@@ -24804,7 +24889,7 @@ function reconcileBinConsumption(db, batch, ord, state, sku) {
         }
       }
       if (!orderArr.length) { // no stored plan — derive one
-        for (const p of inventory.allocatePick(cid, sku, ordered, strat, upc).picks) {
+        for (const p of inventory.allocatePick(bref.client, bref.sku, ordered, strat, upc).picks) {
           if (agg[p.location_id] === undefined) { agg[p.location_id] = 0; orderArr.push(p.location_id); }
           agg[p.location_id] += p.qty;
         }
@@ -24819,18 +24904,18 @@ function reconcileBinConsumption(db, batch, ord, state, sku) {
     for (const loc of locs) {
       const want = desired[loc] || 0, have = cur[loc] || 0;
       if (want > have) {
-        const taken = inventory.consumeFromLocation(cid, sku, loc, want - have, strat);
+        const taken = inventory.consumeFromLocation(bref.client, bref.sku, loc, want - have, strat);
         for (const t of taken) list.push({ location_id: loc, lot_id: t.lot_id, qty: t.qty, expiry_date: t.expiry_date || null, received_at: t.received_at || null, lot_number: t.lot_number || '' });
       } else if (want < have) {
         let give = have - want; const back = [];
         for (let i = list.length - 1; i >= 0 && give > 0; i--) {
           if (list[i].location_id !== loc) continue;
           const take = Math.min(give, list[i].qty);
-          back.push({ sku, location_id: loc, qty: take, received_at: list[i].received_at, expiry_date: list[i].expiry_date, lot_number: list[i].lot_number });
+          back.push({ sku: bref.sku, location_id: loc, qty: take, received_at: list[i].received_at, expiry_date: list[i].expiry_date, lot_number: list[i].lot_number });
           list[i].qty -= take; give -= take;
           if (list[i].qty <= 0) list.splice(i, 1);
         }
-        if (back.length) inventory.restoreLots(cid, back);
+        if (back.length) inventory.restoreLots(bref.client, back);
       }
     }
     state.bin_consumed[sku] = list;
@@ -25437,6 +25522,9 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
       if (mode === 'set') {
         const delta = qty - (existing ? existing.stock_qty : 0);
         inventory.upsert({ sku, name: nm, clientId: cid, stock_qty: qty });
+        // ONE LEDGER: setting on-hand below what the bins claim leaves phantom
+        // pick locations — cap the bins at the new figure, on the ledger.
+        if (delta < 0) { try { inventory.enforceBinCap(cid, sku, { reason: 'Stock upload (set) lowered on-hand' }); } catch (_) {} }
         if (delta > 0) additions[sku] = (additions[sku] || 0) + delta;
       } else { // add
         if (!existing) { inventory.upsert({ sku, name: nm, clientId: cid, stock_qty: qty }); if (qty > 0) additions[sku] = (additions[sku] || 0) + qty; }

@@ -5129,6 +5129,48 @@ an unqualified `client_id` in the WHERE clause made the whole query ambiguous
 and SQLite refused it. The `catch` around it was silent, so the report came back
 empty — indistinguishable from a quiet month. It now logs.
 
+## ONE LEDGER — bins are the breakdown of on-hand, and every pick surface resolves through one bridge
+
+Per the user: inventory and its locations are ONE position, whatever door the
+stock came in through, and every pick list must carry locations. Three rules,
+each proven by a test that caught a real hole before it shipped:
+
+1. **INVARIANT: binned ≤ on-hand, enforced at the EVENTS that break it.**
+   `inventory.enforceBinCap(clientId, sku)` trims bin lots (NEWEST first —
+   dated/older lots are the FEFO-relevant ones) down to on-hand, on the
+   movement ledger. Hooked where the on-hand drop is a KNOWN event: `adjust()`
+   with a negative delta (write-offs), and the plain uploader's `set` mode.
+   **The boot sweep (`reconcileBinOverage`) is REPORT-ONLY** — audit
+   `bin_overage_detected`, never a trim: a static overage found at rest is
+   AMBIGUOUS (bins may be the truth and on-hand the error — stock binned by
+   hand with no receipt behind it), and the first cut's boot-trim ATE 30
+   legitimately-binned units in e2e before it ever shipped. `{apply:true}`
+   exists for an explicit human-invoked reconcile only.
+2. **ONE BRIDGE FOR EVERY PICK SURFACE — `resolveBinnedRef(cid, sku, barcode)`
+   (server.js), over `inventory.resolveBinnedFor`.** Used by
+   `allocatePickLocations` (intake order pick lists), `enrichWaveWithBins`
+   (waves) AND `reconcileBinConsumption` (per-scan bin decrement) — planning
+   and consumption MUST resolve to the same rows, or a bridged plan's bins
+   never come down as the order is scanned. Lines stamp `resolved_sku` when the
+   stock sits under a different code (barcode bridge).
+3. **`invClientId()` FOLDS CASE against the stock accounts that exist**
+   (per-TENANT 5s cache over `inventory.listClientIds()`; exact match wins;
+   unknown names pass through). Caught by e2e: an upload naming "Mayer2026"
+   while the master sat under "MAYER2026" landed the batch UNTRACKED — no
+   enrichment, no reservation, no pick locations — because every inventory
+   read used the raw spelling. Two accounts differing only by case cannot
+   coexist (mergeInventoryClientCasing folds them at boot), so the target is
+   unique. This is the root fix; resolveBinnedFor's client fold stays as the
+   read-time belt.
+
+Verified: 15 unit checks on the invariant (adjust-down auto-caps, FEFO lots
+survive, staging untouched, report-vs-apply, orphan lots), 6 on
+resolveBinnedFor (case/barcode/never-another-client), and TWO e2e runs through
+the REAL endpoints: a wave with batch "MAYER2026" against bins under
+"Mayer2026" shows the bin; an UPLOAD of a variant-SKU order (RCMMRC101XWEMY)
+lands tracked, enriched, and its pick line points at the barcode-sharing
+in-house SKU's bin with `resolved_sku` stamped.
+
 ## "Stock OK but no location" — bin existing on-hand from a location sheet
 
 Reported live (Mayer, wave pick): orders read **✓ Stock OK** yet the wave pick
