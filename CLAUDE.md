@@ -5162,6 +5162,18 @@ each proven by a test that caught a real hole before it shipped:
    coexist (mergeInventoryClientCasing folds them at boot), so the target is
    unique. This is the root fix; resolveBinnedFor's client fold stays as the
    read-time belt.
+4. **NO DOOR CAN MINT A SECOND SPELLING** (per the user: "Mayer2026 or
+   MAYER2026 … must be same type of writing"). `canonicalClientName` now also
+   consults `inventory.listClientIds()` — onboarding loads the ITEM MASTER
+   first, before any profile or batch, so a client whose only footprint was
+   their catalogue had no known spelling and the first order batch minted
+   whatever casing the file/sync carried (exactly how MAYER2026 landed beside
+   Mayer2026). `reqClientId` folds through `invClientId` (a typed "mayer2026"
+   lands on the real account, never an empty screen), and the stock-file +
+   product-master uploads canonicalise their clientId the way `/api/putaway/
+   import` always did. E2E: master loaded as "MayerX", then a stock upload, an
+   order upload and reads all typed "MAYERX"/"mayerx" — ONE account, batch
+   adopts "MayerX", pick list carries the location.
 
 Verified: 15 unit checks on the invariant (adjust-down auto-caps, FEFO lots
 survive, staging untouched, report-vs-apply, orphan lots), 6 on

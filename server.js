@@ -24509,6 +24509,12 @@ function canonicalClientName(db, name) {
   for (const p of db.clientProfiles || []) note(p.client);
   for (const b of db.batches || []) note(b.client_name);
   for (const r of db.inbound || []) note(r.client_name);
+  // THE ITEM MASTER COUNTS TOO. Onboarding loads the master FIRST — before any
+  // profile or order — so a client whose only footprint is their catalogue used
+  // to have NO known spelling here, and the first order batch minted whatever
+  // casing the file or the sync happened to carry ("MAYER2026" landing beside
+  // the master's "Mayer2026"). Same client, two spellings, everything split.
+  try { if (inventory.available()) for (const id of inventory.listClientIds() || []) note(id); } catch (_) {}
   return seen.get(k) || raw;
 }
 
@@ -25194,8 +25200,11 @@ function explodeBundleRows(rows, clientOf) {
 // Every /api/inventory route needs an explicit client. Reads take ?clientId=,
 // writes take it in the body. Missing → 400 (never a 500 from the store guard).
 function reqClientId(req) {
-  const c = req.query?.clientId || req.body?.clientId || '';
-  return String(c).trim();
+  const c = String(req.query?.clientId || req.body?.clientId || '').trim();
+  // Case-fold to the stock account that EXISTS ("mayer2026" typed in the
+  // CLIENT box must land on Mayer2026's stock, not on an empty screen or a
+  // second account). Empty stays empty — the routes 400 on it.
+  return c ? invClientId(c) : '';
 }
 
 // ── SORTING A STOCK LIST ───────────────────────────────────────────────────
@@ -25452,8 +25461,11 @@ app.post('/api/inventory/ledger-uploads/undo', express.json(), (req, res) => {
 
 app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const cid  = String(req.body?.clientId || '').trim();
-  if (!cid) return res.status(400).json({ error: 'clientId is required (which client owns this stock?)' });
+  const rawCid = String(req.body?.clientId || '').trim();
+  if (!rawCid) return res.status(400).json({ error: 'clientId is required (which client owns this stock?)' });
+  // ONE SPELLING: adopt the client's known casing (profile / batches / item
+  // master) so a typed case-variant can never mint a second stock account.
+  const cid = invClientId(canonicalClientName(readDb(), rawCid));
   const mode = String(req.body?.mode || 'add').toLowerCase() === 'set' ? 'set' : 'add';
   const pushToZort = String(req.body?.push_to_zort || '') === 'true' || req.body?.push_to_zort === true;
   if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
@@ -25646,8 +25658,10 @@ app.get('/api/inventory/product-master-template', requireAuth, (req, res) => {
 
 app.post('/api/inventory/import-product-master', upload.single('file'), tenantMiddleware, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const cid = String(req.body?.clientId || '').trim();
-  if (!cid) return res.status(400).json({ error: 'clientId is required (which client owns this stock?)' });
+  const rawPmCid = String(req.body?.clientId || '').trim();
+  if (!rawPmCid) return res.status(400).json({ error: 'clientId is required (which client owns this stock?)' });
+  // ONE SPELLING — same rule as the stock-file upload above.
+  const cid = invClientId(canonicalClientName(readDb(), rawPmCid));
   let rawRows;
   try {
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
