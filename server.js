@@ -23142,9 +23142,36 @@ function shopifyStorePublic(s) {
     enabled: !!s.enabled, autoPullMinutes: Number(s.autoPullMinutes) || 0,
     completeAction: s.completeAction || 'none',
     accessToken: s.accessToken ? '••••' + String(s.accessToken).slice(-4) : '',
+    apiClientId: s.apiClientId || '',
+    apiClientSecret: s.apiClientSecret ? '••••' + String(s.apiClientSecret).slice(-4) : '',
+    authMode: (s.apiClientId && s.apiClientSecret) ? 'dev-dashboard (24h tokens, auto-renewed)' : (s.accessToken ? 'custom-app token' : 'not configured'),
     endpoint: s.endpoint || '',
     lastPullAt: s.lastPullAt || null, lastResult: s.lastResult || null,
   };
+}
+
+// TWO WAYS A STORE AUTHENTICATES, resolved here so every caller is the same:
+// • custom app  → a permanent shpat_ token, pasted once and used as-is.
+// • Dev Dashboard app → Client ID + Secret; its tokens EXPIRE EVERY 24 HOURS,
+//   so IdealOne mints one on demand (client-credentials grant) and re-mints
+//   when fewer than 10 minutes remain. Credentials WIN over a pasted token —
+//   a pasted dashboard token is stale within a day, which would read as "it
+//   worked yesterday and broke today", the worst kind of failure.
+// The minted token is cached on the store record so a pull, a completion push
+// and a test inside the same day spend ONE mint, not three.
+async function shopifyAuthed(db, store) {
+  if (!(store.apiClientId && store.apiClientSecret)) return store;   // static token path
+  const c = store.mintedToken;
+  if (c && c.token && new Date(c.expires_at).getTime() - Date.now() > 10 * 60000) {
+    return { ...store, accessToken: c.token };
+  }
+  const minted = await shopifyApi.mintAccessToken(store);
+  store.mintedToken = {
+    token: minted.access_token,
+    expires_at: new Date(Date.now() + Math.max(60, minted.expires_in - 60) * 1000).toISOString(),
+  };
+  writeDb(db);
+  return { ...store, accessToken: minted.access_token };
 }
 
 app.get('/api/master/shopify/stores', (req, res) => {
@@ -23162,12 +23189,21 @@ app.post('/api/master/shopify/stores', express.json(), (req, res) => {
   if (b.domain !== undefined) s.domain = String(b.domain).trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
   // Blank keeps the stored secret — the same rule as the ZORT key fields.
   if (String(b.accessToken || '').trim()) s.accessToken = String(b.accessToken).trim();
+  // Dev-Dashboard app credentials (Client ID + Secret). Changing either drops
+  // the cached minted token so the next call re-mints against the new pair.
+  if (b.apiClientId !== undefined && String(b.apiClientId).trim() !== (s.apiClientId || '')) {
+    s.apiClientId = String(b.apiClientId).trim(); delete s.mintedToken;
+  }
+  if (String(b.apiClientSecret || '').trim()) { s.apiClientSecret = String(b.apiClientSecret).trim(); delete s.mintedToken; }
   if (b.endpoint !== undefined) s.endpoint = String(b.endpoint || '').trim();
   if (b.enabled !== undefined) s.enabled = !!b.enabled;
   if (b.autoPullMinutes !== undefined) s.autoPullMinutes = Math.max(0, Number(b.autoPullMinutes) || 0);
   if (b.completeAction !== undefined) s.completeAction = b.completeAction === 'fulfill' ? 'fulfill' : 'none';
   if (!s.clientName) return res.status(400).json({ error: 'Name the client this store belongs to.' });
   if (!s.domain && !s.endpoint) return res.status(400).json({ error: 'The store domain (something.myshopify.com) is required.' });
+  if (!s.accessToken && !(s.apiClientId && s.apiClientSecret)) {
+    return res.status(400).json({ error: 'Give either a custom-app access token (shpat_…) OR a Dev-Dashboard app’s Client ID + Secret.' });
+  }
   writeDb(db);
   logAudit('shopify_store_saved', { id: s.id, client: s.clientName, domain: s.domain, enabled: !!s.enabled, by: req.userId || '' });
   res.json(shopifyStorePublic(s));
@@ -23185,10 +23221,13 @@ app.delete('/api/master/shopify/stores/:id', (req, res) => {
 });
 app.post('/api/master/shopify/stores/:id/test', async (req, res) => {
   if (!checkMaster(req, res)) return;
-  const s = shopifyStores(readDb()).find(x => x.id === req.params.id);
+  const db = readDb();
+  const s = shopifyStores(db).find(x => x.id === req.params.id);
   if (!s) return res.status(404).json({ error: 'Store not found' });
-  try { res.json({ ok: true, shop: await shopifyApi.testConnection(s) }); }
-  catch (e) { res.status(502).json({ ok: false, error: e.message }); }
+  try {
+    const auth = await shopifyAuthed(db, s);
+    res.json({ ok: true, shop: await shopifyApi.testConnection(auth), authMode: shopifyStorePublic(s).authMode });
+  } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
 });
 app.post('/api/master/shopify/stores/:id/pull', async (req, res) => {
   if (!checkMaster(req, res)) return;
@@ -23206,8 +23245,9 @@ async function pullShopifyStore(db, store) {
   const existing = new Map();   // order_number -> {batch, order}
   for (const b of db.batches || []) for (const o of b.orders || []) existing.set(String(o.order_number), { batch: b, order: o });
 
+  const auth = await shopifyAuthed(db, store);   // mints/renews for Dev-Dashboard stores
   const sinceMs = store.lastPullAt ? new Date(store.lastPullAt).getTime() - 86400000 : Date.now() - 7 * 86400000;
-  const nodes = await shopifyApi.getRecentOrders(store, { updatedAfter: new Date(sinceMs).toISOString() });
+  const nodes = await shopifyApi.getRecentOrders(auth, { updatedAfter: new Date(sinceMs).toISOString() });
 
   const rows = []; const meta = {};
   let fetched = 0, skippedExisting = 0, trackingFilled = 0, cancelled = 0;
@@ -23324,12 +23364,13 @@ function pushShopifyCompletion(db, ord, state) {
     const tracking = String(ord.waybill_number || '').trim();
     (async () => {
       try {
-        const fos = await shopifyApi.getOpenFulfillmentOrders(store, ord.shopify_id);
+        const auth = await shopifyAuthed(db, store);   // mints/renews for Dev-Dashboard stores
+        const fos = await shopifyApi.getOpenFulfillmentOrders(auth, ord.shopify_id);
         if (!fos.length) {
           logAudit('shopify_completion_already_fulfilled', { order: ord.order_number, storeId: store.id });
           return;
         }
-        const f = await shopifyApi.createFulfillment(store, fos.map(x => x.id), tracking);
+        const f = await shopifyApi.createFulfillment(auth, fos.map(x => x.id), tracking);
         const db2 = readDb();
         const b2 = findBatchForOrder(db2, ord.order_number);
         const st2 = b2 && b2.orderStates ? b2.orderStates[ord.order_number] : null;

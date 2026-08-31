@@ -12710,7 +12710,7 @@
           return `<tr>
             <td style="font-weight:700">${esc(s.clientName)}</td>
             <td>${esc(s.domain)}${s.enabled ? '' : ' <span style="color:#94a3b8">(off)</span>'}</td>
-            <td style="font-family:monospace">${esc(s.accessToken || '—')}</td>
+            <td style="font-family:monospace">${esc(s.apiClientId ? (s.authMode || 'dev-dashboard') : (s.accessToken || '—'))}</td>
             <td>${s.autoPullMinutes > 0 ? s.autoPullMinutes + 'm' : 'manual'}</td>
             <td>${s.completeAction === 'fulfill' ? 'Fulfill + tracking' : 'nothing'}</td>
             <td style="font-size:.78rem">${last}</td>
@@ -12737,7 +12737,8 @@
         tb.querySelectorAll('[data-sf-edit]').forEach(b => b.addEventListener('click', () => {
           const s = stores.find(x => x.id === b.dataset.sfEdit); if (!s) return;
           $id('sfId').value = s.id; $id('sfClient').value = s.clientName; $id('sfDomain').value = s.domain;
-          $id('sfToken').value = ''; $id('sfAutoPull').value = s.autoPullMinutes; $id('sfCompleteAction').value = s.completeAction || 'none';
+          $id('sfToken').value = ''; $id('sfClientId').value = s.apiClientId || ''; $id('sfClientSecret').value = '';
+          $id('sfAutoPull').value = s.autoPullMinutes; $id('sfCompleteAction').value = s.completeAction || 'none';
           $id('shopifyStoreForm').classList.remove('hidden');
         }));
         tb.querySelectorAll('[data-sf-del]').forEach(b => b.addEventListener('click', async () => {
@@ -12749,7 +12750,7 @@
     }
     function wire() {
       $id('shopifyAddStoreBtn')?.addEventListener('click', () => {
-        ['sfId', 'sfClient', 'sfDomain', 'sfToken'].forEach(x => { const el = $id(x); if (el) el.value = ''; });
+        ['sfId', 'sfClient', 'sfDomain', 'sfToken', 'sfClientId', 'sfClientSecret'].forEach(x => { const el = $id(x); if (el) el.value = ''; });
         $id('sfAutoPull').value = 10; $id('sfCompleteAction').value = 'none';
         $id('shopifyStoreForm').classList.remove('hidden');
       });
@@ -12760,6 +12761,8 @@
           clientName: $id('sfClient').value.trim(),
           domain: $id('sfDomain').value.trim(),
           accessToken: $id('sfToken').value.trim(),
+          apiClientId: $id('sfClientId').value.trim(),
+          apiClientSecret: $id('sfClientSecret').value.trim(),
           autoPullMinutes: Number($id('sfAutoPull').value) || 0,
           completeAction: $id('sfCompleteAction').value,
           enabled: true,

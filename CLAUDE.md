@@ -2058,6 +2058,17 @@ enrichment, stock gate + reservations, pick locations, pokes, IS- job codes).
   push errors on the name, that is the first thing to check. Custom apps may
   need the `read_all_orders` scope ticked for orders older than 60 days — the
   pull's 7-day lookback stays inside the window either way.
+- **DEV-DASHBOARD APPS: the token EXPIRES EVERY 24 HOURS and is MINTED, not
+  pasted** (confirmed via shopify.dev search — "Get API access tokens for Dev
+  Dashboard apps"). A store may therefore carry `apiClientId`+`apiClientSecret`
+  INSTEAD of an accessToken: `shopifyAuthed(db, store)` mints via the
+  client-credentials grant (`POST /admin/oauth/access_token`,
+  `lib/shopify.js mintAccessToken`), caches on `store.mintedToken`, re-mints
+  under 10 minutes left, and credentials WIN over a pasted token (a pasted
+  dashboard token is stale within a day — "worked yesterday, broke today").
+  Changing either credential drops the cache. Verified 7 e2e checks: a
+  credentials-only store tests/pulls/fulfills on ONE cached mint, and wrong
+  credentials refuse in Shopify's own words.
 - Webhook receiver deliberately NOT built yet (polling first, like ZORT was);
   `verifyWebhookHmac` ships in lib/shopify.js so the verification rule is
   settled when it is.

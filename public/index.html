@@ -2407,7 +2407,10 @@
           <input type="hidden" id="sfId" />
           <div class="form-group"><label>Client (whose orders these are)</label><input type="text" id="sfClient" placeholder="e.g. ShopCo" autocomplete="off" /></div>
           <div class="form-group"><label>Store domain</label><input type="text" id="sfDomain" placeholder="something.myshopify.com" autocomplete="off" /></div>
-          <div class="form-group"><label>Admin API access token</label><input type="text" id="sfToken" placeholder="shpat_… (leave blank to keep current)" autocomplete="off" /></div>
+          <div class="form-group"><label>Admin API access token (custom app)</label><input type="text" id="sfToken" placeholder="shpat_… (leave blank to keep current)" autocomplete="off" /></div>
+          <div style="font-size:.78rem;color:#64748b;margin:.2rem 0 .4rem"><b>— OR a Dev Dashboard app —</b> its tokens expire every 24h, so paste the app's Client ID + Secret and IdealOne mints and renews the token itself:</div>
+          <div class="form-group"><label>Client ID (Dev Dashboard app)</label><input type="text" id="sfClientId" placeholder="from the app's Settings page" autocomplete="off" /></div>
+          <div class="form-group"><label>Client secret (Dev Dashboard app)</label><input type="text" id="sfClientSecret" placeholder="shpss_… (leave blank to keep current)" autocomplete="off" /></div>
           <div class="form-group"><label>Auto-pull every (minutes, 0 = manual only)</label><input type="number" id="sfAutoPull" min="0" max="1440" value="10" /></div>
           <div class="form-group"><label>When scan completes</label>
             <select id="sfCompleteAction">
