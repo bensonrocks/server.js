@@ -197,6 +197,17 @@ between them.
   — proven at the network-request level, not just visually: the shared range
   set to one period and this report's own fields set to a different one, the
   actual outgoing request carries the row's own dates.
+- **PHONE: the filter row is now ONE grouped panel, not loose floating
+  fields.** Below 768px, `.report-range-row` (any row carrying its own
+  filter controls beside a report card — Total Throughput Time, Client
+  Transaction Statement, Carrier Handover Manifest, since all three share
+  the class) gets a light background/border wrapping the fields AND the
+  report card together, each input/select stretches to fill its row (label
+  left, control right — compact, not each control at its own native width),
+  and the button-card goes full width. `flex-wrap` alone was already
+  overflow-safe (zero horizontal scroll, confirmed) but read as a pile of
+  unrelated controls; grouping makes "these belong to this report" legible
+  at a glance. Desktop is untouched — scoped entirely to the media query.
 - **Two sheets**: `Throughput` (one row per completed order — order no,
   client, uploaded at, completed at, lead time as both "Xh Ym" and a raw
   decimal-hours column for anyone doing their own averaging in Excel) and
