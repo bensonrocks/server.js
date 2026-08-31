@@ -799,7 +799,7 @@
     }
     if (name === 'labels') { renderLabelsTab(); }
     if (name === 'reports') { window.fillTxnClientPicker?.(); }
-    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); loadLazadaDirect(); loadAutoCancelPanel(); }
+    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); loadLazadaDirect(); loadAutoCancelPanel(); window.shopifyUI?.load(); }
   }
 
   function lockTabsForDownload() {
@@ -12685,6 +12685,96 @@
       loadLazadaDirect();
     } catch (err) { lazadaCfgMsg('error', err.message); }
   });
+
+  // ── SHOPIFY (DIRECT) — a client's shop connected straight in, not via ZORT.
+  // Master-gated like the ZORT panel; the token is masked by the server and
+  // blank-keeps-stored on edit. The one rule the copy shouts: never connect a
+  // store here that is ALSO a ZORT sales channel, or its orders arrive twice.
+  window.shopifyUI = (() => {
+    const $id = x => document.getElementById(x);
+    const H = () => ({ 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD, 'x-auth-token': localStorage.getItem('wms_token') || '' });
+    const say = (cls, msg) => { const el = $id('shopifyStoreStatus'); if (!el) return; el.className = 'status-bar ' + cls; el.textContent = msg; el.classList.remove('hidden'); };
+    async function load() {
+      const tb = $id('shopifyStoresTbody'); if (!tb) return;
+      try {
+        const stores = await fetch('/api/master/shopify/stores', { headers: H() }).then(r => r.json());
+        if (!Array.isArray(stores) || !stores.length) {
+          tb.innerHTML = '<tr><td colspan="7" style="color:#94a3b8;padding:.8rem">No direct Shopify stores connected.</td></tr>';
+          return;
+        }
+        tb.innerHTML = stores.map(s => {
+          const lr = s.lastResult || {};
+          const last = s.lastPullAt
+            ? `${new Date(s.lastPullAt).toLocaleString()}${lr.error ? ' · <span style="color:#dc2626">⚠ ' + esc(String(lr.error).slice(0, 60)) + '</span>' : ` · ${lr.imported ?? 0} in`}`
+            : '—';
+          return `<tr>
+            <td style="font-weight:700">${esc(s.clientName)}</td>
+            <td>${esc(s.domain)}${s.enabled ? '' : ' <span style="color:#94a3b8">(off)</span>'}</td>
+            <td style="font-family:monospace">${esc(s.accessToken || '—')}</td>
+            <td>${s.autoPullMinutes > 0 ? s.autoPullMinutes + 'm' : 'manual'}</td>
+            <td>${s.completeAction === 'fulfill' ? 'Fulfill + tracking' : 'nothing'}</td>
+            <td style="font-size:.78rem">${last}</td>
+            <td style="white-space:nowrap">
+              <button class="btn-secondary btn-sm" data-sf-test="${s.id}">Test</button>
+              <button class="btn-secondary btn-sm" data-sf-pull="${s.id}">Pull</button>
+              <button class="btn-secondary btn-sm" data-sf-edit="${s.id}">Edit</button>
+              <button class="btn-secondary btn-sm" data-sf-del="${s.id}" title="Disconnect this store">🗑</button>
+            </td>
+          </tr>`;
+        }).join('');
+        tb.querySelectorAll('[data-sf-test]').forEach(b => b.addEventListener('click', async () => {
+          say('progress', 'Testing…');
+          const d = await fetch(`/api/master/shopify/stores/${b.dataset.sfTest}/test`, { method: 'POST', headers: H() }).then(r => r.json());
+          say(d.ok ? 'success' : 'error', d.ok ? `✓ Connected to “${d.shop.name}” (${d.shop.domain})` : ('✗ ' + (d.error || 'failed')));
+        }));
+        tb.querySelectorAll('[data-sf-pull]').forEach(b => b.addEventListener('click', async () => {
+          say('progress', 'Pulling orders…');
+          const d = await fetch(`/api/master/shopify/stores/${b.dataset.sfPull}/pull`, { method: 'POST', headers: H() }).then(r => r.json());
+          if (d.error) say('error', '✗ ' + d.error);
+          else say('success', `✓ ${d.fetched} order(s) read — ${d.imported} imported, ${d.skippedExisting} already here` + (d.trackingFilled ? `, ${d.trackingFilled} waybill(s) filled` : '') + (d.cancelled ? `, ${d.cancelled} cancelled` : ''));
+          load(); refreshOrders?.();
+        }));
+        tb.querySelectorAll('[data-sf-edit]').forEach(b => b.addEventListener('click', () => {
+          const s = stores.find(x => x.id === b.dataset.sfEdit); if (!s) return;
+          $id('sfId').value = s.id; $id('sfClient').value = s.clientName; $id('sfDomain').value = s.domain;
+          $id('sfToken').value = ''; $id('sfAutoPull').value = s.autoPullMinutes; $id('sfCompleteAction').value = s.completeAction || 'none';
+          $id('shopifyStoreForm').classList.remove('hidden');
+        }));
+        tb.querySelectorAll('[data-sf-del]').forEach(b => b.addEventListener('click', async () => {
+          if (!confirm('Disconnect this Shopify store? Pulled orders stay; nothing new arrives from it.')) return;
+          await fetch(`/api/master/shopify/stores/${b.dataset.sfDel}`, { method: 'DELETE', headers: H() });
+          load();
+        }));
+      } catch (e) { say('error', 'Could not load Shopify stores: ' + e.message); }
+    }
+    function wire() {
+      $id('shopifyAddStoreBtn')?.addEventListener('click', () => {
+        ['sfId', 'sfClient', 'sfDomain', 'sfToken'].forEach(x => { const el = $id(x); if (el) el.value = ''; });
+        $id('sfAutoPull').value = 10; $id('sfCompleteAction').value = 'none';
+        $id('shopifyStoreForm').classList.remove('hidden');
+      });
+      $id('shopifyCancelStoreBtn')?.addEventListener('click', () => $id('shopifyStoreForm').classList.add('hidden'));
+      $id('shopifySaveStoreBtn')?.addEventListener('click', async () => {
+        const body = {
+          id: $id('sfId').value || undefined,
+          clientName: $id('sfClient').value.trim(),
+          domain: $id('sfDomain').value.trim(),
+          accessToken: $id('sfToken').value.trim(),
+          autoPullMinutes: Number($id('sfAutoPull').value) || 0,
+          completeAction: $id('sfCompleteAction').value,
+          enabled: true,
+        };
+        const r = await fetch('/api/master/shopify/stores', { method: 'POST', headers: H(), body: JSON.stringify(body) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { say('error', '✗ ' + (d.error || 'Save failed')); return; }
+        $id('shopifyStoreForm').classList.add('hidden');
+        say('success', `✓ Saved — press Test to confirm the token, then Pull for the first import.`);
+        load();
+      });
+    }
+    document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', wire) : wire();
+    return { load };
+  })();
 
   async function loadZortStores() {
     const tbody = document.getElementById('zortStoresTbody');

@@ -2013,6 +2013,63 @@ via the GitBook MCP the user connected; the raw docs domain is egress-blocked):
   a future shortcut past the tracking/label polling. PackOrder is in the
   Postman collection but NOT on the docs site; its params mirror RTS.
 
+## Shopify DIRECT — a client's shop connected straight in, not via ZORT (lib/shopify.js)
+
+Per the user, for clients who are NOT on ZORT at all. The double-import rule
+stands: a store connected here must NOT also be a ZORT sales channel (said in
+red on the form; order-number dedup is the belt). One store = ONE client, so
+there is no hub attribution — the batch files under the store's client through
+the SAME intake pipeline as every other door (canonical spelling, catalogue
+enrichment, stock gate + reservations, pick locations, pokes, IS- job codes).
+
+- **AUTH = a custom app in the CLIENT'S OWN Shopify admin** (Settings → Apps
+  and sales channels → Develop apps → create → grant `read_orders`,
+  `read_products`, `write_fulfillments` → install → copy the Admin API access
+  token `shpat_…`). No OAuth, no app review. Token lives only in db.json,
+  masked on read, blank-keeps-stored on edit — the ZORT-secret rules.
+- **Admin GraphQL only** (REST is legacy for new apps), version pinned
+  `SHOPIFY_API_VERSION` (2025-07). Both error channels inspected — top-level
+  `errors[]` AND each mutation's `userErrors[]` throw with Shopify's own words
+  (a 200 is not a success — the PackOrder lesson, applied from day one).
+- `db.shopifyStores[]` {id, clientName, domain, accessToken, enabled,
+  autoPullMinutes, completeAction none|fulfill, endpoint?, lastPullAt,
+  lastResult}. Routes (checkMaster): `/api/master/shopify/stores` GET/POST/
+  DELETE + `/:id/test` + `/:id/pull`. UI: Connections → 🛍 Shopify (Direct).
+- **Pull** (`pullShopifyStore`): orders since lastPullAt−1d (7d first run),
+  order number = Shopify `name` minus the `#`. Never imports an order that is
+  already `cancelledAt` or FULFILLED (counted in `skippedByStatus`). For orders
+  we ALREADY hold: a blank waybill is FILLED (never overwritten, whatever the
+  status — the ZORT backfill rule), and a marketplace cancellation follows the
+  handleMarketplaceCancel asymmetry: untouched pending → `unprocessed` with the
+  reason + reservation released; touched/done → `state.platform_cancelled` flag
+  ("do not ship"), never regressed. Auto-pull on its own 60s scheduler
+  (`_shopifyPulling`), per-store cadence.
+- **Completion push** (`pushShopifyCompletion`, hooked beside
+  pushZortCompletion): per-store `completeAction: 'fulfill'` marks the order
+  FULFILLED on Shopify with our tracking — fulfillmentOrders first, then
+  `fulfillmentCreate` naming them; `state.shopify_fulfilled_at` guards
+  re-push; fire-and-forget, both outcomes audited
+  (`shopify_completion_pushed` / `_push_failed` / `_already_fulfilled`).
+- **HONEST CAVEATS**: the sandbox cannot reach *.myshopify.com, so this is
+  verified against a faithful mock (scratchpad shopify-mock.js; `endpoint` /
+  `SHOPIFY_BASE` override the host) — the first production Test+Pull is the
+  live verification, exactly as ZORT was. The `fulfillmentCreate` mutation
+  name follows the 2025+ API (renamed from fulfillmentCreateV2); if a live
+  push errors on the name, that is the first thing to check. Custom apps may
+  need the `read_all_orders` scope ticked for orders older than 60 days — the
+  pull's 7-day lookback stays inside the window either way.
+- Webhook receiver deliberately NOT built yet (polling first, like ZORT was);
+  `verifyWebhookHmac` ships in lib/shopify.js so the verification rule is
+  settled when it is.
+
+Verified 15 e2e checks against the mock through the REAL endpoints: store saved
+with the token masked, test reads the shop, pull imports 1 of 3 (cancelled +
+fulfilled skipped), the order files under the client with the pick list
+carrying its bin location, re-pull imports nothing, completion pushes ONE
+fulfillment naming the open fulfillment order, and a later pull fills the blank
+waybill on the done order while flagging its marketplace cancellation without
+regressing the work.
+
 ## Client Portal — read-only self-service for 3PL clients (/portal)
 
 `public/portal.html` + `portal.js`, served at `GET /portal`. Same architecture

@@ -15797,6 +15797,8 @@ function completeOrderCore(db, batch, ord, state, { startTime, endTime, operator
   // Zort-sourced order? Push the completion back to the client's store
   // (async, never blocks completion; failures are audit-logged).
   pushZortCompletion(db, ord, state);
+  // Direct-Shopify order? Mark it FULFILLED on the shop with our tracking.
+  pushShopifyCompletion(db, ord, state);
   // Shipped stock changed availability → notify ZORT stock-sync stores.
   if (deductedSkus.length) zortNotifyStockChange(db, batch.inventory_client || invClientId(batch.client_name), deductedSkus);
 }
@@ -23117,6 +23119,245 @@ setInterval(async () => {
     }
   } catch (e) { console.error('[zort] scheduler error:', e.message); }
   finally { _zortPulling = false; }
+}, 60000);
+
+// ═══ SHOPIFY — DIRECT per-client store connections (not via ZORT) ═══════════
+// Per the user: clients who are not on ZORT connect their Shopify STRAIGHT to
+// IdealOne. The double-import rule stands — a store connected here must NOT
+// also be a ZORT sales channel (said on the form; order-number dedup is the
+// belt). One store = ONE client, so there is no hub attribution: the batch
+// files under the store's client, through the same intake pipeline every other
+// door uses (canonical client spelling, catalogue enrichment, stock gate,
+// reservations, pick locations, pokes, job codes).
+//
+// AUTH is a custom app made in the CLIENT'S OWN Shopify admin — the token
+// (shpat_…) lives only in db.json, masked on every read, blank-keeps-stored on
+// edit, exactly like the ZORT secrets.
+const shopifyApi = require('./lib/shopify');
+
+function shopifyStores(db) { db.shopifyStores = db.shopifyStores || []; return db.shopifyStores; }
+function shopifyStorePublic(s) {
+  return {
+    id: s.id, clientName: s.clientName || '', domain: s.domain || '',
+    enabled: !!s.enabled, autoPullMinutes: Number(s.autoPullMinutes) || 0,
+    completeAction: s.completeAction || 'none',
+    accessToken: s.accessToken ? '••••' + String(s.accessToken).slice(-4) : '',
+    endpoint: s.endpoint || '',
+    lastPullAt: s.lastPullAt || null, lastResult: s.lastResult || null,
+  };
+}
+
+app.get('/api/master/shopify/stores', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json(shopifyStores(readDb()).map(shopifyStorePublic));
+});
+app.post('/api/master/shopify/stores', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const b = req.body || {};
+  const list = shopifyStores(db);
+  let s = b.id ? list.find(x => x.id === b.id) : null;
+  if (!s) { s = { id: uuidv4() }; list.push(s); }
+  if (b.clientName !== undefined) s.clientName = canonicalClientName(db, String(b.clientName).trim());
+  if (b.domain !== undefined) s.domain = String(b.domain).trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  // Blank keeps the stored secret — the same rule as the ZORT key fields.
+  if (String(b.accessToken || '').trim()) s.accessToken = String(b.accessToken).trim();
+  if (b.endpoint !== undefined) s.endpoint = String(b.endpoint || '').trim();
+  if (b.enabled !== undefined) s.enabled = !!b.enabled;
+  if (b.autoPullMinutes !== undefined) s.autoPullMinutes = Math.max(0, Number(b.autoPullMinutes) || 0);
+  if (b.completeAction !== undefined) s.completeAction = b.completeAction === 'fulfill' ? 'fulfill' : 'none';
+  if (!s.clientName) return res.status(400).json({ error: 'Name the client this store belongs to.' });
+  if (!s.domain && !s.endpoint) return res.status(400).json({ error: 'The store domain (something.myshopify.com) is required.' });
+  writeDb(db);
+  logAudit('shopify_store_saved', { id: s.id, client: s.clientName, domain: s.domain, enabled: !!s.enabled, by: req.userId || '' });
+  res.json(shopifyStorePublic(s));
+});
+app.delete('/api/master/shopify/stores/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const list = shopifyStores(db);
+  const i = list.findIndex(x => x.id === req.params.id);
+  if (i < 0) return res.status(404).json({ error: 'Store not found' });
+  const [gone] = list.splice(i, 1);
+  writeDb(db);
+  logAudit('shopify_store_deleted', { id: gone.id, client: gone.clientName || '', by: req.userId || '' });
+  res.json({ ok: true });
+});
+app.post('/api/master/shopify/stores/:id/test', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const s = shopifyStores(readDb()).find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Store not found' });
+  try { res.json({ ok: true, shop: await shopifyApi.testConnection(s) }); }
+  catch (e) { res.status(502).json({ ok: false, error: e.message }); }
+});
+app.post('/api/master/shopify/stores/:id/pull', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const s = shopifyStores(db).find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Store not found' });
+  try { res.json(await pullShopifyStore(db, s)); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// The pull. Same shape as pullZortStore's batch creation, single-client:
+// import what is OURS to fulfil, skip what is not, and on orders we already
+// hold fill a blank waybill / act on a marketplace cancellation.
+async function pullShopifyStore(db, store) {
+  const existing = new Map();   // order_number -> {batch, order}
+  for (const b of db.batches || []) for (const o of b.orders || []) existing.set(String(o.order_number), { batch: b, order: o });
+
+  const sinceMs = store.lastPullAt ? new Date(store.lastPullAt).getTime() - 86400000 : Date.now() - 7 * 86400000;
+  const nodes = await shopifyApi.getRecentOrders(store, { updatedAfter: new Date(sinceMs).toISOString() });
+
+  const rows = []; const meta = {};
+  let fetched = 0, skippedExisting = 0, trackingFilled = 0, cancelled = 0;
+  const skippedByStatus = {}; const cancelConflicts = [];
+  for (const node of nodes) {
+    fetched++;
+    const m = shopifyApi.mapOrder(node);
+    const held = existing.get(String(m.order_number));
+    if (held) {
+      skippedExisting++;
+      const st = (held.batch.orderStates = held.batch.orderStates || {})[m.order_number]
+        || (held.batch.orderStates[m.order_number] = { status: 'pending', scanned: {}, updated_at: new Date().toISOString() });
+      // Fill a BLANK waybill whatever the status — never overwrite one.
+      if (m.meta.tracking && !String(held.order.waybill_number || '').trim()) {
+        held.order.waybill_number = m.meta.tracking;
+        trackingFilled++;
+        logAudit('sync_waybill_backfilled', { order: m.order_number, via: 'shopify', tracking: m.meta.tracking });
+      }
+      // A marketplace-side cancellation: an UNTOUCHED pending order is closed
+      // the way every hub void is; TOUCHED work is never regressed — flagged
+      // "do not ship" for a human (same rules as handleMarketplaceCancel).
+      if (m.meta.cancelled && !st.platform_cancelled) {
+        const touched = st.status === 'done' || Object.values(st.scanned || {}).some(n => n > 0) || st.pickup;
+        if (!touched && (st.status === 'pending' || st.status === 'processing')) {
+          st.status = 'unprocessed';
+          st.unprocessed_reason = 'Cancelled on Shopify (marketplace cancellation)';
+          st.unprocessed_at = new Date().toISOString();
+          st.updated_at = st.unprocessed_at;
+          cancelled++;
+          logAudit('sync_marketplace_cancelled', { order: m.order_number, via: 'shopify' });
+        } else if (st.status !== 'unprocessed') {
+          st.platform_cancelled = {
+            at: new Date().toISOString(), status: 'cancelled', via: 'shopify',
+            local_status: st.status, scanned: Object.values(st.scanned || {}).reduce((n, v) => n + v, 0),
+          };
+          cancelConflicts.push(m.order_number);
+          logAudit('sync_marketplace_cancel_conflict', { order: m.order_number, via: 'shopify', localStatus: st.status });
+        }
+      }
+      continue;
+    }
+    // New order: never import what is already handled or dead on arrival.
+    if (m.meta.cancelled) { skippedByStatus.cancelled = (skippedByStatus.cancelled || 0) + 1; continue; }
+    if (m.meta.fulfilled) { skippedByStatus.fulfilled = (skippedByStatus.fulfilled || 0) + 1; continue; }
+    for (const r of m.rows) { r.client_name = store.clientName; rows.push(r); }
+    meta[m.order_number] = m.meta;
+  }
+
+  let imported = 0; let batchId = null;
+  if (rows.length) {
+    const clientName = canonicalClientName(db, store.clientName);
+    const cid = invClientId(clientName);
+    const normRows = normalizeOrderRowsToInhouseSku(rows, () => cid);
+    const explodedRows = explodeBundleRows(normRows, () => cid);
+    const orders = summarizeOrders(explodedRows.filter(r => r.sku && r.qty > 0));
+    for (const o of orders) {
+      const m2 = meta[o.order_number] || {};
+      o.shopify_id = m2.shopify_id;
+      o.shopify_store_id = store.id;
+      o.placed_at = m2.placed_at || null;
+    }
+    let tracked = false;
+    if (inventory.available() && clientStockTracked(cid)) {
+      // A sale never invents catalogue items — an unregistered SKU is created
+      // at zero (else the sale would silently move no stock), same as ZORT.
+      for (const sku of new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
+        if (!inventory.get(sku, cid)) { try { inventory.upsert({ sku, name: sku, clientId: cid }); } catch (_) {} }
+      }
+      tracked = reserveIntakeOrders(db, cid, clientName, orders, null, 'fefo', 'wait').tracked;
+    }
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '');
+    const batch = {
+      id: uuidv4(),
+      filename: `shopify-${clientName.replace(/[^A-Za-z0-9_-]+/g, '_')}-${stamp}`,
+      idealscan_code: nextIdealscanCode(db),
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: 'shopify-sync',
+      client_name: clientName,
+      order_count: orders.length,
+      row_count: orders.reduce((n, o) => n + o.lines.length, 0),
+      orderStates: {},
+      orders,
+      inventory_tracked: tracked,
+      inventory_client: tracked ? cid : undefined,
+    };
+    db.batches.unshift(batch);
+    batchId = batch.id;
+    imported = orders.length;
+    addOutboundPoke(db, batch, 'store-sync');
+    harvestCatalogueFromOrders(db, clientName, orders, 'shopify-sync');
+  }
+  if (cancelled) { try { releaseOrphanReservations(db); } catch (_) {} }
+
+  store.lastPullAt = new Date().toISOString();
+  store.lastResult = {
+    at: store.lastPullAt, fetched, imported, skippedExisting, skippedByStatus,
+    trackingFilled, cancelled, cancelConflicts: cancelConflicts.slice(0, 20), batchId,
+  };
+  writeDb(db);
+  logAudit('shopify_pull', { storeId: store.id, client: store.clientName, fetched, imported, skippedExisting, trackingFilled, cancelled });
+  return { ok: true, ...store.lastResult };
+}
+
+// Completion push-back: mark the order FULFILLED on Shopify with our tracking
+// number, so the shop (and the buyer's notification) reflect the parcel we
+// just packed. Fire-and-forget — NEVER blocks completion; the verdict comes
+// from userErrors, not the HTTP code, and both outcomes reach the trail.
+function pushShopifyCompletion(db, ord, state) {
+  try {
+    if (!ord?.shopify_id || !ord?.shopify_store_id) return;
+    if (state?.shopify_fulfilled_at) return;                      // never twice
+    const store = shopifyStores(db).find(s => s.id === ord.shopify_store_id);
+    if (!store || !store.enabled || (store.completeAction || 'none') !== 'fulfill') return;
+    const tracking = String(ord.waybill_number || '').trim();
+    (async () => {
+      try {
+        const fos = await shopifyApi.getOpenFulfillmentOrders(store, ord.shopify_id);
+        if (!fos.length) {
+          logAudit('shopify_completion_already_fulfilled', { order: ord.order_number, storeId: store.id });
+          return;
+        }
+        const f = await shopifyApi.createFulfillment(store, fos.map(x => x.id), tracking);
+        const db2 = readDb();
+        const b2 = findBatchForOrder(db2, ord.order_number);
+        const st2 = b2 && b2.orderStates ? b2.orderStates[ord.order_number] : null;
+        if (st2) { st2.shopify_fulfilled_at = new Date().toISOString(); writeDb(db2); }
+        logAudit('shopify_completion_pushed', { order: ord.order_number, storeId: store.id, tracking, status: f.status || '' });
+      } catch (e) {
+        logAudit('shopify_completion_push_failed', { order: ord.order_number, storeId: store.id, error: String(e.message).slice(0, 300) });
+      }
+    })();
+  } catch (_) { /* completion must never be taken down by a push */ }
+}
+
+// Auto-pull — same cadence rules as the ZORT scheduler, its own guard.
+let _shopifyPulling = false;
+setInterval(async () => {
+  if (_shopifyPulling) return;
+  _shopifyPulling = true;
+  try {
+    const db = readDb();
+    for (const store of shopifyStores(db)) {
+      if (!store.enabled || !(store.autoPullMinutes > 0)) continue;
+      const last = store.lastPullAt ? new Date(store.lastPullAt).getTime() : 0;
+      if (Date.now() - last < store.autoPullMinutes * 60000) continue;
+      try { await pullShopifyStore(db, store); }
+      catch (e) { store.lastResult = { at: new Date().toISOString(), error: String(e.message).slice(0, 300) }; writeDb(db); }
+    }
+  } catch (e) { console.error('[shopify] scheduler error:', e.message); }
+  finally { _shopifyPulling = false; }
 }, 60000);
 
 app.put('/api/master/users/:id/features', (req, res) => {
