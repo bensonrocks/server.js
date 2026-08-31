@@ -15956,6 +15956,12 @@
     document.querySelectorAll('.rep-from').forEach(el => el.value = daysAgo(30));
     document.querySelectorAll('.rep-to').forEach(el => el.value = today());
     document.querySelectorAll('.rep-mdate').forEach(el => el.value = today());
+    // Total Throughput Time gets its OWN From/To, set right in its own row —
+    // on a phone the shared range at the top of the pane is scrolled well out
+    // of view by the time this card is reached, so it needs its period visible
+    // right here rather than asking someone to scroll back up to check it.
+    document.querySelectorAll('.rep-throughput-from').forEach(el => el.value = daysAgo(30));
+    document.querySelectorAll('.rep-throughput-to').forEach(el => el.value = today());
     // The client list for the transaction statement — a statement is per
     // account, so the picker is filled from every client that actually has
     // one, not from whatever orders happen to be on screen.
@@ -16025,6 +16031,12 @@
             ? `date=${encodeURIComponent(md)}`
             : `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
           if (kind === 'throughput') {
+            // Its OWN period, read from the fields right in its own row —
+            // never the shared range above, which on a phone is scrolled out
+            // of view by the time this card is reached.
+            const tFrom = pane.querySelector('.rep-throughput-from')?.value || daysAgo(30);
+            const tTo   = pane.querySelector('.rep-throughput-to')?.value   || today();
+            qs = `from=${encodeURIComponent(tFrom)}&to=${encodeURIComponent(tTo)}`;
             const tc = pane.querySelector('.rep-throughput-client')?.value || '';
             if (tc) qs += `&client=${encodeURIComponent(tc)}`;
           }

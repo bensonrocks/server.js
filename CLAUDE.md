@@ -186,6 +186,17 @@ between them.
   placeholder text swapped to "— all clients —" since — unlike the
   statement, which requires a client — this one defaults to showing every
   client at once).
+- **ITS OWN From/To, not the shared range at the top of the pane.** Reported
+  live from a phone: by the time you scroll down to this card the shared
+  range is long out of view, so there is no way to see (or change) what
+  period you are about to run without scrolling all the way back up — the
+  same reasoning `carrier-manifest`'s own `.rep-mdate` field already applies.
+  `.rep-throughput-from`/`.rep-throughput-to` sit right in the report's own
+  row (defaulted to the same last-30-days/today as everywhere else) and the
+  click handler reads them INSTEAD of `.rep-from`/`.rep-to` for this one kind
+  — proven at the network-request level, not just visually: the shared range
+  set to one period and this report's own fields set to a different one, the
+  actual outgoing request carries the row's own dates.
 - **Two sheets**: `Throughput` (one row per completed order — order no,
   client, uploaded at, completed at, lead time as both "Xh Ym" and a raw
   decimal-hours column for anyone doing their own averaging in Excel) and
