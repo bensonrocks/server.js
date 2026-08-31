@@ -158,6 +158,59 @@ path above) had nothing to match against. See "Label matching — issue_no
 indexing, first-write-wins, live re-extraction" further down for the fix
 and the two other bugs found alongside it.
 
+## "⏱ Total Throughput Time" report — the whole promise, not just the pick (server.js /api/master/report/:kind, kind='throughput')
+
+Per the user: a report, under Administrator, filterable by client, showing
+each order's UPLOAD date/time, COMPLETION date/time, and the total lead time
+between them.
+
+- **Deliberately a DIFFERENT metric from Packer Productivity's "Avg Mins /
+  Order"** above it — that one measures `startTime`→`endTime`, the packer's
+  own scan duration. This measures upload→completion, the whole clock a
+  client actually feels. A fast pick on an order that sat three days before
+  anyone opened it reads great on one report and terrible on the other; both
+  numbers are real and answer different questions, so they stay two reports.
+- **The upload timestamp did not exist on the completion record at all** —
+  `completionAuditData()` (the same builder every `order_completed` audit
+  entry and every other report reads) only carried `startTime`/`endTime`.
+  Added `uploadedAt: batch.uploaded_at`, so it is available at the ONE place
+  the whole reporting layer already reads from — no second data path.
+- **Audit-log-derived, filtered by completion date** — same convention as
+  every other report here (`daily-summary`, `productivity`, …): `from`/`to`
+  slice on the event's own day, not the upload day, so a report for "last
+  week" means "orders that finished last week," consistent with how every
+  other administrator report already reads "the period."
+- **Optional `client` filter** (`?client=`), case/whitespace-tolerant. UI:
+  a picker mirroring the existing Client Transaction Statement row exactly
+  (same auto-fill function, extended to also fill `.rep-throughput-client`,
+  placeholder text swapped to "— all clients —" since — unlike the
+  statement, which requires a client — this one defaults to showing every
+  client at once).
+- **Two sheets**: `Throughput` (one row per completed order — order no,
+  client, uploaded at, completed at, lead time as both "Xh Ym" and a raw
+  decimal-hours column for anyone doing their own averaging in Excel) and
+  `By Client` (count completed, count with a known upload time, avg/fastest/
+  slowest lead time in hours) — the same Fastest/Slowest shape Packer
+  Productivity already uses, for consistency.
+- **NEVER FABRICATES A LEAD TIME.** A completion logged before this field
+  existed has no `uploadedAt` — its row shows "—" for both the upload time
+  and the lead time (blank cell, not zero: zero would falsely claim an
+  instant turnaround), and a Notes sheet explains why, appearing only when
+  at least one row is actually blank. Every order completed from now on
+  carries the field and self-heals.
+- Added to `ADMIN_REPORT_KINDS`, so admin-role logins can run it from the
+  office Reports tab too, same as Daily Operations Summary and Packer
+  Productivity — not master-key-only.
+
+Verified 16 e2e checks through the real endpoints: two clients' orders
+uploaded, a genuine ~1.2s real-world gap before completing, the report's
+lead-time arithmetic matches that gap, SGT-formatted timestamps, the client
+filter genuinely excludes the other client (not just visually — the row is
+absent), the By Client sheet's aggregate is correct, and — with a completion
+record's `uploadedAt` stripped to simulate pre-existing history — the report
+still returns 200, that one row degrades to "—" throughout, and the Notes
+sheet appears to explain it.
+
 ## Displayed clock-times are SGT everywhere too (not just day-bucketing)
 
 Day-bucketing (which calendar day something counts under) has always been

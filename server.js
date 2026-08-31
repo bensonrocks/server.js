@@ -1866,6 +1866,12 @@ function completionAuditData(batch, ord, state) {
     operator:  state.operator     || '',
     startTime: state.startTime    || null,
     endTime:   state.endTime      || null,
+    // WHEN THE ORDER LANDED ON THE BOOKS, not just when picking started —
+    // startTime/endTime above measure the packer's own scan duration; the
+    // Total Throughput report needs the WHOLE promise, upload to completion.
+    // Absent on completions logged before this field existed; those rows
+    // report their lead time as "—" rather than a guess.
+    uploadedAt: batch.uploaded_at || null,
     // Carton count for per-carton 3PL billing (a single implicit carton if the
     // order never split). lineCount too, so billing needn't re-count lines[].
     cartons:   Math.max(1, (state.cartons || []).length),
@@ -17126,7 +17132,7 @@ app.post('/api/master/reset', (req, res) => {
 //   • Commercial/oversight reports → MASTER key only (client-activity =
 //     billing data; exceptions = includes the deletion audit that watches
 //     the admins themselves).
-const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers', 'outbound-stock', 'fulfilment']);
+const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers', 'outbound-stock', 'fulfilment', 'throughput']);
 
 app.get('/api/master/report/:kind', (req, res) => {
   const { kind } = req.params;
@@ -17536,6 +17542,62 @@ app.get('/api/master/report/:kind', (req, res) => {
         ['Distances are ESTIMATES based on Singapore postal-district centroids (the same basis route planning uses), starting each day from the Marina depot reference. They are suitable for comparing drivers and days, not for odometer/fuel claims.'],
         ['A job counts toward the day it was delivered; undelivered jobs count toward the day they were planned (or created).'],
       ]);
+
+    } else if (kind === 'throughput') {
+      // TOTAL THROUGHPUT TIME — the whole promise a client actually feels:
+      // from the moment their order landed on our books to the moment it
+      // shipped. Deliberately NOT the same as productivity's "Avg Mins /
+      // Order" above, which is the packer's own scan duration
+      // (startTime→endTime) — a fast pick on an order that sat three days
+      // before anyone touched it would look great on that metric and
+      // terrible on this one. Both numbers matter; they answer different
+      // questions, so they stay two separate reports.
+      title = 'Total_Throughput_Time';
+      const clientFilter = String(req.query.client || '').trim();
+      const clientFilterLc = clientFilter.toLowerCase();
+      if (clientFilter) title += `_${clientFilter.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
+      const rows = [];
+      const byClient = {};
+      for (const e of completed) {
+        const cn = e.client || '—';
+        if (clientFilterLc && cn.trim().toLowerCase() !== clientFilterLc) continue;
+        const upAt   = e.uploadedAt || null;
+        const doneAt = e.endTime || e.at || null;   // e.at (the audit event's own time) is always present
+        let leadHrs = null;
+        if (upAt && doneAt) {
+          const ms = new Date(doneAt) - new Date(upAt);
+          if (Number.isFinite(ms) && ms >= 0) leadHrs = ms / 3600000;
+        }
+        const leadTxt = leadHrs === null ? '—' : `${Math.floor(leadHrs)}h ${Math.round((leadHrs % 1) * 60)}m`;
+        rows.push([
+          e.order || '', cn,
+          upAt   ? new Date(upAt).toLocaleString('en-GB',   { timeZone: 'Asia/Singapore', hour12: false }) : '—',
+          doneAt ? new Date(doneAt).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }) : '—',
+          leadTxt, leadHrs === null ? '' : Math.round(leadHrs * 100) / 100,
+        ]);
+        const g = (byClient[cn] ||= { done: 0, withLead: 0, hrs: [] });
+        g.done++;
+        if (leadHrs !== null) { g.withLead++; g.hrs.push(leadHrs); }
+      }
+      rows.sort((a, b) => String(b[3]).localeCompare(String(a[3])));   // newest completion first
+      addSheet('Throughput', [
+        [`Period: ${from} to ${to} (by completion date)${clientFilter ? ` · Client: ${clientFilter}` : ''}`],
+        ['Order No', 'Client', 'Uploaded At (SGT)', 'Completed At (SGT)', 'Lead Time', 'Lead Time (hrs)'],
+        ...rows,
+      ]);
+      addSheet('By Client', [
+        ['Client', 'Orders Completed', 'With Known Upload Time', 'Avg Lead Time (hrs)', 'Fastest (hrs)', 'Slowest (hrs)'],
+        ...Object.keys(byClient).sort().map(c => {
+          const g = byClient[c];
+          return [c, g.done, g.withLead, avg(g.hrs), g.hrs.length ? Math.min(...g.hrs) : '', g.hrs.length ? Math.max(...g.hrs) : ''];
+        }),
+      ]);
+      if (rows.some(r => r[4] === '—')) {
+        addSheet('Notes', [
+          ['About the blank rows'],
+          ['A row showing "—" for Lead Time completed before this report existed — its upload time was never recorded on the completion record. Every order completed from now on carries it.'],
+        ]);
+      }
 
     } else {
       return res.status(400).json({ error: `Unknown report kind: ${kind}` });

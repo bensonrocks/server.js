@@ -15967,7 +15967,7 @@
     window.fillTxnClientPicker = async function fillTxnClientPicker(force) {
       if (!localStorage.getItem('wms_token')) return;   // signed out — do nothing
       if (_txnClientsLoaded && !force) return;
-      const sels = document.querySelectorAll('.rep-txn-client');
+      const sels = document.querySelectorAll('.rep-txn-client, .rep-throughput-client');
       if (!sels.length) return;
       let names = [];
       try {
@@ -15983,7 +15983,8 @@
       names.sort((a, b) => String(a).localeCompare(String(b)));
       for (const sel of sels) {
         const prev = sel.value;
-        sel.innerHTML = '<option value="">— pick a client —</option>' +
+        const placeholder = sel.classList.contains('rep-throughput-client') ? '— all clients —' : '— pick a client —';
+        sel.innerHTML = `<option value="">${placeholder}</option>` +
           names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
         if (prev) sel.value = prev;
       }
@@ -16020,9 +16021,13 @@
             setTimeout(() => st.classList.add('hidden'), 4000);
             return;
           }
-          const qs = kind === 'carrier-manifest'
+          let qs = kind === 'carrier-manifest'
             ? `date=${encodeURIComponent(md)}`
             : `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+          if (kind === 'throughput') {
+            const tc = pane.querySelector('.rep-throughput-client')?.value || '';
+            if (tc) qs += `&client=${encodeURIComponent(tc)}`;
+          }
           const resp = await fetch(`/api/master/report/${kind}?${qs}`,
             isMasterPane ? { headers: { 'x-master-key': LOG_PASSWORD } } : {});
           if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || resp.statusText);
