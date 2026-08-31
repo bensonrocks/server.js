@@ -250,7 +250,7 @@
   }
   function fmtDateTime(iso) {
     if (!iso) return '—';
-    return new Date(iso).toLocaleString();
+    return new Date(iso).toLocaleString(undefined, { timeZone: 'Asia/Singapore' });
   }
 
   // ── Login ──────────────────────────────────────────────────────────────────
@@ -2089,7 +2089,7 @@
   function pickupChip(ord) {
     if (ord.pickup_status === 'picked_up') {
       const when = ord.picked_up_at
-        ? new Date(ord.picked_up_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+        ? new Date(ord.picked_up_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
         : '';
       const how = ord.pickup_method === 'self-drop' ? ' (dropped off by us)'
                 : ord.pickup_method === 'courier-scan' ? " (the platform's courier collected it — the hub reported it shipped)"
@@ -2213,7 +2213,7 @@
     // hunting through Connections.
     const rp = ` data-repush="${esc(ord.order_number)}" style="cursor:pointer"`;
     if (p.state === 'sent') {
-      const when = p.at ? new Date(p.at).toLocaleString('en-GB', { hour12: false }) : '';
+      const when = p.at ? new Date(p.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }) : '';
       return `<span class="chip chip-sync-sent"${rp} title="The sales channel was told this order is ${esc(act)} at ${esc(when)}. Click to tell them again if the channel's own screen disagrees.">&#8599; Channel told</span>`;
     }
     if (p.state === 'queued') {
@@ -2260,7 +2260,7 @@
       }
       body.innerHTML = head + d.rows.map(x => `
         <div style="display:flex;gap:.6rem;padding:.45rem .2rem;border-bottom:1px solid #f1f5f9;font-size:.85rem">
-          <span style="flex:0 0 130px;color:#64748b">${new Date(x.at).toLocaleString('en-GB', { hour12: false })}</span>
+          <span style="flex:0 0 130px;color:#64748b">${new Date(x.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })}</span>
           <span style="flex:1">
             <b style="color:${x.good ? '#059669' : '#dc2626'}">${x.good ? '✓' : '⚠'} ${esc(x.what)}</b>
             ${x.detail ? `<br><span class="hint">${esc(x.detail)}</span>` : ''}
@@ -2562,7 +2562,7 @@
         // order went on reading as shipped — the one thing this system must
         // not do, report an outcome that did not happen.
         ord.hub_exception
-          ? `<span class="chip chip-hub-exception" title="${esc(ord.hub_exception.label)} — the channel reported this on ${ord.hub_exception.at ? new Date(ord.hub_exception.at).toLocaleString('en-GB', { hour12: false }) : 'an unknown date'}.${ord.hub_exception.local_status !== 'done' ? '\nWe never shipped it from here, so this needs a look.' : '\nWhat comes back has to be counted in through Inbound — nothing has moved on stock.'}">${ord.hub_exception.status === 'returned' ? '&#8617;' : '&#9888;'} ${esc(ord.hub_exception.label)}${ord.hub_exception.local_status !== 'done' ? ' — never shipped here' : ''}</span>`
+          ? `<span class="chip chip-hub-exception" title="${esc(ord.hub_exception.label)} — the channel reported this on ${ord.hub_exception.at ? new Date(ord.hub_exception.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }) : 'an unknown date'}.${ord.hub_exception.local_status !== 'done' ? '\nWe never shipped it from here, so this needs a look.' : '\nWhat comes back has to be counted in through Inbound — nothing has moved on stock.'}">${ord.hub_exception.status === 'returned' ? '&#8617;' : '&#9888;'} ${esc(ord.hub_exception.label)}${ord.hub_exception.local_status !== 'done' ? ' — never shipped here' : ''}</span>`
           : '',
         // THE MARKETPLACE CANCELLED IT AND THE WORK HERE WAS ALREADY UNDER
         // WAY. Never rolled back automatically — this chip is the warning
@@ -2571,18 +2571,18 @@
         // instead and shows as unprocessed, so this chip never appears on
         // one — and a cancelled row already says so, so it is skipped too.)
         ord.platform_cancelled && ord.scan_status !== 'unprocessed'
-          ? `<span class="chip chip-platform-cancel" title="The MARKETPLACE cancelled this order — its status there reads &quot;${esc(ord.platform_cancelled.status)}&quot;, noticed ${new Date(ord.platform_cancelled.at).toLocaleString('en-GB', { hour12: false })}. ZORT's own status never moves for a marketplace-side cancel, so nothing here was rolled back.\nDo NOT hand this parcel to the courier. Check the channel, then ↺ Reclassify it to Cancelled (stock returns) once confirmed.">&#9888; Platform cancelled — do not ship</span>`
+          ? `<span class="chip chip-platform-cancel" title="The MARKETPLACE cancelled this order — its status there reads &quot;${esc(ord.platform_cancelled.status)}&quot;, noticed ${new Date(ord.platform_cancelled.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })}. ZORT's own status never moves for a marketplace-side cancel, so nothing here was rolled back.\nDo NOT hand this parcel to the courier. Check the channel, then ↺ Reclassify it to Cancelled (stock returns) once confirmed.">&#9888; Platform cancelled — do not ship</span>`
           : '',
         // WHY this one is not being fulfilled. A list of cancelled orders
         // with no reason on them is a list of questions.
         ord.scan_status === 'unprocessed'
-          ? `<span class="chip chip-sync-failed" title="${esc(ord.unprocessed_reason || 'Not processed')}${ord.unprocessed_at ? ` — ${new Date(ord.unprocessed_at).toLocaleString('en-GB', { hour12: false })}` : ''}">&#9003; ${esc((ord.unprocessed_reason || 'Cancelled').slice(0, 42))}${ord.auto_cancelled ? ' (auto)' : ''}</span>`
+          ? `<span class="chip chip-sync-failed" title="${esc(ord.unprocessed_reason || 'Not processed')}${ord.unprocessed_at ? ` — ${new Date(ord.unprocessed_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })}` : ''}">&#9003; ${esc((ord.unprocessed_reason || 'Cancelled').slice(0, 42))}${ord.auto_cancelled ? ' (auto)' : ''}</span>`
           : '',
         // WHO cancelled it. A withdrawal the CLIENT made from their portal is
         // not the same event as one we made here, and the row has to say so —
         // these used to be hidden from the office list entirely.
         ord.client_cancelled
-          ? `<span class="chip chip-client-withdrew" title="Withdrawn by the client from their portal${ord.client_cancelled.at ? ` — ${new Date(ord.client_cancelled.at).toLocaleString('en-GB', { hour12: false })}` : ''}${ord.client_cancelled.reason ? `\nReason: ${esc(ord.client_cancelled.reason)}` : ''}">&#128100; withdrawn by client</span>`
+          ? `<span class="chip chip-client-withdrew" title="Withdrawn by the client from their portal${ord.client_cancelled.at ? ` — ${new Date(ord.client_cancelled.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })}` : ''}${ord.client_cancelled.reason ? `\nReason: ${esc(ord.client_cancelled.reason)}` : ''}">&#128100; withdrawn by client</span>`
           : '',
         // …and why the carrier label is missing, when it is.
         zortLabelChip(ord),
@@ -2592,15 +2592,15 @@
       ].filter(Boolean).join('');
 
       // Date
-      const dateStr = ord.uploadedAt ? new Date(ord.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—';
+      const dateStr = ord.uploadedAt ? new Date(ord.uploadedAt).toLocaleDateString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short' }) : '—';
       // WHEN THE BUYER ORDERED, when that is not the day we imported it. The
       // column has always shown OUR import date, so a marketplace order placed
       // yesterday and pulled today read as today's work and did not reconcile
       // with the hub's screen. The countdown runs from the placed time.
       const _placedD = ord.placed_at ? new Date(ord.placed_at) : null;
       const placedSub = (_placedD && !isNaN(_placedD) &&
-        _placedD.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) !== dateStr)
-        ? `<div class="ord-placed-sub" title="The buyer placed this order on the marketplace at ${esc(_placedD.toLocaleString('en-GB', { hour12: false }))} — the fulfilment countdown runs from then, not from when we imported it.">placed ${esc(_placedD.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}</div>`
+        _placedD.toLocaleDateString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short' }) !== dateStr)
+        ? `<div class="ord-placed-sub" title="The buyer placed this order on the marketplace at ${esc(_placedD.toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }))} — the fulfilment countdown runs from then, not from when we imported it.">placed ${esc(_placedD.toLocaleDateString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short' }))}</div>`
         : '';
 
       return `<tr class="orders-tr status-${ord.scan_status}${isDone && !ord.keyfields_closed && isAdminView ? ' kf-pending' : ''}" data-order="${esc(ord.order_number)}">
@@ -3171,7 +3171,7 @@
                   <span class="status-badge ${job.status}">${job.status}</span>
                   ${job.pending_deletion ? '<span class="status-badge unprocessed" title="Awaiting Master approval">Pending Deletion</span>' : ''}
                 </td>
-                <td class="inb-date">${job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString() : '—'}</td>
+                <td class="inb-date">${job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' }) : '—'}</td>
                 <td class="inb-actions">
                   ${(() => {
                     // NOT ALL OF WHAT ARRIVED IS SELLABLE, and the list never said
@@ -3205,7 +3205,7 @@
                       esc(job.client_name || '—'),
                       `${job.scanned_total}${job.type === 'po' ? ` / ${job.expected_total}` : ''} pcs`,
                       job.cartons.length > 1 ? `📦 ${job.cartons.length}` : '',
-                      job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString() : '',
+                      job.uploaded_at ? new Date(job.uploaded_at).toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' }) : '',
                     ].filter(Boolean);
                     return `<div class="inb-mobile-sum">${bits.join(' · ')}</div>`;
                   })()}
@@ -3640,7 +3640,7 @@
       <h2>Goods Received Note — ${esc(g.serial || g.reference)}</h2>
       <div class="meta">Client: <b>${esc(g.client)}</b> · Source: ${esc(g.source || '—')} · Type: ${g.type === 'po' ? 'PO / ASN' : 'Return'} · Ref: ${esc(g.reference || '—')}<br>
       Received by: ${who} · Closed by: ${esc(g.received_by || '—')}<br>
-      Started: ${g.started ? new Date(g.started).toLocaleString() : '—'} · Ended: ${g.ended ? new Date(g.ended).toLocaleString() : '—'} · Cartons: ${g.cartons} · Photos: ${g.photos}</div>
+      Started: ${g.started ? new Date(g.started).toLocaleString(undefined, { timeZone: 'Asia/Singapore' }) : '—'} · Ended: ${g.ended ? new Date(g.ended).toLocaleString(undefined, { timeZone: 'Asia/Singapore' }) : '—'} · Cartons: ${g.cartons} · Photos: ${g.photos}</div>
       <p class="note">Putaway — write the bin used against each line, or scan it on the Putaway screen.</p>
       <table><thead><tr><th>SKU</th><th>Description</th><th class="n">Expected</th><th class="n">Received</th><th class="n">Good</th><th class="n">Damaged</th><th class="n">KIV</th><th>Tally Status</th><th>How counted</th><th>Remarks</th><th>Location</th><th>Qty / by</th></tr></thead>
       <tbody>${rows}</tbody></table>
@@ -3832,7 +3832,7 @@
       <td style="text-align:right">${b.ordered}</td>
       <td style="text-align:right;color:#dc2626">${b.shortfall}</td>
       <td style="text-align:right;font-weight:700;color:#d97706">${b.remaining}</td>
-      <td class="hint">${b.created_at ? new Date(b.created_at).toLocaleDateString() : '—'}</td>
+      <td class="hint">${b.created_at ? new Date(b.created_at).toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' }) : '—'}</td>
       <td><button class="btn-secondary btn-sm bo-resolve" data-id="${esc(b.id)}">Resolve</button></td></tr>`).join('');
     body.querySelectorAll('.bo-resolve').forEach(btn => btn.addEventListener('click', async () => {
       if (!confirm('Mark this backorder resolved? (use when the order was cancelled or handled offline)')) return;
@@ -4155,7 +4155,7 @@
     document.getElementById('transportDetailStatus').textContent = req.status || 'Pending';
     document.getElementById('transportDetailStatus').className = `status-badge ${req.status || 'pending'}`;
     document.getElementById('transportDetailTitle').textContent = `📦 ${esc(req.clientName || req.id)}`;
-    document.getElementById('transportDetailDate').textContent = req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—';
+    document.getElementById('transportDetailDate').textContent = req.createdAt ? new Date(req.createdAt).toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' }) : '—';
 
     // Display stops
     const stopsHtml = (req.items || []).map((item, idx) => `
@@ -5569,7 +5569,7 @@
         body: JSON.stringify({
           rows,
           depot: `${transportDepot.address} (${transportDepot.zip})`,
-          generatedAt: new Date().toLocaleString('en-SG'),
+          generatedAt: new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore' }),
         }),
       });
       if (!resp.ok) throw new Error((await resp.json()).error || 'Export failed');
@@ -5606,7 +5606,7 @@
     Object.values(byDriver).forEach(list => list.sort((a, b) =>
       (a.routeNum || 99) - (b.routeNum || 99) || (a.stopSeq || 99) - (b.stopSeq || 99)));
 
-    const today = new Date().toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+    const today = new Date().toLocaleDateString('en-SG', { timeZone: 'Asia/Singapore', weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
     const pages = Object.entries(byDriver).map(([driverName, list]) => {
       const driverRec = (window.drivers || []).find(d => d.name === driverName || d.id === list[0].assignedDriver);
       const totalCartons = list.reduce((s, j) => s + (j.packages || 1), 0);
@@ -5642,7 +5642,7 @@
               </tr>`).join('')}
             </tbody>
           </table>
-          <div class="foot">Report problems (closed / refused / wrong address) to the office immediately. · Printed ${new Date().toLocaleString('en-SG')}</div>
+          <div class="foot">Report problems (closed / refused / wrong address) to the office immediately. · Printed ${new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore' })}</div>
         </div>`;
     }).join('');
 
@@ -6123,7 +6123,7 @@
   // ── Delivery History — separate view of everything delivered, by date ─────
   let _dhFrom = '', _dhTo = '';
   function dhRangeDates(range) {
-    const d = (offset) => { const x = new Date(Date.now() + offset * 86400000); return x.toLocaleDateString('en-CA'); };
+    const d = (offset) => { const x = new Date(Date.now() + offset * 86400000); return x.toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }); };
     if (range === 'today') return [d(0), d(0)];
     if (range === 'yesterday') return [d(-1), d(-1)];
     if (range === 'week') return [d(-6), d(0)];
@@ -6148,7 +6148,7 @@
       }
       tbody.innerHTML = rows.map(r => `
         <tr style="border-top:1px solid #f1f5f9">
-          <td style="padding:.45rem .5rem;white-space:nowrap">${r.deliveredAt ? esc(new Date(r.deliveredAt).toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })) : '—'}</td>
+          <td style="padding:.45rem .5rem;white-space:nowrap">${r.deliveredAt ? esc(new Date(r.deliveredAt).toLocaleString('en-SG', { timeZone: 'Asia/Singapore', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })) : '—'}</td>
           <td style="padding:.45rem .5rem"><code>${esc(r.id)}</code></td>
           <td style="padding:.45rem .5rem;font-family:monospace;font-size:11px">${esc(r.referenceId || '—')}</td>
           <td style="padding:.45rem .5rem"><strong>${esc(r.clientName)}</strong></td>
@@ -6408,7 +6408,7 @@
       if (!r.ok) { el.textContent = d.error || 'Could not load OneMap status.'; return; }
       let bits = [];
       if (d.tokenValid) {
-        bits.push(`✓ Routing token active${d.tokenExpiresAt ? ` (expires ${new Date(d.tokenExpiresAt).toLocaleString()})` : ''}`);
+        bits.push(`✓ Routing token active${d.tokenExpiresAt ? ` (expires ${new Date(d.tokenExpiresAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })})` : ''}`);
       } else {
         bits.push('⚠ No valid routing token — pins work, but road distances fall back to an estimate.');
       }
@@ -6416,7 +6416,7 @@
       else if (d.tokenValid) bits.push('Add email & password so it can refresh itself before it expires.');
       if (d.fromEnv) bits.push('(credentials set via environment)');
       bits.push(`${d.geocodeCached || 0} postal code(s) geocoded & cached.`);
-      if (d.tokenError) bits.push(`<span style="color:#dc2626">⚠ Last token request failed: ${esc(d.tokenError.message)} (${new Date(d.tokenError.at).toLocaleString()})</span>`);
+      if (d.tokenError) bits.push(`<span style="color:#dc2626">⚠ Last token request failed: ${esc(d.tokenError.message)} (${new Date(d.tokenError.at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })})</span>`);
       el.innerHTML = bits.join(' ');
     } catch (e) { el.textContent = e.message; }
   }
@@ -6435,7 +6435,7 @@
       document.getElementById('onemapPassword').value = '';
       document.getElementById('onemapToken').value = '';
       let m = '✓ Saved.';
-      if (d.tokenValid) m += ` Routing token active${d.tokenExpiresAt ? ` until ${new Date(d.tokenExpiresAt).toLocaleString()}` : ''}.`;
+      if (d.tokenValid) m += ` Routing token active${d.tokenExpiresAt ? ` until ${new Date(d.tokenExpiresAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}` : ''}.`;
       if (d.token && !d.canRefresh) m += ' Add email & password to auto-refresh before it expires.';
       onemapMsg('success', m);
       loadOnemapConfig();
@@ -6968,7 +6968,7 @@
       alert('No transport requests to save as template');
       return;
     }
-    const name = prompt('Template name:', `Route-${new Date().toLocaleDateString()}`);
+    const name = prompt('Template name:', `Route-${new Date().toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' })}`);
     if (!name) return;
     try {
       const r = await fetch('/api/transport/templates', {
@@ -9622,7 +9622,7 @@
         <table class="ids">${idRows}</table>
         ${itemsBlock}
         <div class="foot"><span>${esc(String(data.orderNumber))}</span><span>${
-          new Date(data.printedAt || Date.now()).toLocaleString('en-GB', { hour12: false })}</span></div>
+          new Date(data.printedAt || Date.now()).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })}</span></div>
         <div class="brand">
           <img src="/icons/idealone-mark.png" alt="" />
           <div>
@@ -11339,7 +11339,7 @@
     document.getElementById('liveStat15m').textContent = t.last15m  ?? '—';
     document.getElementById('liveStat1h').textContent  = t.lastHour ?? '—';
     document.getElementById('liveActivityUpdated').textContent =
-      d.generatedAt ? new Date(d.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      d.generatedAt ? new Date(d.generatedAt).toLocaleTimeString([], { timeZone: 'Asia/Singapore', hour: '2-digit', minute: '2-digit' }) : '';
 
     const packers = d.activePackers || [];
     document.getElementById('livePackersBody').innerHTML = packers.map(p => `
@@ -11838,7 +11838,7 @@
             <div class="hint" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc((e.message || '').split('\n')[0].slice(0, 100))}</div>
             ${who.length ? `<div class="hint">Affected: ${esc(who.join(', '))}</div>` : ''}
           </div>
-          <span class="hint" style="text-align:right">×${e.count}<br>${new Date(e.lastAt).toLocaleString()}</span>
+          <span class="hint" style="text-align:right">×${e.count}<br>${new Date(e.lastAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}</span>
           <button class="btn-secondary btn-sm ob-ts" data-id="${esc(e.id)}">🔧 Troubleshoot</button>
         </div>`;
       }).join('');
@@ -11850,7 +11850,7 @@
       const e = current;
       $('outageDetail').innerHTML = `
         <div><b>${esc(e.context || 'Error')}</b> — <span style="color:${e.status === 'open' ? '#dc2626' : '#059669'}">${e.status === 'open' ? '🔴 Open' : '🟢 Resolved'}</span></div>
-        <div class="hint" style="margin:.3rem 0">Seen ${e.count}× · first ${new Date(e.firstAt).toLocaleString()} · last ${new Date(e.lastAt).toLocaleString()}${e.lastUser ? ' · last user ' + esc(e.lastUser) : ''} · ${esc(e.app || 'office')} app</div>
+        <div class="hint" style="margin:.3rem 0">Seen ${e.count}× · first ${new Date(e.firstAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })} · last ${new Date(e.lastAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}${e.lastUser ? ' · last user ' + esc(e.lastUser) : ''} · ${esc(e.app || 'office')} app</div>
         ${(e.clients || []).filter(Boolean).length ? `<div class="hint"><b>Clients affected:</b> ${esc(e.clients.filter(Boolean).join(', '))}</div>` : ''}
         <div class="hint">Page: ${esc(e.page || e.lastPage || '—')}</div>
         <pre style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:.7rem;font-size:.72rem;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto;margin:.6rem 0 0">${esc(e.stack || e.message)}</pre>`;
@@ -12063,7 +12063,7 @@
               <option value="1" ${u.multi_session ? 'selected' : ''}>Multiple devices</option>
             </select>
           </td>
-          <td class="hint">${u.last_login_at ? new Date(u.last_login_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : 'never'}</td>
+          <td class="hint">${u.last_login_at ? new Date(u.last_login_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : 'never'}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm ob-user-vis" data-id="${esc(u.id)}" title="What this login can see">👁</button>
             <button class="btn-secondary btn-sm ob-user-pw"  data-id="${esc(u.id)}" title="Set a new password">🔑</button>
@@ -12348,7 +12348,7 @@
             ${list.slice(0, 40).map(e => `<tr${e.stalled ? ' style="background:#fef2f2"' : ''}>
               <td>${esc(e.orderNumber || e.sku || '—')}${e.stalled ? ' <b style="color:#b91c1c">given up</b>' : ''}</td>
               <td>${e.attempts || 0}</td>
-              <td>${e.nextAttemptAt ? new Date(e.nextAttemptAt).toLocaleTimeString('en-GB', { hour12: false }) : '—'}</td>
+              <td>${e.nextAttemptAt ? new Date(e.nextAttemptAt).toLocaleTimeString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }) : '—'}</td>
               <td style="max-width:340px;word-break:break-word">${esc(e.lastError || '—')}</td>
             </tr>`).join('')}
             ${list.length > 40 ? `<tr><td colspan="4" class="hint">…and ${list.length - 40} more</td></tr>` : ''}
@@ -12705,7 +12705,7 @@
         tb.innerHTML = stores.map(s => {
           const lr = s.lastResult || {};
           const last = s.lastPullAt
-            ? `${new Date(s.lastPullAt).toLocaleString()}${lr.error ? ' · <span style="color:#dc2626">⚠ ' + esc(String(lr.error).slice(0, 60)) + '</span>' : ` · ${lr.imported ?? 0} in`}`
+            ? `${new Date(s.lastPullAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}${lr.error ? ' · <span style="color:#dc2626">⚠ ' + esc(String(lr.error).slice(0, 60)) + '</span>' : ` · ${lr.imported ?? 0} in`}`
               + (lr.protectedDataMissing ? ' · <span style="color:#b45309">⚠ awaiting Protected Data access — no name/address yet</span>' : '')
             : '—';
           return `<tr>
@@ -12812,7 +12812,7 @@
             ? `<span style="color:#b45309;font-weight:700" title="When the floor completes an order from this store, NOTHING is sent back — the sales channel is never told the parcel is ready. Set this to Ready to Ship (edit ✏) if the channel should be updated.">&#9888; nothing sent back</span>`
             : esc(actLbl[s.completeAction] || s.completeAction) + (s.completeAction === 'status' ? ' ' + s.completeStatusCode : '')}</td>
           <td>${stockBadge}${labelBadge}</td>
-          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString()}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>${(s.lastResult?.skippedClientOrders || 0) ? `<br><span style="color:#b45309;font-size:.72rem" title="${esc((s.lastResult.skippedClientSample || []).map(x => `${x.order} (${x.client})`).join('\n'))}">&#9003; ${s.lastResult.skippedClientOrders} order(s) not imported — client fulfils their own</span>` : ''}${(s.lastResult?.recordOnlyOrders || 0) ? `<br><span style="color:#2563eb;font-size:.72rem" title="Imported and kept on the books (Completed tab → Cancelled) as the client's record of unfulfillable orders — never floor work, no stock reserved, no label fetched.">&#128209; ${s.lastResult.recordOnlyOrders} order(s) imported as record only</span>` : ''}${Object.keys(s.lastResult?.skippedByStatus || {}).length ? `<br><span style="color:#0369a1;font-size:.72rem" title="${esc((s.lastResult.skippedHandledSample || []).map(x => `${x.order}: ${x.status}`).join('\n'))}">⤳ not imported (already handled on the hub): ${esc(Object.entries(s.lastResult.skippedByStatus).map(([k, v]) => `${k} ${v}`).join(' · '))}</span>` : ''}${(s.lastResult?.needsAttribution || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="${esc((s.lastResult.needsAttribution || []).map(x => `${x.order}: ${x.why}`).join('\n'))}">⚠ ${s.lastResult.needsAttribution.length} order(s) not attributed — ${esc(String(s.lastResult.needsAttribution[0]?.why || ''))}</span>` : ''}${(s.lastResult?.collectionsClosed || 0) ? `<br><span style="color:#059669;font-size:.72rem" title="The hub reported these as shipped, so the finished orders were closed off as collected (method: courier-scan). Nobody here ticked them.">&#128666; ${s.lastResult.collectionsClosed} closed off as collected</span>` : ''}${(s.lastResult?.collectionConflicts || 0) ? `<br><span style="color:#dc2626;font-size:.72rem" title="The hub says these shipped, but they are not finished here. Nothing was changed — look at them.">&#9888; ${s.lastResult.collectionConflicts} shipped on the hub but not finished here</span>` : ''}${(s.lastResult?.waybillUnavailableCount || 0) ? `<br><span style="color:#b45309;font-size:.72rem" title="${esc((s.lastResult.waybillUnavailable || []).map(x => `${x.order}${x.hubStatus ? ` (hub: ${x.hubStatus})` : ''}${(x.keysSeen || []).length ? ` — row carried: ${x.keysSeen.join(', ')}` : ''}`).join('\n'))}">&#8987; ${s.lastResult.waybillUnavailableCount} still without a waybill — the channel has not issued one${(s.lastResult.waybillUnavailable || []).some(x => (x.keysSeen || []).length) ? ' (see tooltip: the row DID carry a tracking-ish field)' : ''}</span>` : ''}${(s.lastResult?.waybillNotOnHub || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="We asked the hub for these by order number and it returned nothing for them. Retrying will not fix that — use &#128269; Find order to see what number the hub knows them by.&#10;&#10;${esc((s.lastResult.waybillNotOnHub || []).join('\n'))}">&#9888; ${s.lastResult.waybillNotOnHub.length} order(s) the hub does not answer to by that number</span>` : ''}` : 'never'}</td>
+          <td>${s.lastPullAt ? `${new Date(s.lastPullAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}<br><span style="color:#64748b;font-size:.75rem">${s.lastResult ? `+${s.lastResult.created} new, ${s.lastResult.skippedExisting} known` : ''}</span>${(s.lastResult?.skippedClientOrders || 0) ? `<br><span style="color:#b45309;font-size:.72rem" title="${esc((s.lastResult.skippedClientSample || []).map(x => `${x.order} (${x.client})`).join('\n'))}">&#9003; ${s.lastResult.skippedClientOrders} order(s) not imported — client fulfils their own</span>` : ''}${(s.lastResult?.recordOnlyOrders || 0) ? `<br><span style="color:#2563eb;font-size:.72rem" title="Imported and kept on the books (Completed tab → Cancelled) as the client's record of unfulfillable orders — never floor work, no stock reserved, no label fetched.">&#128209; ${s.lastResult.recordOnlyOrders} order(s) imported as record only</span>` : ''}${Object.keys(s.lastResult?.skippedByStatus || {}).length ? `<br><span style="color:#0369a1;font-size:.72rem" title="${esc((s.lastResult.skippedHandledSample || []).map(x => `${x.order}: ${x.status}`).join('\n'))}">⤳ not imported (already handled on the hub): ${esc(Object.entries(s.lastResult.skippedByStatus).map(([k, v]) => `${k} ${v}`).join(' · '))}</span>` : ''}${(s.lastResult?.needsAttribution || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="${esc((s.lastResult.needsAttribution || []).map(x => `${x.order}: ${x.why}`).join('\n'))}">⚠ ${s.lastResult.needsAttribution.length} order(s) not attributed — ${esc(String(s.lastResult.needsAttribution[0]?.why || ''))}</span>` : ''}${(s.lastResult?.collectionsClosed || 0) ? `<br><span style="color:#059669;font-size:.72rem" title="The hub reported these as shipped, so the finished orders were closed off as collected (method: courier-scan). Nobody here ticked them.">&#128666; ${s.lastResult.collectionsClosed} closed off as collected</span>` : ''}${(s.lastResult?.collectionConflicts || 0) ? `<br><span style="color:#dc2626;font-size:.72rem" title="The hub says these shipped, but they are not finished here. Nothing was changed — look at them.">&#9888; ${s.lastResult.collectionConflicts} shipped on the hub but not finished here</span>` : ''}${(s.lastResult?.waybillUnavailableCount || 0) ? `<br><span style="color:#b45309;font-size:.72rem" title="${esc((s.lastResult.waybillUnavailable || []).map(x => `${x.order}${x.hubStatus ? ` (hub: ${x.hubStatus})` : ''}${(x.keysSeen || []).length ? ` — row carried: ${x.keysSeen.join(', ')}` : ''}`).join('\n'))}">&#8987; ${s.lastResult.waybillUnavailableCount} still without a waybill — the channel has not issued one${(s.lastResult.waybillUnavailable || []).some(x => (x.keysSeen || []).length) ? ' (see tooltip: the row DID carry a tracking-ish field)' : ''}</span>` : ''}${(s.lastResult?.waybillNotOnHub || []).length ? `<br><span style="color:#dc2626;font-size:.72rem" title="We asked the hub for these by order number and it returned nothing for them. Retrying will not fix that — use &#128269; Find order to see what number the hub knows them by.&#10;&#10;${esc((s.lastResult.waybillNotOnHub || []).join('\n'))}">&#9888; ${s.lastResult.waybillNotOnHub.length} order(s) the hub does not answer to by that number</span>` : ''}` : 'never'}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm z-channels" title="Sales channels this client has linked inside their hub account">Channels</button>
             <button class="btn-secondary btn-sm z-test">Test</button>
@@ -12861,11 +12861,11 @@
               cur.registered
                 ? `Push is ON for ${store?.clientName || store?.storename || 'this store'}.`
                 : `Push is OFF for ${store?.clientName || store?.storename || 'this store'}.`,
-              cur.registeredAt ? `Registered: ${new Date(cur.registeredAt).toLocaleString('en-GB', { hour12: false })}` : '',
-              cur.lastPushAt ? `Last push received: ${new Date(cur.lastPushAt).toLocaleString('en-GB', { hour12: false })}`
+              cur.registeredAt ? `Registered: ${new Date(cur.registeredAt).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })}` : '',
+              cur.lastPushAt ? `Last push received: ${new Date(cur.lastPushAt).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })}`
                              : (cur.registered ? 'Nothing has arrived yet.' : ''),
               '', 'Recent pushes:',
-              ...(cur.recent || []).slice(0, 8).map(x => `  ${new Date(x.at).toLocaleTimeString('en-GB', { hour12: false })}  ${x.action}${x.ref ? ' ' + x.ref : ''}`),
+              ...(cur.recent || []).slice(0, 8).map(x => `  ${new Date(x.at).toLocaleTimeString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })}  ${x.action}${x.ref ? ' ' + x.ref : ''}`),
               (cur.recent || []).length ? '' : '  (none)',
             ].filter(x => x !== undefined);
             const turnOff = cur.registered && confirm(lines.join('\n')
@@ -13763,7 +13763,7 @@
               <span class="chip">${esc(g.client_name || '—')}</span>
             </div>
             <div class="hint">${esc(g.serial || '')}${g.reference ? ` · ${esc(g.reference)}` : ''}
-              · staged ${g.staged_at ? esc(new Date(g.staged_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })) : '—'}</div>
+              · staged ${g.staged_at ? esc(new Date(g.staged_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })) : '—'}</div>
           </div>
           ${joinNote(g)}
           <!-- Mass putaway lives INSIDE the card, and the card is one staging
@@ -13787,7 +13787,7 @@
                 ${l.done ? `<div class="hint">${l.done} of ${l.total} done</div>` : ''}</td>
               <td>${(l.contributors || []).length
                 ? (l.contributors || []).map(c => `<span class="pa-who${c.by === me ? ' mine' : ''}"
-                      title="${esc(c.locations.join(', '))} · ${esc(new Date(c.last_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }))}"
+                      title="${esc(c.locations.join(', '))} · ${esc(new Date(c.last_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }))}"
                     >${esc(c.by || '—')} ${c.qty}</span>`).join(' ')
                 : '<span class="hint">—</span>'}</td>
               <td class="pa-suggest"><button class="link-btn pa-ask"
@@ -14226,7 +14226,7 @@
               <div class="hint">${esc(r2.serial || '')}${r2.reference ? ' · ' + esc(r2.reference) : ''}
                 · ${r2.skus} product(s) · <b>${r2.units}</b> pc(s)
                 · ${esc((r2.people || []).join(', ') || '—')}
-                · ${r2.last_at ? esc(new Date(r2.last_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })) : ''}
+                · ${r2.last_at ? esc(new Date(r2.last_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })) : ''}
                 <span class="hint">▾</span></div>
             </div>
             <div class="pa-hist-detail hidden" data-detail="${i}">
@@ -14234,7 +14234,7 @@
                 <th>When</th><th>SKU</th><th>Description</th><th style="text-align:right">Qty</th><th>Into</th><th>By</th><th>Batch</th>
               </tr></thead><tbody>
               ${r2.entries.map(e => `<tr>
-                <td class="hint">${esc(new Date(e.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }))}</td>
+                <td class="hint">${esc(new Date(e.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }))}</td>
                 <td><b>${esc(e.sku)}</b></td>
                 <td>${esc(String((r2.lines.find(l => l.sku === e.sku) || {}).description || '').slice(0, 40))}</td>
                 <td style="text-align:right"><b>${e.qty}</b></td>
@@ -14406,7 +14406,7 @@
         + (d.skipped && d.skipped.length ? `\n${d.skipped.length} row(s) skipped.` : '')
         + (d.short && d.short.length ? `\n${d.short.length} bin(s) held less than the sheet reduced (floored at zero).` : '')
         + `\n\n${d.note}`
-        + (d.reversibleUntil ? `\n\nReversible until ${new Date(d.reversibleUntil).toLocaleString()} — Putaway → Recent stock uploads.` : ''));
+        + (d.reversibleUntil ? `\n\nReversible until ${new Date(d.reversibleUntil).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })} — Putaway → Recent stock uploads.` : ''));
       putawayUI.load().catch(() => {});
       loadPaImports().catch(() => {});
     } catch (e) { show('Could not reach the server — nothing was imported.'); btn.disabled = false; }
@@ -14431,16 +14431,16 @@
       <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.45rem .6rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.4rem;font-size:.82rem">
         <span style="font-weight:700">${MW[x.mode] || esc(x.mode)}</span>
         <span>${esc(x.client)}</span>
-        <span class="hint">${esc(x.filename)} · ${x.units} pc(s) · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString()}</span>
+        <span class="hint">${esc(x.filename)} · ${x.units} pc(s) · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}</span>
         ${x.reversed_at
-          ? `<span style="color:#b45309;font-weight:600">reversed ${new Date(x.reversed_at).toLocaleDateString()} by ${esc(x.reversed_by || '?')}</span>`
+          ? `<span style="color:#b45309;font-weight:600">reversed ${new Date(x.reversed_at).toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' })} by ${esc(x.reversed_by || '?')}</span>`
           : x.reversible
             ? `<button class="btn-secondary btn-sm pa-imp-reverse" data-id="${esc(x.id)}" title="Put the stock position back exactly as it was before this upload">&#9100; Reverse (${x.hoursLeft}h left)</button>`
             : `<span class="hint">window closed</span>`}
         ${x.mode === 'set' && !x.reversed_at && x.reversible && !x.completed_at && !x.whole_position
           ? `<button class="btn-primary btn-sm pa-imp-complete" data-id="${esc(x.id)}" title="This supersede ran before the whole-position fix, so it only replaced the bins its sheet named and left the rest of the client's stock standing. Finish it from the same sheet's figures — no re-upload.">&#8635; Finish supersede</button>`
           : ''}
-        ${x.completed_at ? `<span style="color:#059669;font-weight:600">finished ${new Date(x.completed_at).toLocaleDateString()}</span>` : ''}
+        ${x.completed_at ? `<span style="color:#059669;font-weight:600">finished ${new Date(x.completed_at).toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' })}</span>` : ''}
       </div>`).join('');
     // FINISH A HALF-DONE SUPERSEDE, with no re-upload. Same confirm discipline
     // as the upload itself: the arithmetic first, then the word.
@@ -14591,7 +14591,7 @@
           <td>${esc(r.client_name || '—')}</td>
           <td>${esc(r.waybill_number || '—')}</td>
           <td style="text-align:right">${r.cartons}</td>
-          <td>${r.done_at ? esc(new Date(r.done_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })) : '—'}</td>
+          <td>${r.done_at ? esc(new Date(r.done_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })) : '—'}</td>
           <td>${esc(fmtDay(r.collection_due) || '—')}</td>
         </tr>`;
       }).join('');
@@ -14806,7 +14806,7 @@
           <tr>
             <td><b>${esc(x.order)}</b>${x.api_source ? ' <span class="chip chip-api">API</span>' : ''}</td>
             <td>${esc(x.client)}</td>
-            <td>${x.at ? new Date(x.at).toLocaleString('en-GB', { hour12: false }) : ''}</td>
+            <td>${x.at ? new Date(x.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false }) : ''}</td>
             <td>${esc(x.reason || '')}${x.automatic ? ' <i>(automatic)</i>' : ''}${x.reassigned_to ? `<br><span class="hint">Client moved it to: ${esc(x.reassigned_to)}</span>` : ''}</td>
             <td>${x.pieces}</td>
             <td>${x.exempt
@@ -14973,7 +14973,7 @@
     ov.querySelector('#snMsg').textContent = n.message;
     ov.querySelector('#snIcon').textContent = n.priority === 'urgent' ? '⚠️' : '📢';
     ov.querySelector('#snTitle').textContent = n.priority === 'urgent' ? 'Urgent — from the office' : 'Message from the office';
-    ov.querySelector('#snMeta').textContent = n.createdAt ? new Date(n.createdAt).toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    ov.querySelector('#snMeta').textContent = n.createdAt ? new Date(n.createdAt).toLocaleString('en-SG', { timeZone: 'Asia/Singapore', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
     ov.querySelector('#snCount').textContent = _staffNotices.length > 1 ? `${_staffNotices.length - 1} more message(s) after this` : '';
     ov.classList.remove('hidden');
   }
@@ -15041,7 +15041,7 @@
       <div class="cm-sent${n.priority === 'urgent' ? ' urgent' : ''}">
         <div class="cm-sent-msg">${n.priority === 'urgent' ? '⚠ ' : ''}${esc(n.message)}</div>
         <div class="cm-sent-meta">
-          <span>${esc(new Date(n.createdAt).toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }))}</span>
+          <span>${esc(new Date(n.createdAt).toLocaleString('en-SG', { timeZone: 'Asia/Singapore', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }))}</span>
           <span>to ${esc(who || '—')}</span>
           <span class="cm-ackbar" title="${n.ackedCount}/${n.total} acknowledged"><span style="width:${pct}%"></span></span>
           <span><b>${n.ackedCount}/${n.total}</b> acknowledged</span>
@@ -16379,13 +16379,13 @@
         <div class="learned-bc-row">
           <code>${esc(e.barcode)}</code> &#8594; <code>${esc(e.sku)}</code>
           <span class="learned-bc-meta">${esc(e.description || '')}</span>
-          <span class="learned-bc-meta">by ${esc(e.learnedBy || '?')} &middot; ${new Date(e.learnedAt).toLocaleString()} &middot; order ${esc(e.order || '')}</span>
+          <span class="learned-bc-meta">by ${esc(e.learnedBy || '?')} &middot; ${new Date(e.learnedAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })} &middot; order ${esc(e.order || '')}</span>
           <button class="btn-danger-sm learned-bc-del" data-barcode="${esc(e.barcode)}">Remove</button>
         </div>`).join('') + aliases.map(e => `
         <div class="learned-bc-row">
           <span class="learned-bc-meta">SKU alias</span>
           <code>${esc(e.a)}</code> &#8646; <code>${esc(e.b)}</code>
-          <span class="learned-bc-meta">by ${esc(e.learnedBy || '?')} &middot; ${new Date(e.learnedAt).toLocaleString()} &middot; order ${esc(e.order || '')}</span>
+          <span class="learned-bc-meta">by ${esc(e.learnedBy || '?')} &middot; ${new Date(e.learnedAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })} &middot; order ${esc(e.order || '')}</span>
           <button class="btn-danger-sm learned-alias-del" data-a="${esc(e.a)}" data-b="${esc(e.b)}">Remove</button>
         </div>`).join('');
       el.querySelectorAll('.learned-bc-del').forEach(btn => btn.addEventListener('click', async () => {
@@ -16463,7 +16463,7 @@
           <div class="log-card log-card-labels">
             <div class="log-card-left">
               <span class="log-filename">&#127991; ${esc(li.filename)} <span class="log-kind-badge">Labels PDF</span></span>
-              <span class="log-date">${new Date(li.uploadedAt).toLocaleString()}${li.uploadedBy ? ` &nbsp;·&nbsp; <strong>${esc(li.uploadedBy)}</strong>` : ''}</span>
+              <span class="log-date">${new Date(li.uploadedAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}${li.uploadedBy ? ` &nbsp;·&nbsp; <strong>${esc(li.uploadedBy)}</strong>` : ''}</span>
               <div class="log-chips">
                 <span class="chip">${li.pageCount} page${li.pageCount !== 1 ? 's' : ''}</span>
                 ${li.matched   ? `<span class="chip chip-done">${li.matched} matched</span>` : ''}
@@ -16477,13 +16477,13 @@
           </div>`;
         }
         const b      = entry.b;
-        const date   = new Date(b.uploaded_at).toLocaleString();
+        const date   = new Date(b.uploaded_at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' });
         const states = b.orderStates || {};
         const done   = Object.values(states).filter(s => s.status === 'done').length;
         const inprog = Object.values(states).filter(s => s.status === 'processing').length;
         const unproc = Object.values(states).filter(s => s.status === 'unprocessed').length;
         const wbChips = (b.waybill_uploads || []).map(w =>
-          `<span class="chip chip-waybill" title="${esc(w.filename)} — uploaded ${new Date(w.at).toLocaleString()}${w.by ? ' by ' + esc(w.by) : ''}">&#128196; ${esc(w.filename)} &middot; ${w.matched}/${w.total} matched</span>`
+          `<span class="chip chip-waybill" title="${esc(w.filename)} — uploaded ${new Date(w.at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}${w.by ? ' by ' + esc(w.by) : ''}">&#128196; ${esc(w.filename)} &middot; ${w.matched}/${w.total} matched</span>`
         ).join('');
         return `
           <div class="log-card">
@@ -16938,7 +16938,7 @@
       }
       emptyEl.classList.add('hidden');
       listEl.innerHTML = imports.map(imp => {
-        const dt = new Date(imp.uploadedAt).toLocaleString();
+        const dt = new Date(imp.uploadedAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' });
         const hasUnmatched = imp.unmatched > 0;
         return `
           <div class="label-history-item" data-import-id="${esc(imp.id)}">
@@ -17510,7 +17510,7 @@
         // saw them — plus whether they were warned and went ahead anyway.
         const list = (j.lines || (j.duplicates || []).map(d => `${d.order_number || d.order} (${d.status})`)).join('\n');
         const cc = j.clientConfirmed
-          ? `\n\nThe client was shown this on ${new Date(j.clientConfirmed.at).toLocaleString()} and sent it anyway.`
+          ? `\n\nThe client was shown this on ${new Date(j.clientConfirmed.at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })} and sent it anyway.`
           : '';
         // THREE-WAY, not all-or-nothing: the old prompt forced a choice
         // between losing real orders and creating a twin, and the twin won.
@@ -17682,7 +17682,7 @@
     const el = document.getElementById('buildStamp');
     if (!el) return;
     fetch('/api/version').then(r => r.json()).then(v => {
-      const boot = v.bootedAt ? new Date(v.bootedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+      const boot = v.bootedAt ? new Date(v.bootedAt).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
       el.textContent = `build ${v.commit || 'dev'}${boot ? ` · up since ${boot}` : ''}`;
       showStorageBanner(v.storage);
     }).catch(() => {});
@@ -17743,7 +17743,7 @@
       out.push({ sev: 'crit',
         title: `Clients are hitting errors in the portal — ${h.openPortalErrors} open`,
         text: (who.length ? `Affected: ${who.join(', ')}. ` : '')
-          + (h.portalErrorLastAt ? `Last seen ${new Date(h.portalErrorLastAt).toLocaleString()}. ` : '')
+          + (h.portalErrorLastAt ? `Last seen ${new Date(h.portalErrorLastAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}. ` : '')
           + 'The client was shown a plain message and told we have been notified — the detail is in the list below.' });
     }
     return out;
@@ -18312,7 +18312,7 @@
               l.kind === 'inbound' ? '&#128229; Inbound receipt' : l.kind === 'takeoff' ? '&#9100; Stock taken off' : '&#8679; File upload'}</span>
             <span class="hint">${esc(l.kind === 'inbound' ? String(l.key).replace(/^Receipt /, '') : l.key)} · ${l.skus} SKU(s) · ${l.kind === 'takeoff' ? '&minus;' : '+'}${l.units} pc(s)${l.kind === 'upload' ? ' <b>(before uploads were tracked)</b>' : ''}</span>
             ${l.undone
-              ? `<span style="color:#b45309;font-weight:700">already taken off ${new Date(l.undone.at).toLocaleDateString()}${l.undone.by ? ' by ' + esc(l.undone.by) : ''}</span>`
+              ? `<span style="color:#b45309;font-weight:700">already taken off ${new Date(l.undone.at).toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' })}${l.undone.by ? ' by ' + esc(l.undone.by) : ''}</span>`
               : `<button class="btn-${l.kind === 'takeoff' ? 'primary' : 'danger'} btn-sm inv-led-undo" data-kind="${esc(l.kind)}" data-key="${esc(l.key)}"
               title="${l.kind === 'takeoff' ? 'Put this stock back on. The posting it came from becomes available to take off again.' : l.kind === 'inbound' ? 'Back this receipt\u2019s stock off the books. The receipt, its GRN and its trail stay exactly as they are — only the stock posting is undone.' : 'Give back exactly what this upload added, SKU by SKU, from the movement ledger'}">&#9100; ${l.kind === 'takeoff' ? 'Put the stock back' : 'Undo stock'}</button>`}
             <button class="btn-secondary btn-sm inv-led-del" data-kind="${esc(l.kind)}" data-key="${esc(l.key)}"
@@ -18323,9 +18323,9 @@
         box.innerHTML = rows.map(x => `
           <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.4rem .55rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.35rem;font-size:.8rem">
             ${x.source === 'ledger-undo' ? '<span style="font-weight:700;color:#b45309">&#9100; Stock taken off</span>' : ''}
-            <span class="hint">${esc(x.filename)} · ${x.lines} SKU(s) · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString()}</span>
+            <span class="hint">${esc(x.filename)} · ${x.lines} SKU(s) · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}</span>
             ${x.reversed_at
-              ? `<span style="color:#b45309;font-weight:600">undone ${new Date(x.reversed_at).toLocaleDateString()} by ${esc(x.reversed_by || '?')}</span>`
+              ? `<span style="color:#b45309;font-weight:600">undone ${new Date(x.reversed_at).toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' })} by ${esc(x.reversed_by || '?')}</span>`
               : x.reversible
                 ? `<button class="btn-${x.source === 'ledger-undo' ? 'primary' : 'danger'} btn-sm inv-imp-undo" data-id="${esc(x.id)}" data-put="${x.source === 'ledger-undo' ? '1' : ''}" title="${x.source === 'ledger-undo' ? 'Put the stock back on — this reverses the take-off' : 'Put every SKU this file touched back to the on-hand figure it had before'}">&#9100; ${x.source === 'ledger-undo' ? 'Put the stock back' : 'Undo'} (${x.hoursLeft}h left)</button>`
                 : `<span class="hint">window closed</span>`}
@@ -18778,7 +18778,7 @@
           <td style="text-align:right;font-weight:700">${x.qty}</td>
           <td>${x.condition === 'damaged' ? '💥 Damaged' : '⏸ KIV'}</td>
           <td class="hint">${esc(x.source || '')}</td>
-          <td class="hint">${x.createdAt ? new Date(x.createdAt).toLocaleDateString() : ''}</td>
+          <td class="hint">${x.createdAt ? new Date(x.createdAt).toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' }) : ''}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm q-rel" title="Passed inspection — add to sellable stock (updates the sales channels)">✓ Release</button>
             <button class="btn-danger btn-sm q-disp" title="Scrap — close without adding stock">🗑 Dispose</button>
@@ -18813,7 +18813,7 @@
           <td style="font-family:monospace">${esc(x.location)}</td>
           <td style="text-align:right;font-weight:700;color:#dc2626">${x.qty}</td>
           <td class="hint">${esc(x.order || '—')}</td>
-          <td class="hint">${esc(x.reportedBy || '')} · ${x.reportedAt ? new Date(x.reportedAt).toLocaleString() : ''}</td>
+          <td class="hint">${esc(x.reportedBy || '')} · ${x.reportedAt ? new Date(x.reportedAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' }) : ''}</td>
           <td style="white-space:nowrap">
             <button class="btn-secondary btn-sm disc-found" title="Stock was located / recounted — no change to sellable total">✓ Found</button>
             <button class="btn-danger btn-sm disc-wo" title="Units genuinely missing — deduct sellable total and update the sales channels">✗ Write off</button>
@@ -18843,7 +18843,7 @@
     function renderRepStatus(run) {
       const el = $('repStatus'); if (!el) return;
       if (!run || !run.day) { el.textContent = ''; return; }
-      const when = run.generatedAt ? new Date(run.generatedAt).toLocaleString() : '';
+      const when = run.generatedAt ? new Date(run.generatedAt).toLocaleString(undefined, { timeZone: 'Asia/Singapore' }) : '';
       const n = (run.items || []).length;
       if (run.status === 'empty' || n === 0) el.innerHTML = `📅 Today's run (${esc(run.day)}) — <span style="color:#059669;font-weight:600">✓ nothing to replenish</span> · generated ${esc(when)}`;
       else el.innerHTML = `📅 Today's run (${esc(run.day)}) — <b>${n}</b> SKU(s) below target · generated ${esc(when)}. Acting is optional; if you skip, tomorrow's run recomputes what's needed then.`;
@@ -18898,11 +18898,11 @@
         const d = await r.json();
         if (!r.ok) { el.innerHTML = `<span style="color:#dc2626">${esc(d.error || 'Not found')}</span>`; el.classList.remove('hidden'); return; }
         const status = d.status === 'shipped'
-          ? `<span style="color:#dc2626;font-weight:700">SHIPPED</span> on ${d.shipped_at ? new Date(d.shipped_at).toLocaleString() : '—'}${d.shipped_ref ? ' (order ' + esc(d.shipped_ref) + ')' : ''}`
+          ? `<span style="color:#dc2626;font-weight:700">SHIPPED</span> on ${d.shipped_at ? new Date(d.shipped_at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' }) : '—'}${d.shipped_ref ? ' (order ' + esc(d.shipped_ref) + ')' : ''}`
           : `<span style="color:#059669;font-weight:700">IN STOCK</span>`;
         el.innerHTML = `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:.6rem;background:#f8fafc">
           <b>${esc(d.serial)}</b> — SKU <code>${esc(d.sku)}</code><br>${status}<br>
-          <span class="hint">Received ${d.received_at ? new Date(d.received_at).toLocaleString() : '—'}${d.received_ref ? ' (' + esc(d.received_ref) + ')' : ''}</span></div>`;
+          <span class="hint">Received ${d.received_at ? new Date(d.received_at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' }) : '—'}${d.received_ref ? ' (' + esc(d.received_ref) + ')' : ''}</span></div>`;
         el.classList.remove('hidden');
       } catch (e) { el.innerHTML = `<span style="color:#dc2626">${esc(e.message)}</span>`; el.classList.remove('hidden'); }
     }
@@ -19490,7 +19490,7 @@
         <td>${orders.length}</td>
         <td>${done}/${orders.length} packed</td>
         <td>${w.stats?.totalUnits ?? '—'}</td>
-        <td>${w.created_at ? new Date(w.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}${w.created_by ? `<div class="hint">${esc(w.created_by)}</div>` : ''}</td>
+        <td>${w.created_at ? new Date(w.created_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}${w.created_by ? `<div class="hint">${esc(w.created_by)}</div>` : ''}</td>
         <td>${w.status !== 'completed' ? `<button class="btn-sm btn-primary wave-mgmt-open" data-id="${esc(w.id)}">Open</button>` : ''}</td>
       </tr>
       <tr class="wave-mgmt-orders-row"><td></td><td colspan="7" style="padding:.2rem .5rem .6rem">${orderChips}</td></tr>`;

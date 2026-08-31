@@ -412,7 +412,7 @@ async function generateRouteReportXlsx(routeId) {
         s.postal_code || '—',
         s.address || '—',
         s.status || 'pending',
-        s.completed_at ? new Date(s.completed_at).toLocaleString() : '—'
+        s.completed_at ? new Date(s.completed_at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' }) : '—'
       ])
     ];
     const stopsSheet = XLSX.utils.aoa_to_sheet(stopsData);
@@ -1679,7 +1679,7 @@ function computeDriverPerformance(db, from, to) {
 
 // Apply fix schedule constraints to route planning
 function applyFixScheduleToRoutes(db, routes, transportRecords, options = {}) {
-  const dayOfWeek = options.dayOfWeek || new Date().toLocaleDateString('en-US', { weekday: 'long' });
+  const dayOfWeek = options.dayOfWeek || new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Singapore', weekday: 'long' });
   const fixSchedules = db.fixSchedules || {};
   const daySchedule = fixSchedules[dayOfWeek];
 
@@ -2375,7 +2375,7 @@ async function sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction) {
   const wmsName = `WMS_${batch.idealscan_code ? batch.idealscan_code + '_' : ''}${batch.filename.replace(/\.[^.]+$/, '')}_${batch.uploaded_at.slice(0, 10)}.xlsx`;
 
   const uploadDate  = new Date(batch.uploaded_at);
-  const dateStr     = uploadDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const dateStr     = uploadDate.toLocaleDateString('en-GB', { timeZone: 'Asia/Singapore', day: '2-digit', month: 'short', year: 'numeric' });
   const clientLabel = batch.client_name || orders[0]?.customer_name || 'General';
   const dirLabel    = direction === 'Inbound' ? 'Inbound' : 'Outbound';
   const subject     = `${dateStr} / ${clientLabel} / ${dirLabel} Upload`;
@@ -2384,7 +2384,7 @@ async function sendWmsEmail(batch, wmsBuffer, orders, emailTo, direction) {
     from: fromEmail, to: recipient,
     subject,
     text: [
-      `New ${dirLabel.toLowerCase()} order batch uploaded on ${uploadDate.toLocaleString()}.`,
+      `New ${dirLabel.toLowerCase()} order batch uploaded on ${uploadDate.toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}.`,
       '', `File: ${batch.filename}`, `Client: ${clientLabel}`,
       `Orders: ${batch.order_count}`, `Lines: ${batch.row_count}`,
       '', orderList, '', 'WMS file attached.',
@@ -14816,7 +14816,7 @@ app.get('/api/transport/history/export', (req, res) => {
     [],
     ['Delivered At', 'TMS ID', 'PO / Order Ref', 'Client / Store', 'Address', 'Postal', 'Cartons', 'Driver', 'Status', 'POD Remarks'],
     ...rows.map(r => [
-      r.deliveredAt ? new Date(r.deliveredAt).toLocaleString('en-SG') : '',
+      r.deliveredAt ? new Date(r.deliveredAt).toLocaleString('en-SG', { timeZone: 'Asia/Singapore' }) : '',
       r.id, r.referenceId, r.clientName, r.address, r.zip, r.packages, r.driver,
       r.podRemarks ? 'Delivered w/ Remarks' : 'Delivered',
       r.podRemarks,
@@ -16694,7 +16694,7 @@ app.get('/api/master/export-status', (req, res) => {
   const rows = [['Batch File','Uploaded By','Client','Uploaded At','Order No','Customer','Carrier','Waybill','Total Qty','Status','Scanned Qty','Start Time','End Time','Operator']];
   for (const batch of db.batches) {
     const states  = batch.orderStates || {};
-    const dateStr = new Date(batch.uploaded_at).toLocaleString();
+    const dateStr = new Date(batch.uploaded_at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' });
     for (const ord of (batch.orders || [])) {
       const state        = states[ord.order_number] || {};
       const scannedTotal = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
@@ -17151,7 +17151,7 @@ app.get('/api/master/report/:kind', (req, res) => {
     const inRange = ev => day(ev.at) >= from && day(ev.at) <= to;
     const mins  = ev => (ev.startTime && ev.endTime) ? Math.round((new Date(ev.endTime) - new Date(ev.startTime)) / 6000) / 10 : null;
     const avg   = a => a.length ? Math.round(a.reduce((s, v) => s + v, 0) / a.length * 10) / 10 : '';
-    const hhmm  = at => at ? new Date(at).toLocaleTimeString('en-SG', { hour12: false }) : '';
+    const hhmm  = at => at ? new Date(at).toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore', hour12: false }) : '';
     const byUserId = new Map(readUsers().map(u => [u.id, u.name || u.id]));
     const nameFor  = id => byUserId.get(id) || id || '—';
 
@@ -18353,7 +18353,7 @@ async function generateLabelDoc(templateBuf, order) {
       tel             : order.tel              || '',
       carrier         : order.carrier          || '',
       items,
-      date            : new Date().toLocaleDateString('en-SG', { year: 'numeric', month: 'short', day: '2-digit' }),
+      date            : new Date().toLocaleDateString('en-SG', { timeZone: 'Asia/Singapore', year: 'numeric', month: 'short', day: '2-digit' }),
       waybill_barcode : barcodePng || _EMPTY_PNG,
     });
   } catch (err) {
@@ -23469,7 +23469,7 @@ app.post('/api/master/email-config/test', async (req, res) => {
     await transporter.sendMail({
       from: fromEmail, to,
       subject: 'IDEALONE — Email Test',
-      text: `This is a test email from IDEALONE.\n\nFrom: ${fromEmail}\nSent: ${new Date().toLocaleString()}`,
+      text: `This is a test email from IDEALONE.\n\nFrom: ${fromEmail}\nSent: ${new Date().toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}`,
     });
     res.json({ ok: true });
   } catch (err) {
@@ -23598,7 +23598,7 @@ app.post('/api/master/gmail/test', async (req, res) => {
     await transporter.sendMail({
       from: fromEmail, to,
       subject: 'IDEALONE — Email Test',
-      text: `This is a test email from IDEALSCAN.\n\nSent: ${new Date().toLocaleString()}\nFrom: ${fromEmail}`,
+      text: `This is a test email from IDEALSCAN.\n\nSent: ${new Date().toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}\nFrom: ${fromEmail}`,
     });
     res.json({ ok: true });
   } catch (err) {
@@ -23784,7 +23784,7 @@ app.get('/api/completion-slip/:batchId/:orderNumber', (req, res) => {
   const logAoa = [
     ['Time', 'Action', 'Scanned Code', 'SKU', 'Count After', 'By'],
     ...((state.scanLog || []).map(e => [
-      new Date(e.at).toLocaleString(), KIND_LABEL[e.kind] || e.kind, e.raw || '', e.sku, e.qty, e.by || '',
+      new Date(e.at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' }), KIND_LABEL[e.kind] || e.kind, e.raw || '', e.sku, e.qty, e.by || '',
     ])),
   ];
   if (logAoa.length === 1) logAoa.push(['(no scan events recorded — order predates scan logging)', '', '', '', '', '']);

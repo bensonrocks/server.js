@@ -158,6 +158,54 @@ path above) had nothing to match against. See "Label matching — issue_no
 indexing, first-write-wins, live re-extraction" further down for the fix
 and the two other bugs found alongside it.
 
+## Displayed clock-times are SGT everywhere too (not just day-bucketing)
+
+Day-bucketing (which calendar day something counts under) has always been
+forced to SGT — see the section below. What was NOT covered: individual
+DISPLAYED timestamps built with `.toLocaleString()`/`.toLocaleDateString()`/
+`.toLocaleTimeString()` with no `timeZone` option fall back to whatever
+timezone is running the code — the SERVER's own clock (UTC on Railway,
+confirmed live: the same instant read `10:32 AM` bare vs `6:32 PM` forced SGT,
+exactly the 8h offset) for server.js, or **whichever device is looking at the
+screen** for public/app.js. A locale string like `'en-SG'` does NOT fix this —
+locale controls date FORMAT (DD/MM vs MM/DD), never the timezone used to
+compute the actual wall-clock VALUE; several spots had `'en-SG'` and were
+still wrong.
+
+Found and fixed by full census, not spot-checking: every `.toLocale*(` call in
+both files, receiver-checked to separate genuine Date-moment displays from
+Number formatting (`price.toLocaleString()`, `count.toLocaleString()` etc. —
+untouched) and from calendar-day-STRING helpers where a local-timezone parse
+is provably safe (`fmtDay()` — derives weekday/day/month from a Date built at
+LOCAL MIDNIGHT of a date-ONLY string; re-deriving calendar parts from local
+midnight of the SAME day can never cross a day boundary, so it was left
+exactly as is — do not "fix" this one, it was already correct). Every
+genuine Date-moment call now carries `timeZone: 'Asia/Singapore'`.
+
+**REAL, user-facing bugs this closed** (server.js): the new-upload EMAIL
+NOTIFICATION's timestamp, the Delivery History XLSX export's "Delivered At"
+column, the Driver Performance report's time-of-day column, the DATE PRINTED
+ON CARTON/WAYBILL LABELS, the completion slip's Scan Log audit timeline, and
+the `applyFixScheduleToRoutes` weekday derivation (a functional bug, not just
+display — route planning could pick the wrong day's fix schedule near the
+UTC/SGT day boundary). Also closed client-side (public/app.js, 69 calls):
+every timestamp pill/chip on the Orders list (pickup, sync, hub-exception,
+platform-cancelled, unprocessed…), wave management, staff notices, the build
+stamp, driver-app config screens, learned-barcode logs, upload history, and
+the Delivery History range picker's Today/Yesterday chip boundaries
+(`dhRangeDates` — was computing "today" against the BROWSER's own local day,
+which could disagree with the SGT day the rest of the app buckets by).
+
+Applied mechanically (script, not hand-edits, for 80 call sites across two
+files) — inject `timeZone: 'Asia/Singapore'` into each call's existing
+options object (or add one, `undefined, { timeZone: 'Asia/Singapore' }`, for
+a bare `.toLocaleString()`), locale/format otherwise untouched. Every
+receiver was individually eyeballed before applying (zero flagged for manual
+review). Verified: `node -c` on both files, a full `git diff` review of every
+hunk, a live 200-check on the two XLSX export routes and the email-test route
+(the exact modified code paths), and the full 15-check upload→pick→complete→
+fulfillment-push e2e re-run green.
+
 ## Day-bucketing is SGT everywhere; Orders tab never hides unfinished work
 
 Two scoping rules that keep the sidebar badge, the Orders stat tiles, and
