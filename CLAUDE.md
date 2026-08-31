@@ -192,24 +192,35 @@ between them.
   `By Client` (count completed, count with a known upload time, avg/fastest/
   slowest lead time in hours) — the same Fastest/Slowest shape Packer
   Productivity already uses, for consistency.
-- **NEVER FABRICATES A LEAD TIME.** A completion logged before this field
-  existed has no `uploadedAt` — its row shows "—" for both the upload time
-  and the lead time (blank cell, not zero: zero would falsely claim an
-  instant turnaround), and a Notes sheet explains why, appearing only when
-  at least one row is actually blank. Every order completed from now on
-  carries the field and self-heals.
+- **NEVER FABRICATES A LEAD TIME — but recovers what it honestly can.**
+  Reported live: every row read "—" the day this shipped, because EVERY
+  completion on the account predated the field (`completionAuditData()` only
+  started carrying `uploadedAt` the moment this report existed — there was no
+  "before" to be missing from). The fix reads deeper, not just further back:
+  for a completion whose audit record lacks `uploadedAt`, the report falls
+  back to the order's own BATCH record (`batch.uploaded_at`), built once as a
+  `Map(order_number → uploaded_at)` before the loop, not per-row. The batch
+  carries the true upload time regardless of what the completion audit entry
+  captured — so a completion from BEFORE this field existed still resolves
+  correctly as long as its batch is still live (not yet deleted or past the
+  12-month archive). Only when the batch is genuinely gone does a row still
+  show "—" — blank, never zero (zero would falsely claim an instant
+  turnaround) — and the Notes sheet distinguishes "recovered from the batch"
+  from "still unrecoverable" so the two are never confused.
 - Added to `ADMIN_REPORT_KINDS`, so admin-role logins can run it from the
   office Reports tab too, same as Daily Operations Summary and Packer
   Productivity — not master-key-only.
 
-Verified 16 e2e checks through the real endpoints: two clients' orders
+Verified 21 e2e checks through the real endpoints: two clients' orders
 uploaded, a genuine ~1.2s real-world gap before completing, the report's
 lead-time arithmetic matches that gap, SGT-formatted timestamps, the client
-filter genuinely excludes the other client (not just visually — the row is
-absent), the By Client sheet's aggregate is correct, and — with a completion
-record's `uploadedAt` stripped to simulate pre-existing history — the report
-still returns 200, that one row degrades to "—" throughout, and the Notes
-sheet appears to explain it.
+filter genuinely excludes the other client, the By Client sheet's aggregate
+is correct; the exact reported production shape (a completion audit record
+with `uploadedAt` stripped, its BATCH still live) recovers the real upload
+time and computes a real lead time, with the Notes sheet naming the
+recovery; and, separately, deleting that order's batch entirely afterward
+proves the honest limit — the row degrades to "—" throughout rather than
+guessing, still a 200, still explained in Notes.
 
 ## Displayed clock-times are SGT everywhere too (not just day-bucketing)
 

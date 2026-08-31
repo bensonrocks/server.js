@@ -17556,12 +17556,27 @@ app.get('/api/master/report/:kind', (req, res) => {
       const clientFilter = String(req.query.client || '').trim();
       const clientFilterLc = clientFilter.toLowerCase();
       if (clientFilter) title += `_${clientFilter.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
+      // FALLBACK FOR HISTORY: completions logged before completionAuditData()
+      // carried uploadedAt have no upload time ON THE AUDIT RECORD — but the
+      // order's batch, if still live (not yet 12-month-archived or deleted),
+      // still has it. Built once, not per-row, so a large backlog stays fast.
+      const batchUploadByOrder = new Map();
+      for (const b of db.batches || []) {
+        for (const o of b.orders || []) {
+          if (!batchUploadByOrder.has(o.order_number)) batchUploadByOrder.set(o.order_number, b.uploaded_at);
+        }
+      }
       const rows = [];
       const byClient = {};
+      let recoveredFromBatch = 0;
       for (const e of completed) {
         const cn = e.client || '—';
         if (clientFilterLc && cn.trim().toLowerCase() !== clientFilterLc) continue;
-        const upAt   = e.uploadedAt || null;
+        let upAt = e.uploadedAt || null;
+        if (!upAt) {
+          const fromBatch = batchUploadByOrder.get(e.order);
+          if (fromBatch) { upAt = fromBatch; recoveredFromBatch++; }
+        }
         const doneAt = e.endTime || e.at || null;   // e.at (the audit event's own time) is always present
         let leadHrs = null;
         if (upAt && doneAt) {
@@ -17592,11 +17607,15 @@ app.get('/api/master/report/:kind', (req, res) => {
           return [c, g.done, g.withLead, avg(g.hrs), g.hrs.length ? Math.min(...g.hrs) : '', g.hrs.length ? Math.max(...g.hrs) : ''];
         }),
       ]);
-      if (rows.some(r => r[4] === '—')) {
-        addSheet('Notes', [
-          ['About the blank rows'],
-          ['A row showing "—" for Lead Time completed before this report existed — its upload time was never recorded on the completion record. Every order completed from now on carries it.'],
-        ]);
+      if (rows.some(r => r[4] === '—') || recoveredFromBatch) {
+        const notes = [['About this report']];
+        if (recoveredFromBatch) {
+          notes.push([`${recoveredFromBatch} row(s) had their Uploaded At recovered from the order's own batch record, since it was completed before this report started recording the upload time on completion — same figure either way.`]);
+        }
+        if (rows.some(r => r[4] === '—')) {
+          notes.push(['A row still showing "—" for Lead Time is one whose batch is no longer on the books (deleted, or moved to the 12-month archive) — there is nowhere left to read the original upload time from, so it is left blank rather than guessed.']);
+        }
+        addSheet('Notes', notes);
       }
 
     } else {
