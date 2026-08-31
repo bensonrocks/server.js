@@ -12715,10 +12715,10 @@
             <td>${s.completeAction === 'fulfill' ? 'Fulfill + tracking' : 'nothing'}</td>
             <td style="font-size:.78rem">${last}</td>
             <td style="white-space:nowrap">
-              <button class="btn-secondary btn-sm" data-sf-test="${s.id}">Test</button>
-              <button class="btn-secondary btn-sm" data-sf-pull="${s.id}">Pull</button>
-              <button class="btn-secondary btn-sm" data-sf-edit="${s.id}">Edit</button>
-              <button class="btn-secondary btn-sm" data-sf-del="${s.id}" title="Disconnect this store">🗑</button>
+              <button class="btn-secondary btn-sm" data-sf-test="${esc(s.id)}">Test</button>
+              <button class="btn-secondary btn-sm" data-sf-pull="${esc(s.id)}">Pull</button>
+              <button class="btn-secondary btn-sm" data-sf-edit="${esc(s.id)}">Edit</button>
+              <button class="btn-secondary btn-sm" data-sf-del="${esc(s.id)}" title="Disconnect this store">🗑</button>
             </td>
           </tr>`;
         }).join('');
