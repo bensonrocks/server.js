@@ -2069,6 +2069,25 @@ enrichment, stock gate + reservations, pick locations, pokes, IS- job codes).
   Changing either credential drops the cache. Verified 7 e2e checks: a
   credentials-only store tests/pulls/fulfills on ONE cached mint, and wrong
   credentials refuse in Shopify's own words.
+- **"ACCESS DENIED FOR ORDERS FIELD" — Protected Customer Data, not scopes.**
+  Reported live on a real Dev-Dashboard store: `read_orders` was granted, the
+  token minted fine, and the pull still failed outright with that message.
+  Shopify gates a SEPARATE approval on top of scopes — Protected Customer Data
+  — for anything that identifies a person: `Order.customer`,
+  `Order.shippingAddress`, `Order.phone`. It applies to custom AND
+  Dev-Dashboard apps alike, and is a real review, not a toggle the merchant
+  flips. `getRecentOrders` now tries the FULL query first on every call (so
+  approval, once granted, self-heals with no code change) and on that specific
+  refusal falls back to a BASIC query with every protected field removed — id,
+  name, line items, fulfillment status, tracking are NOT gated by it, so
+  **SKU/qty/order-number/tracking keep flowing** while name/address/phone stay
+  blank. `protectedDataMissing` + Shopify's own refusal text ride on the pull
+  result and the store row (amber, not silently dropped), so this reads as
+  "waiting on Shopify" rather than a broken connector or a gap nobody notices.
+  Verified 5 e2e checks against a mock that denies the protected fields: the
+  pull SUCCEEDS, the order still imports with its pick location, the flag and
+  Shopify's exact wording carry through, and a later approval needs no
+  redeploy — the very next pull just gets the full query again.
 - Webhook receiver deliberately NOT built yet (polling first, like ZORT was);
   `verifyWebhookHmac` ships in lib/shopify.js so the verification rule is
   settled when it is.

@@ -12706,6 +12706,7 @@
           const lr = s.lastResult || {};
           const last = s.lastPullAt
             ? `${new Date(s.lastPullAt).toLocaleString()}${lr.error ? ' · <span style="color:#dc2626">⚠ ' + esc(String(lr.error).slice(0, 60)) + '</span>' : ` · ${lr.imported ?? 0} in`}`
+              + (lr.protectedDataMissing ? ' · <span style="color:#b45309">⚠ awaiting Protected Data access — no name/address yet</span>' : '')
             : '—';
           return `<tr>
             <td style="font-weight:700">${esc(s.clientName)}</td>
@@ -12731,7 +12732,11 @@
           say('progress', 'Pulling orders…');
           const d = await fetch(`/api/master/shopify/stores/${b.dataset.sfPull}/pull`, { method: 'POST', headers: H() }).then(r => r.json());
           if (d.error) say('error', '✗ ' + d.error);
-          else say('success', `✓ ${d.fetched} order(s) read — ${d.imported} imported, ${d.skippedExisting} already here` + (d.trackingFilled ? `, ${d.trackingFilled} waybill(s) filled` : '') + (d.cancelled ? `, ${d.cancelled} cancelled` : ''));
+          else {
+            let msg = `✓ ${d.fetched} order(s) read — ${d.imported} imported, ${d.skippedExisting} already here` + (d.trackingFilled ? `, ${d.trackingFilled} waybill(s) filled` : '') + (d.cancelled ? `, ${d.cancelled} cancelled` : '');
+            if (d.protectedDataMissing) msg += ` — ⚠ name/address/phone are BLANK until Shopify approves Protected Customer Data for this app (SKU/qty/tracking are unaffected and already flowing)`;
+            say(d.protectedDataMissing ? 'error' : 'success', msg);
+          }
           load(); refreshOrders?.();
         }));
         tb.querySelectorAll('[data-sf-edit]').forEach(b => b.addEventListener('click', () => {

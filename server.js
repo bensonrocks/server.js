@@ -23247,7 +23247,7 @@ async function pullShopifyStore(db, store) {
 
   const auth = await shopifyAuthed(db, store);   // mints/renews for Dev-Dashboard stores
   const sinceMs = store.lastPullAt ? new Date(store.lastPullAt).getTime() - 86400000 : Date.now() - 7 * 86400000;
-  const nodes = await shopifyApi.getRecentOrders(auth, { updatedAfter: new Date(sinceMs).toISOString() });
+  const { nodes, protectedDataMissing, protectedDataError } = await shopifyApi.getRecentOrders(auth, { updatedAfter: new Date(sinceMs).toISOString() });
 
   const rows = []; const meta = {};
   let fetched = 0, skippedExisting = 0, trackingFilled = 0, cancelled = 0;
@@ -23345,9 +23345,15 @@ async function pullShopifyStore(db, store) {
   store.lastResult = {
     at: store.lastPullAt, fetched, imported, skippedExisting, skippedByStatus,
     trackingFilled, cancelled, cancelConflicts: cancelConflicts.slice(0, 20), batchId,
+    // Orders still land WITHOUT approval for Protected Customer Data — SKU/qty/
+    // tracking are not gated by it — but name/address/phone come through blank
+    // until Shopify approves it. Surfaced so this reads as "waiting on Shopify",
+    // never as a silent gap in the picked/packed data.
+    protectedDataMissing: protectedDataMissing || undefined,
+    protectedDataError: protectedDataMissing ? String(protectedDataError).slice(0, 200) : undefined,
   };
   writeDb(db);
-  logAudit('shopify_pull', { storeId: store.id, client: store.clientName, fetched, imported, skippedExisting, trackingFilled, cancelled });
+  logAudit('shopify_pull', { storeId: store.id, client: store.clientName, fetched, imported, skippedExisting, trackingFilled, cancelled, protectedDataMissing: !!protectedDataMissing });
   return { ok: true, ...store.lastResult };
 }
 
