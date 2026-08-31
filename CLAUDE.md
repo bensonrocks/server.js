@@ -192,11 +192,27 @@ between them.
   period you are about to run without scrolling all the way back up — the
   same reasoning `carrier-manifest`'s own `.rep-mdate` field already applies.
   `.rep-throughput-from`/`.rep-throughput-to` sit right in the report's own
-  row (defaulted to the same last-30-days/today as everywhere else) and the
-  click handler reads them INSTEAD of `.rep-from`/`.rep-to` for this one kind
-  — proven at the network-request level, not just visually: the shared range
-  set to one period and this report's own fields set to a different one, the
-  actual outgoing request carries the row's own dates.
+  row, and the click handler reads them INSTEAD of `.rep-from`/`.rep-to` for
+  this one kind — proven at the network-request level, not just visually:
+  the shared range set to one period and this report's own fields set to a
+  different one, the actual outgoing request carries the row's own dates.
+- **NO DEFAULT PERIOD AT ALL — per the user, explicitly.** The fields
+  originally defaulted to the last 30 days like every other report here, and
+  that read as a real bug on the day it shipped: "why do I only have data
+  from Aug 1" was simply 30 days before whatever today happened to be, not a
+  data gap. Rather than pick a different default, the user asked for none —
+  the report must be based on the period actually selected. `.rep-throughput-
+  from`/`.rep-throughput-to` now load genuinely blank, the click handler
+  refuses (inline error, no request sent) unless BOTH are filled, and the
+  SERVER independently refuses too (400, same wording) if either `from` or
+  `to` is missing from the query — the UI guard is the courtesy, the route
+  is the rule, same discipline as every other server-enforced gate in this
+  app. Scoped to `throughput` alone: every other report kind keeps its
+  ordinary 30-day default, untouched. Verified 5 server checks (no dates,
+  only From, only To, both — each exactly as it should be — plus a sibling
+  report confirming its own default is unaffected) and a real Chromium run
+  proving the fields load blank, a click with either blank fires NO network
+  request and shows the inline error, and filling both then fires it.
 - **PHONE: the filter row is now ONE grouped panel, not loose floating
   fields.** Below 768px, `.report-range-row` (any row carrying its own
   filter controls beside a report card — Total Throughput Time, Client

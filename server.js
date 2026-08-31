@@ -17146,6 +17146,14 @@ app.get('/api/master/report/:kind', (req, res) => {
   try {
     const db  = readDb();
 
+    // TOTAL THROUGHPUT TIME HAS NO DEFAULT PERIOD — per the user, it must be
+    // based on the period they actually pick, never a silent 30-day fallback
+    // (which read as "why do I only have data from Aug 1" when today just
+    // happened to be 30 days past August 1). Every OTHER report kind keeps
+    // its sensible 30-day default; this is the one deliberate exception.
+    if (kind === 'throughput' && (!req.query.from || !req.query.to)) {
+      return res.status(400).json({ error: 'Pick a From and To date — this report has no default period.' });
+    }
     const today = sgDateStr();
     const from  = (req.query.from || '').slice(0, 10) || sgDateStr(new Date(Date.now() - 30 * 86400000));
     const to    = (req.query.to   || '').slice(0, 10) || today;
