@@ -13463,11 +13463,12 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
         zeroUnits: pv.zeroUnits, replacedUnits: pv.replacedUnits,
         zeroSkuCount: (pv.zeroSkus || []).length,
         zeroSkus: (pv.zeroSkus || []).slice(0, 30),
-        // A SKU the file NAMES but cannot place (blank Location, say) is left
-        // exactly as it is — so it is neither replaced nor zeroed, and saying
-        // so is what makes afterTotal a number the upload actually reaches.
-        untouchedSkus: (pv.untouchedSkus || []).slice(0, 30),
-        untouchedUnits: pv.untouchedUnits || 0,
+        // A row with no Location is still COUNTED (on-hand, unbinned) — the
+        // file is the position. Reported so the operator knows those SKUs will
+        // carry no pick location until somebody locates them.
+        unbinnedSkus: (pv.unbinnedSkus || []).slice(0, 30),
+        unbinnedUnits: pv.unbinnedUnits || 0,
+        unbinnedRows: pv.unbinnedRows || 0,
       },
     });
   }
@@ -13530,10 +13531,9 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
     skusCreated: result.skusCreated, binsCreated: result.binsCreated,
     skipped: result.skipped.slice(0, 50),
     short: (result.short || []).slice(0, 50),
-    // SKUs the file named but could not place — left exactly as they were,
-    // reported so the operator knows which rows to fix rather than discovering
-    // a SKU that did not move by reading the stock list later.
-    untouched: (result.untouched || []).slice(0, 50),
+    // Counted but not located — on the books with no bin, so they carry no
+    // pick location until someone locates them.
+    unbinned: (result.unbinned || []).slice(0, 50),
     zeroed: (result.zeroed || []).slice(0, 50),
     zeroedUnits: result.zeroedUnits || 0,
     reversibleUntil: new Date(Date.now() + STOCK_IMPORT_REVERSE_HOURS * 3600000).toISOString(),

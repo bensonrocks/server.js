@@ -14364,16 +14364,14 @@
           } else {
             msg += `\n(Nothing is left behind \u2014 every SKU holding stock is in this file.)`;
           }
-          // A SKU the file NAMES but cannot place is left untouched by the
-          // write, so it must be named here too \u2014 otherwise the total on screen
-          // and the total afterwards disagree, and the operator never learns
-          // which rows to fix.
-          if (p.untouchedUnits) {
-            msg += `\n\n\u26a0 ${p.untouchedSkus.length} SKU(s) are IN this file but their row(s) cannot be used`
-              + ` (usually a blank Location), so they are LEFT EXACTLY AS THEY ARE and keep ${p.untouchedUnits} pc(s):\n`
-              + (p.untouchedSkus || []).slice(0, 10).map(x => `\u2022 ${x.sku}: keeps ${x.keeps}`).join('\n')
-              + (p.untouchedSkus.length > 10 ? '\n\u2026' : '')
-              + `\nFix those rows and re-upload if they should be counted.`;
+          // Counted, but with no location \u2014 said plainly, because those SKUs
+          // will read "not binned" and carry no pick location afterwards. It
+          // is not a refusal and not an error: the count still lands.
+          if (p.unbinnedUnits) {
+            msg += `\n\n\ud83d\udccd ${p.unbinnedRows} row(s) have NO Location, so ${p.unbinnedUnits} pc(s) are counted`
+              + ` but NOT binned \u2014 they will show "not binned" and carry no pick location until located:\n`
+              + (p.unbinnedSkus || []).slice(0, 10).map(x => `\u2022 ${x.sku}: ${x.qty} pc`).join('\n')
+              + (p.unbinnedSkus.length > 10 ? '\n\u2026' : '');
           }
         }
         if (p.newSkuCount) msg += `\n${p.newSkuCount} new SKU(s) will be created: ${(p.newSkus || []).join(', ')}${p.newSkuCount > (p.newSkus || []).length ? '\u2026' : ''}`;

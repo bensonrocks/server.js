@@ -5770,22 +5770,30 @@ audit trail that reads as the mass action it was, with who did it.
     creating the bin if it does not exist. The preview NAMES them first
     (`newSkus`). Reversing removes them again. (REDUCE still never invents —
     an unknown SKU there is an error row, not a create-then-subtract.)
-  - **A SKU THE FILE NAMES BUT CANNOT PLACE IS LEFT COMPLETELY ALONE.** Found
-    while proving the above, on the client's own file shape — their upload
-    reported "209 SKU(s) · 206 located", i.e. **3 rows with no usable
-    Location**. A row with a SKU and a quantity but a BLANK location is
-    unplaceable, and the first cut cleared that SKU's bins anyway while leaving
-    its on-hand standing: **bins gone, the old 200 pcs still on the books, and
-    a preview promising zero — three disagreeing answers from one upload.**
-    Now `placeable` (sku + location + qty) decides the clear, not merely being
-    mentioned: an unplaceable SKU keeps its bins AND its on-hand, is returned
-    as `untouched`, and the confirm names it with what it keeps. Zeroing it
-    would destroy real stock over a blank cell; half-clearing strands it.
-    - **THE PREVIEW'S `afterTotal` COUNTS IT.** It previously read
-      `out.units` alone, so on a sheet with unplaceable rows the confirm
-      promised a total the upload could never reach (60, actual 260) — the one
-      thing a confirm must never do. `afterTotal = units + untouchedUnits`, and
-      those SKUs are no longer listed as going to zero.
+  - **THE FILE IS THE POSITION — NO ARITHMETIC AT THE BACK END.** Per the user,
+    after a round trip that proved the point: *"just supersede with whatever
+    file I agree to use, with no further calculations at the back end."* After
+    a supersede, on-hand for that client IS the sum of the sheet — every time,
+    with nothing left to reconcile in anyone's head.
+    - **A ROW WITH A QUANTITY BUT NO LOCATION IS STILL COUNTED**, simply
+      UNBINNED. Their real file has 3 such rows ("209 SKU(s) - 206 located").
+      An earlier cut left those SKUs completely alone — safe, but the total
+      then came out as neither the old position nor the file's, and the
+      operator had to work out why. "On hand but not in a bin" is a state this
+      system already models and already explains on screen, so the honest
+      answer is to record the count and SAY the location is missing, not to
+      refuse the count because the location is. Those SKUs read "not binned"
+      and carry no pick location until someone locates them (Apply LOCATIONS,
+      or a putaway) — reported as `unbinned`, and named in the confirm before
+      anything moves.
+    - On-hand is reconciled as **SUM(bin_lots) + what the sheet counted with no
+      location**. Reading the bins alone would silently zero every unlocated
+      row and the total would stop matching the file.
+    - `afterTotal` is therefore just the sheet's own sum, and **nothing is ever
+      "untouched"** — every SKU with a usable quantity is in the file, every
+      other SKU the client holds goes to zero and is named.
+    - ADD and REDUCE still refuse a location-less row: you cannot add to or
+      subtract from a bin that was not named. Scoped to the stock-take alone.
   - **FINISHING A HALF-DONE ONE WITHOUT THE FILE**
     (`POST /api/putaway/imports/:id/complete-supersede`, admin or master). Per
     the user: *"adjust it now without any reuploading."* A supersede run under
