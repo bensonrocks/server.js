@@ -5509,6 +5509,45 @@ on screen with no reload) — and regression on the three paths that share the
 function: Putaway Mass SUPERSEDE, the fill-locations upload, and 📍 Apply
 LOCATIONS.
 
+### IT ASKS BEFORE IT WRITES — quantities are a CHOICE, not a default
+
+Reported live, and it cost a real client's position: the Inventory uploader took
+a 209-SKU sheet and **silently ADDED 1,236 pcs on top of 2,979, landing on
+4,215**, with nothing on screen asking and no way to pick "replace" instead.
+`mode` was hardcoded `'add'` client-side and the route wrote immediately. The
+operator was reaching for a stock-take; the only thing on that screen carrying
+the word "Supersede" was the LOCATION picker, which never touches quantities —
+so the wording added earlier actively contributed to the mistake.
+
+- **`#invQtyMode`** — ➕ **ADD to what is on hand** (default, unchanged) or ⚛
+  **REPLACE these SKUs' on-hand with the file's figures** (`mode=set`). Each
+  states its own consequence in the row.
+- **A PREVIEW-CONFIRM ON BOTH MODES.** `/api/inventory/import-file` answers 409
+  `{needsApplyConfirm, mode, preview}` unless `confirm_apply=yes`, and the
+  preview states **`currentTotal → afterTotal`** plus rows/SKUs/units, new SKUs
+  by name, and rows with no SKU. `2979 → 4215` on screen is the thing that would
+  have stopped this dead. The mass putaway upload has stated its arithmetic
+  since it shipped; this route — the EASIER of the two to reach, and the one
+  people actually use — just wrote.
+- **THE HONEST LIMIT IS NAMED, because conflating the two is how a count lands
+  on the wrong total.** `set` here is **PER-SKU**: a SKU the sheet does not
+  mention keeps its stock. The preview counts those (`untouchedSkus`) and the
+  confirm says so and points at **Putaway → Upload stock by file → Mass
+  SUPERSEDE** for a stock-take that zeroes them. The hint under the picker says
+  the same before a file is even chosen.
+- Asking writes NOTHING (asserted), and cancelling sends no second request.
+- The success line reports the mode it ran in ("Replaced on-hand for…" vs
+  "Added stock for…") rather than always saying "Added".
+
+Verified 14 API checks reproducing the exact reported shape — a 2,979-pc
+position, a 1,236-pc sheet: it answers 409 rather than writing, states
+`2979 → 4215`, nothing moves by asking, replace-mode states `2215` and names
+the 1 SKU left alone, and confirming lands on exactly the previewed figure —
+plus 18 browser checks on desktop and a Pixel 5 (the choice on screen and
+defaulting to ADD, both hints, the dialog carrying the arithmetic, and exactly
+one request fired). Regression: the supersede-locations suite passes through
+the new gate unchanged.
+
 ## Put away by file — a whole stock position from a spreadsheet
 
 `POST /api/putaway/import` (multipart + `client`) takes the shape a warehouse

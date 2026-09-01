@@ -3218,6 +3218,18 @@
               <button class="btn-primary btn-sm" id="invUploadBtn">Choose file…</button>
             </div>
           </div>
+          <!-- WHAT HAPPENS TO THE QUANTITIES — asked, never assumed. This
+               uploader silently ADDED to a live client position once, landing
+               them 3x over; the choice is on the screen now, and either way
+               the confirm states before → after before anything moves. -->
+          <div style="margin-top:.55rem;display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap">
+            <label for="invQtyMode" style="font-size:.78rem;font-weight:700;color:#64748b">THE QUANTITIES IN THIS FILE</label>
+            <select id="invQtyMode" style="flex:1 1 220px;min-width:0;max-width:100%;padding:.3rem .5rem;border:1px solid #e2e8f0;border-radius:6px;font-size:.82rem">
+              <option value="add" selected>➕ ADD to what is on hand (a delivery / restock)</option>
+              <option value="set">⚛ REPLACE these SKUs' on-hand with the file's figures</option>
+            </select>
+            <span class="hint" id="invQtyModeHint" style="flex-basis:100%;margin:.15rem 0 0"></span>
+          </div>
           <!-- WHAT THE Location COLUMN MEANS — asked, never assumed. Filling a
                blank is safe and stays the default; superseding MOVES stock and
                is an explicit choice. Quantities are unaffected either way. -->

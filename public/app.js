@@ -18263,8 +18263,9 @@
       inp.click();
     }
 
-    async function uploadFile(file) {
+    async function uploadFile(file, opts = {}) {
       const st = $('invUploadStatus');
+      const qtyMode = $('invQtyMode')?.value === 'set' ? 'set' : 'add';
       const locMode = $('invLocMode')?.value === 'supersede' ? 'supersede' : 'fill';
       // SUPERSEDING LOCATIONS MOVES STOCK, so it is confirmed before it runs —
       // and the sentence says what it does NOT do, because "supersede" is the
@@ -18286,13 +18287,43 @@
         const fd = new FormData();
         fd.append('file', file);
         fd.append('clientId', clientId);
-        fd.append('mode', 'add'); // adds to existing stock (receiving/restock)
+        fd.append('mode', qtyMode);
         fd.append('locate_mode', locMode);
+        if (opts.confirmApply) fd.append('confirm_apply', 'yes');
         fd.append('push_to_zort', $('invPushZort').checked ? 'true' : 'false');
         const r = await fetch('/api/inventory/import-file', { method: 'POST', body: fd });
         const d = await r.json();
+        // ── THE ARITHMETIC, BEFORE ANYTHING MOVES ──────────────────────────
+        // "2,979 + 1,236 = 4,215" on screen is what stops a restock being
+        // uploaded when a stock-take was meant. Same shape as the Putaway
+        // upload's confirm, which has always done this.
+        if (r.status === 409 && d.needsApplyConfirm) {
+          const p = d.preview || {};
+          const word = d.mode === 'set'
+            ? "REPLACE these SKUs' on-hand with the file's figures"
+            : 'ADD the file on top of what is on hand';
+          let m = `${word.toUpperCase()}\n\nClient: ${d.client}\nFile: ${d.filename}\n`
+            + `${p.rows} row(s), ${p.skus} SKU(s), ${p.units} pc(s) in the file.\n\n`
+            + `ON HAND NOW: ${p.currentTotal} pc(s)  →  AFTER: ${p.afterTotal} pc(s)`;
+          if (p.newSkuCount) m += `\n\n${p.newSkuCount} SKU(s) are new and will be created: `
+            + `${(p.newSkus || []).join(', ')}${p.newSkuCount > (p.newSkus || []).length ? '…' : ''}`;
+          if (p.noSku) m += `\n\n⚠ ${p.noSku} row(s) have no SKU and will be skipped.`;
+          // The honest limit of this screen: it is PER-SKU either way. A count
+          // that must zero the SKUs the sheet omits is Putaway's job, and
+          // saying so here is what stops someone landing on the wrong total.
+          if (p.untouchedSkus) m += `\n\n⚠ ${p.untouchedSkus} SKU(s) holding stock are NOT in this file and are LEFT AS THEY ARE.`
+            + `\nIf this is a stock-take and those should go to ZERO, cancel and use`
+            + `\nPutaway → Upload stock by file → Mass SUPERSEDE instead.`;
+          if (d.locateMode === 'supersede') m += `\n\n📍 Locations will be SUPERSEDED for the SKUs in this file.`;
+          m += `\n\nReversible for 3 days.\n\nOK = apply · Cancel = nothing happens`;
+          if (confirm(m)) return uploadFile(file, { ...opts, confirmApply: true });
+          st.classList.add('hidden');
+          return;
+        }
         if (!r.ok) { st.className = 'status-bar error'; st.textContent = d.error || 'Upload failed'; return; }
-        let msg = `✓ Added stock for ${d.applied} SKU(s)`;
+        let msg = d.mode === 'set'
+          ? `✓ Replaced on-hand for ${d.applied} SKU(s)`
+          : `✓ Added stock for ${d.applied} SKU(s)`;
         if (d.skipped) msg += `, skipped ${d.skipped}`;
         if (d.pushedToZort) msg += ` · ${d.enqueued} stock update(s) queued to the sales channels`;
         if (d.errors && d.errors.length) msg += ` · first issue: row ${d.errors[0].row} (${d.errors[0].sku}) — ${d.errors[0].error}`;
@@ -18561,6 +18592,20 @@
       };
       $('invLocMode')?.addEventListener('change', locHint);
       locHint();
+      // The quantity choice states its own consequence too, and names the tool
+      // that does the OTHER thing — replacing a whole position, absent SKUs
+      // zeroed — since that is the one people come here looking for.
+      const qtyHint = () => {
+        const h = $('invQtyModeHint'); if (!h) return;
+        h.innerHTML = $('invQtyMode')?.value === 'set'
+          ? '⚛ Each SKU in the file is <b>set to the file\'s figure</b> (not added). A SKU the file does '
+            + '<b>not</b> mention keeps its stock — for a stock-take that zeroes those too, use '
+            + '<b>Putaway → Upload stock by file → Mass SUPERSEDE</b>.'
+          : '➕ The file\'s quantities go <b>on top of</b> what is already on hand. Uploading the same file '
+            + 'twice adds it twice — you will be shown the before and after first.';
+      };
+      $('invQtyMode')?.addEventListener('change', qtyHint);
+      qtyHint();
       $('invClient')?.addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
       $('invBundleAddBtn')?.addEventListener('click', () => openBundle(null));
       $('bmAddComp')?.addEventListener('click', () => $('bmComponents').appendChild(compRow('', 1)));

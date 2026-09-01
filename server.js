@@ -25894,6 +25894,50 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
   const locOf = r => String(r.location ?? r.bin ?? r.locationid ?? r.binlocation ?? '').trim();
   const posRows = [];   // {sku, location, qty} for rows that name a bin
   const locationRows = rows.filter(r => locOf(r)).length;
+
+  // ── SAY WHAT IT WILL DO BEFORE IT DOES IT ────────────────────────────────
+  // Reported live, and it cost a real client's position: this uploader took a
+  // 209-SKU sheet and silently ADDED 1,236 pcs on top of 2,979, landing on
+  // 4,215, with nothing on screen asking first and no way to pick "replace"
+  // instead. The mass putaway upload has stated its arithmetic since the day
+  // it shipped; this one — the EASIER of the two to reach, and the one people
+  // actually use — just wrote. Now both ask, and both state before → after.
+  if (String(req.body?.confirm_apply || '') !== 'yes') {
+    let currentTotal = 0;
+    try {
+      for (const r of (inventory.getAll({ clientId: cid }) || [])) currentTotal += Number(r.stock_qty) || 0;
+    } catch (_) {}
+    const pv = { rows: 0, units: 0, skus: 0, newSkus: [], newSkuCount: 0, noSku: 0, locationRows,
+                 currentTotal, afterTotal: currentTotal, replacing: 0 };
+    const seen = new Set();
+    for (const r of rows) {
+      const sku = String(r.sku ?? r.skucode ?? r.itemcode ?? '').trim();
+      if (!sku) { pv.noSku++; continue; }
+      const qty = qtyOf(r);
+      pv.rows++; pv.units += qty;
+      if (seen.has(sku)) continue;
+      seen.add(sku);
+      let existing = null;
+      try { existing = inventory.get(sku, cid); } catch (_) {}
+      if (!existing) { pv.newSkuCount++; if (pv.newSkus.length < 20) pv.newSkus.push(sku); }
+      // ADD piles the sheet on top; SET replaces the listed SKUs' own figures
+      // and leaves every SKU the sheet does not mention exactly as it is.
+      if (mode === 'set') pv.replacing += Number(existing?.stock_qty) || 0;
+    }
+    pv.skus = seen.size;
+    pv.afterTotal = mode === 'set' ? currentTotal - pv.replacing + pv.units : currentTotal + pv.units;
+    // A SET here is PER-SKU, never the whole position — an unlisted SKU keeps
+    // its stock. Saying so is the difference between this and Putaway's Mass
+    // SUPERSEDE, and conflating the two is how a count lands on the wrong total.
+    let untouched = 0;
+    try { untouched = (inventory.getAll({ clientId: cid }) || []).filter(r => !seen.has(r.sku) && (Number(r.stock_qty) || 0) > 0).length; } catch (_) {}
+    pv.untouchedSkus = untouched;
+    return res.status(409).json({
+      needsApplyConfirm: true, mode, locateMode: locSupersede ? 'supersede' : 'fill',
+      client: cid, filename: req.file.originalname || 'stock upload', preview: pv,
+    });
+  }
+
   let applied = 0, skipped = 0; const errors = []; const affected = new Set();
   const additions = {}; // sku -> positive stock increase (for backorder release)
   // ── AN UPLOAD NOBODY CAN UNDO IS A TRAP ──────────────────────────────────
