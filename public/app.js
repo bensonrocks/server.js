@@ -18265,12 +18265,29 @@
 
     async function uploadFile(file) {
       const st = $('invUploadStatus');
+      const locMode = $('invLocMode')?.value === 'supersede' ? 'supersede' : 'fill';
+      // SUPERSEDING LOCATIONS MOVES STOCK, so it is confirmed before it runs —
+      // and the sentence says what it does NOT do, because "supersede" is the
+      // word Putaway uses for replacing a whole position and the two must never
+      // be confused. Cancel = nothing happens, not even the quantities.
+      if (locMode === 'supersede' && !confirm(
+        '⚛ SUPERSEDE LOCATIONS\n\n'
+        + 'For every SKU in this file that names a Location:\n'
+        + '  • its current bin(s) are cleared, and\n'
+        + '  • its on-hand is binned where the file says.\n\n'
+        + 'Quantities are NOT changed by this, and a SKU the file does not\n'
+        + 'mention keeps its locations. (To replace a client’s WHOLE position\n'
+        + '— zeroing SKUs absent from the sheet — use Putaway → Put away by\n'
+        + 'file → Mass SUPERSEDE instead.)\n\n'
+        + 'Reversible for 3 days from the list below.\n\nOK = go ahead · Cancel = nothing happens'
+      )) { st.classList.add('hidden'); return; }
       st.className = 'status-bar progress'; st.textContent = `Uploading "${file.name}"…`; st.classList.remove('hidden');
       try {
         const fd = new FormData();
         fd.append('file', file);
         fd.append('clientId', clientId);
         fd.append('mode', 'add'); // adds to existing stock (receiving/restock)
+        fd.append('locate_mode', locMode);
         fd.append('push_to_zort', $('invPushZort').checked ? 'true' : 'false');
         const r = await fetch('/api/inventory/import-file', { method: 'POST', body: fd });
         const d = await r.json();
@@ -18283,11 +18300,21 @@
         if (d.locationsRecorded) {
           // ONE LEDGER: the sheet carried locations and they were recorded in
           // the same upload — the SKUs are now both in stock AND binned.
-          msg += ` · 📍 ${d.locationsRecorded} SKU(s) located`;
+          msg += d.locateMode === 'supersede'
+            ? ` · 📍 ${d.locationsRecorded} SKU(s) relocated`
+            : ` · 📍 ${d.locationsRecorded} SKU(s) located`;
           st.className = 'status-bar success'; st.textContent = msg;
-          if (d.notLocated && d.notLocated.length) {
-            alert((d.locationNote || '') + `\n\nNot in item master (skipped): ${d.notLocated.slice(0, 20).join(', ')}${d.notLocated.length > 20 ? '…' : ''}`);
-          }
+          // A MOVE IS NAMED, NOT COUNTED. "12 SKU(s) relocated" cannot be
+          // checked against the shelf; "AAA — was AA-001-001-A" can.
+          const moved = (d.relocatedSkus || []).length
+            ? `\n\nMoved off their previous bin(s):\n`
+              + d.relocatedSkus.slice(0, 20).map(x => `• ${x.sku} — was ${(x.from || []).join(', ')} (${x.units} pc)`).join('\n')
+              + (d.relocatedSkus.length > 20 ? '\n…' : '')
+            : '';
+          const missing = (d.notLocated && d.notLocated.length)
+            ? `\n\nNot in item master (skipped): ${d.notLocated.slice(0, 20).join(', ')}${d.notLocated.length > 20 ? '…' : ''}`
+            : '';
+          if (moved || missing) alert((d.locationNote || '') + moved + missing);
         } else if (d.locationRows) {
           // The sheet had a Location column but nothing could be binned (e.g.
           // every SKU already fully located, or on-hand was 0). Say so plainly.
@@ -18522,6 +18549,18 @@
     setTimeout(() => {
       $('invLoadBtn')?.addEventListener('click', load);
       $('invUploadBtn')?.addEventListener('click', pickFile);
+      // The choice states its own consequence, in the row, before a file is
+      // even picked — the confirm on the way through is the second chance,
+      // not the first time anyone hears what "supersede" means here.
+      const locHint = () => {
+        const h = $('invLocModeHint'); if (!h) return;
+        h.innerHTML = $('invLocMode')?.value === 'supersede'
+          ? '⚛ SKUs named in the file are <b>moved</b>: their current bins are cleared and their on-hand is binned where the file says. '
+            + '<b>Quantities are not changed</b>, and a SKU the file does not mention keeps its locations. Reversible for 3 days.'
+          : 'A SKU with <b>no</b> location on record gets one. A SKU already binned is <b>left where it is</b> — pick Supersede above to move it.';
+      };
+      $('invLocMode')?.addEventListener('change', locHint);
+      locHint();
       $('invClient')?.addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
       $('invBundleAddBtn')?.addEventListener('click', () => openBundle(null));
       $('bmAddComp')?.addEventListener('click', () => $('bmComponents').appendChild(compRow('', 1)));

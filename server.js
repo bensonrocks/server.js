@@ -25844,6 +25844,11 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
   // master) so a typed case-variant can never mint a second stock account.
   const cid = invClientId(canonicalClientName(readDb(), rawCid));
   const mode = String(req.body?.mode || 'add').toLowerCase() === 'set' ? 'set' : 'add';
+  // WHAT THE SHEET'S Location COLUMN MEANS — asked, never assumed. Default
+  // 'fill' is the old behaviour (a blank location gets filled, an existing one
+  // is left alone); 'supersede' REPLACES the locations of the SKUs in the file,
+  // so a SKU genuinely moves bins. Quantities are unaffected either way.
+  const locSupersede = String(req.body?.locate_mode || 'fill').toLowerCase() === 'supersede';
   const pushToZort = String(req.body?.push_to_zort || '') === 'true' || req.body?.push_to_zort === true;
   if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
 
@@ -25929,7 +25934,7 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
   // the wave pick shows a location. Capped at on-hand, quantities untouched.
   let located = null;
   if (posRows.length) {
-    try { located = inventory.locateExistingStock(cid, posRows, { operator: req.userId || _tokenUserId(req) || '' }); }
+    try { located = inventory.locateExistingStock(cid, posRows, { operator: req.userId || _tokenUserId(req) || '', supersede: locSupersede }); }
     catch (e) { errors.push({ row: 0, sku: '', error: 'Locations could not be recorded: ' + e.message }); }
   }
   // Uploaded stock can satisfy orders waiting on it → pay down backorders (FIFO).
@@ -25946,9 +25951,11 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     zortNotifyStockChange(db, cid, [...affected]);
     pushed = ((readDb().zortOutbox || []).length) - before;
   }
-  // The reversal record. `cells: []` because this route writes on-hand figures
-  // directly and never touches bins — reverseStockPositions restores exactly
-  // what it finds, so one implementation covers both kinds of upload.
+  // The reversal record. In 'fill' mode this route writes on-hand figures and
+  // only ever fills BLANK bins, so there is nothing destructive to restore. A
+  // 'supersede' clears the bins the named SKUs sat in — destructive — so those
+  // cells ride on the snapshot and reverseStockPositions puts each one back
+  // exactly as it was. One implementation covers both kinds of upload.
   let txnId = null;
   if (beforeStock.size) {
     const rdb = readDb();
@@ -25958,12 +25965,13 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
       id: txnId, hash: `inv:${txnId}`, clientId: cid,
       filename: req.file.originalname || 'stock upload',
       at: new Date().toISOString(), by: req.userId || _tokenUserId(req) || '',
-      mode, source: 'inventory', lines: applied,
+      mode, source: 'inventory', lines: applied, locate_mode: locSupersede ? 'supersede' : 'fill',
       units: [...beforeStock.keys()].reduce((n, sku) => {
         const it = inventory.get(sku, cid); return n + (Number(it?.stock_qty) || 0);
       }, 0),
       snapshot: {
-        at: new Date().toISOString(), cells: [],
+        at: new Date().toISOString(),
+        cells: (located && located.snapshot && located.snapshot.cells) || [],
         skus: [...beforeStock.entries()].map(([sku, before_stock]) => ({ sku, before_stock })),
         // TAKEN AFTER THE WRITES, not before — the ledger mark says "where
         // things stood when this import FINISHED", so that a later check for
@@ -25979,18 +25987,30 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     writeDb(rdb);
   }
   logAudit('inventory_stock_uploaded', { clientId: cid, mode, applied, skipped, pushedToZort: pushToZort, by: req.userId || '', txnId,
-    locationsRecorded: located ? located.located : 0, locationUnits: located ? located.units : 0, binsCreated: located ? located.binsCreated : 0 });
+    locateMode: locSupersede ? 'supersede' : 'fill',
+    locationsRecorded: located ? located.located : 0, locationUnits: located ? located.units : 0, binsCreated: located ? located.binsCreated : 0,
+    // A relocation is a change to WHERE a client's stock is, so the trail names
+    // the SKUs that were moved and what they were moved off.
+    relocated: located ? (located.cleared || []).length : 0,
+    relocatedSkus: located ? (located.cleared || []).slice(0, 50).map(c => `${c.sku}:${c.from.join('/')}`) : [] });
   res.json({ applied, skipped, mode, clientId: cid, pushedToZort: pushToZort, enqueued: pushed,
              txnId, reversibleHours: STOCK_IMPORT_REVERSE_HOURS, errors: errors.slice(0, 20),
              // ONE LEDGER: if the sheet carried locations, they were recorded in
              // this same upload — the SKUs are now both in stock AND binned.
              locationRows,
+             locateMode: locSupersede ? 'supersede' : 'fill',
              locationsRecorded: located ? located.located : 0,
              locationUnits: located ? located.units : 0,
              binsCreated: located ? located.binsCreated : 0,
              notLocated: located ? located.notInMaster.slice(0, 50) : [],
+             relocated: located ? (located.cleared || []).length : 0,
+             relocatedSkus: located ? (located.cleared || []).slice(0, 50).map(c => ({ sku: c.sku, from: c.from, units: c.units })) : [],
              locationNote: located
-               ? `📍 Locations recorded: ${located.units} unit(s) across ${located.located} SKU(s) binned at the sheet's locations${located.binsCreated ? `, ${located.binsCreated} new bin(s) created` : ''}. Quantities and locations are now both on record — these show a Location on the wave pick.`
+               ? (locSupersede
+                   ? `📍 Locations SUPERSEDED: ${located.units} unit(s) across ${located.located} SKU(s) now sit where the sheet says`
+                     + (located.cleared.length ? `, ${located.cleared.length} SKU(s) moved off their previous bin(s)` : '')
+                   : `📍 Locations recorded: ${located.units} unit(s) across ${located.located} SKU(s) binned at the sheet's locations`)
+                 + `${located.binsCreated ? `, ${located.binsCreated} new bin(s) created` : ''}. Quantities are unchanged — only where the stock sits. These show a Location on the wave pick.`
                  + (located.notInMaster.length ? ` (${located.notInMaster.length} SKU(s) in the sheet are not in the item master and were skipped.)` : '')
                : '' });
 });

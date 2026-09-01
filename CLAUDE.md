@@ -5461,6 +5461,54 @@ later by the 📍 tool above). It does NOT go through the add/supersede
 whole-position path — it only bins what it just added, so it can never zero an
 uncovered SKU.
 
+### …and it can SUPERSEDE those locations, when the option is picked
+
+Per the user. Filling a blank bin could never MOVE a SKU: `locateExistingStock`
+bins the *unbinned* portion of on-hand, so a SKU already fully located was
+skipped (`alreadyLocated`) and a sheet naming a different bin did nothing. That
+was the honest limit of the fill behaviour, and the user asked for the other
+half — behind an option, not as a default.
+
+`locate_mode` on `/api/inventory/import-file`: **`fill`** (default, unchanged —
+a blank location gets one, an existing one is left alone) or **`supersede`** —
+every bin the sheet's SKUs currently occupy is cleared first, then their on-hand
+is binned where the sheet says, so the SKU genuinely moves. UI: a picker in the
+⬆ Upload stock file card that states its own consequence, plus a confirm.
+
+- **SCOPED TO THE SKUs IN THE SHEET, AND TO LOCATIONS ONLY.** Quantities are
+  still never touched (asserted), and a SKU the sheet does not mention keeps its
+  bins. Replacing a client's WHOLE position — zeroing SKUs absent from the
+  sheet — is **Mass SUPERSEDE** over in Putaway → Put away by file. Two
+  different promises under one word, so both the picker's hint and the confirm
+  name the other one and say which does which.
+- **CLEARING A BIN IS DESTRUCTIVE, SO THE SNAPSHOT HAD TO GROW.** This route's
+  reversal record carried `cells: []` because it only ever wrote on-hand
+  figures; a supersede that cleared bins without snapshotting them would leave
+  the 3-day undo with a hole exactly where the behaviour is destructive.
+  `locateExistingStock` now returns `snapshot.cells` — each touched (sku, bin)
+  cell captured ONCE at its true prior value, sources and destinations alike —
+  and the route folds them in. `reverseStockPositions` needed no change: it
+  already restores a cell by delete-then-reinsert, which puts a cleared bin back
+  and removes what was written.
+- **A MOVE IS NAMED, NOT COUNTED.** "12 SKU(s) relocated" cannot be checked
+  against a shelf; `relocatedSkus` (`AAA — was AA-001-001-A, 10 pc`) can. On the
+  audit entry too — `inventory_stock_uploaded` gains `locateMode` and
+  `relocatedSkus` — because this changes where a client's stock is.
+- The `<select>` needs `min-width:0` — a flex item will not shrink below a
+  select's longest option and it ran off the right of a 393px phone. Same trap
+  as `.big-scan-input`; caught by the browser test, not by reading.
+
+Verified 18 API checks (default still refuses to move an already-binned SKU;
+supersede moves two SKUs into one bin with quantities unchanged; a SKU absent
+from the sheet keeps both its stock and its bin; the move is named with the bin
+it came off; it is listed and reversible; the undo puts both SKUs back in their
+original bins and moves no quantity) plus 24 browser checks on desktop and a
+Pixel 5 (the option defaults to the safe choice, its hint changes with it,
+cancelling the confirm sends NO request at all, and accepting relocates the SKU
+on screen with no reload) — and regression on the three paths that share the
+function: Putaway Mass SUPERSEDE, the fill-locations upload, and 📍 Apply
+LOCATIONS.
+
 ## Put away by file — a whole stock position from a spreadsheet
 
 `POST /api/putaway/import` (multipart + `client`) takes the shape a warehouse

@@ -3218,6 +3218,21 @@
               <button class="btn-primary btn-sm" id="invUploadBtn">Choose file…</button>
             </div>
           </div>
+          <!-- WHAT THE Location COLUMN MEANS — asked, never assumed. Filling a
+               blank is safe and stays the default; superseding MOVES stock and
+               is an explicit choice. Quantities are unaffected either way. -->
+          <div style="margin-top:.55rem;display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap">
+            <label for="invLocMode" style="font-size:.78rem;font-weight:700;color:#64748b">IF THE FILE HAS A <code>Location</code> COLUMN</label>
+            <!-- min-width:0 — a flex item defaults to min-width:auto and refuses
+                 to shrink below a <select>'s longest option, which ran this
+                 control off the right of a 393px phone. Same trap as
+                 .big-scan-input; see the note in styles.css. -->
+            <select id="invLocMode" style="flex:1 1 220px;min-width:0;max-width:100%;padding:.3rem .5rem;border:1px solid #e2e8f0;border-radius:6px;font-size:.82rem">
+              <option value="fill" selected>Fill in blank locations only (leave existing ones alone)</option>
+              <option value="supersede">⚛ Supersede locations — move these SKUs to the file's bins</option>
+            </select>
+            <span class="hint" id="invLocModeHint" style="flex-basis:100%;margin:.15rem 0 0"></span>
+          </div>
           <div class="hint" style="margin:.35rem 0 0">This puts stock straight onto the books without receiving it through Inbound &mdash; so every upload here is listed below and can be <b>undone for 3 days</b>.</div>
           <div id="invUploadStatus" class="status-bar hidden" style="margin-top:.6rem"></div>
           <div style="margin-top:.7rem">
