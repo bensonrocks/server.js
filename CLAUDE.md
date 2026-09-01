@@ -5569,6 +5569,18 @@ cannot disagree again — the whole reason this went wrong twice.
   undo restores the WHOLE position (including the SKUs it zeroed), and
   ↻ Finish supersede correctly refuses it as already complete.
 - **ADD is untouched** and still additive — a delivery is not a stock-take.
+- **A CELL IS CLEARED ONCE PER IMPORT, THEN ONLY ADDED TO.** The last surviving
+  piece of back-end arithmetic, reported straight after the above shipped: the
+  preview promised **1,244** and the screen read **1,215**. `setStockPositions`
+  ran its `DELETE FROM bin_lots WHERE client/sku/location` before **every row**,
+  so two rows naming the SAME SKU in the SAME bin — two batches on one pallet,
+  an ordinary way to write a stock sheet — meant the second wiped the first and
+  only the last figure survived. Rows in DIFFERENT bins were always fine, which
+  is why "208 rows over 166 SKUs" still looked plausible and the loss was
+  invisible. `wroteCell` now empties a cell the first time the import touches
+  it; every later row tops it up (same lot on its own row, a different lot on
+  its own), so two rows for one CELL sum exactly as two rows for one SKU do.
+  Reproduced against the shipped build — 71 + 29 in one bin came out **29**.
 
 Verified 27 API checks on exactly the reported shape (a 1,741-pc position; a
 sheet listing one SKU at three bins, one at one bin, and one with no Location at
