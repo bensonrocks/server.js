@@ -5520,8 +5520,8 @@ the word "Supersede" was the LOCATION picker, which never touches quantities —
 so the wording added earlier actively contributed to the mistake.
 
 - **`#invQtyMode`** — ➕ **ADD to what is on hand** (default, unchanged) or ⚛
-  **REPLACE these SKUs' on-hand with the file's figures** (`mode=set`). Each
-  states its own consequence in the row.
+  **SUPERSEDE — this file IS the whole position** (`mode=set`). Each states its
+  own consequence in the row.
 - **A PREVIEW-CONFIRM ON BOTH MODES.** `/api/inventory/import-file` answers 409
   `{needsApplyConfirm, mode, preview}` unless `confirm_apply=yes`, and the
   preview states **`currentTotal → afterTotal`** plus rows/SKUs/units, new SKUs
@@ -5529,24 +5529,65 @@ so the wording added earlier actively contributed to the mistake.
   have stopped this dead. The mass putaway upload has stated its arithmetic
   since it shipped; this route — the EASIER of the two to reach, and the one
   people actually use — just wrote.
-- **THE HONEST LIMIT IS NAMED, because conflating the two is how a count lands
-  on the wrong total.** `set` here is **PER-SKU**: a SKU the sheet does not
-  mention keeps its stock. The preview counts those (`untouchedSkus`) and the
-  confirm says so and points at **Putaway → Upload stock by file → Mass
-  SUPERSEDE** for a stock-take that zeroes them. The hint under the picker says
-  the same before a file is even chosen.
 - Asking writes NOTHING (asserted), and cancelling sends no second request.
-- The success line reports the mode it ran in ("Replaced on-hand for…" vs
-  "Added stock for…") rather than always saying "Added".
+- The success line reports the mode it ran in rather than always saying "Added".
 
-Verified 14 API checks reproducing the exact reported shape — a 2,979-pc
-position, a 1,236-pc sheet: it answers 409 rather than writing, states
-`2979 → 4215`, nothing moves by asking, replace-mode states `2215` and names
-the 1 SKU left alone, and confirming lands on exactly the previewed figure —
-plus 18 browser checks on desktop and a Pixel 5 (the choice on screen and
-defaulting to ADD, both hints, the dialog carrying the arithmetic, and exactly
-one request fired). Regression: the supersede-locations suite passes through
-the new gate unchanged.
+#### ⚛ ON THIS SCREEN IS THE SAME SUPERSEDE AS PUTAWAY'S — one implementation
+
+SUPERSEDED, and the history matters because the first cut was rejected on a
+live account: this option used to be a **PER-SKU** replace, and the note here
+defended that as an "honest limit" — a SKU the sheet did not mention kept its
+stock, with the confirm pointing at Putaway → Mass SUPERSEDE for a real
+stock-take. The user's answer, twice: *"just supersede with whatever file that
+I agree to use, with no further calculations at the back end."* Then, on the
+per-SKU version's own result: **"wrong again … just supercede."**
+
+It was not merely a limit; it was WRONG ARITHMETIC. Two defects, both invisible:
+
+1. **It walked the ROWS and took the LAST one per SKU.** A real stock file lists
+   a SKU once **per location** — so a SKU sitting in three bins came out holding
+   one bin's figure. Measured on the reported shape: a **1,244-pc** sheet landed
+   the client on **661**.
+2. Every SKU the sheet omitted stayed standing, so the total was neither the old
+   position nor the file's, and the operator had to work out which.
+
+So `mode=set` here now calls **`inventory.setStockPositions(..., mode:'set')`** —
+literally the same function Putaway → Mass SUPERSEDE calls. A SKU listed at
+several bins is **summed**, absent SKUs go to **zero** and are named, a row with
+a quantity but no Location is still counted (**unbinned**), and afterwards
+**on hand IS the sum of the sheet**. ONE implementation, so the two screens
+cannot disagree again — the whole reason this went wrong twice.
+
+- The preview comes from `previewStockPositions`, not a second sum in the route:
+  the number someone approves is the number the write produces.
+- The confirm NAMES what it will zero and what it cannot bin, and no longer
+  claims anything is "left as it is".
+- The **Location picker is disabled** in this mode and says why — a supersede
+  takes its bins from the file, so a live control there would be one that lies
+  about what it does.
+- The record carries `whole_position: true` and the full snapshot, so the 3-day
+  undo restores the WHOLE position (including the SKUs it zeroed), and
+  ↻ Finish supersede correctly refuses it as already complete.
+- **ADD is untouched** and still additive — a delivery is not a stock-take.
+
+Verified 27 API checks on exactly the reported shape (a 1,741-pc position; a
+sheet listing one SKU at three bins, one at one bin, and one with no Location at
+all, summing to 1,244): it asks first and states `1741 → 1244`, names the 541-pc
+SKU going to zero and the 504 pcs it cannot bin, writes nothing by asking, and
+on confirm lands **on hand == 1244 exactly**, with the three-bin SKU reading 240
+across all three. **The pre-fix build fails 14 of those checks and reproduces
+the report precisely — that SKU comes out at 60 and the absent one keeps its
+541.** Plus 22 browser checks on desktop and a Pixel 5 (the option's own
+wording, the hint, the Location picker stepping aside, the dialog carrying
+`1741 → 1244` with the zeroed SKU named, and cancelling leaving 1,741 intact),
+and regression on `e2e-fileispos`, `e2e-newsku`, `e2e-supersede`, `e2e-locsup`,
+`e2e-applyloc`, `e2e-moved`, `e2e-askfirst`.
+
+TEST GOTCHA that cost a sweep: `e2e-supersede`/`e2e-locsup`/`e2e-newsku` used
+FIXED client names and global bin codes, so a second run met the same-file
+re-import guard and a bin that already existed — green once, red twice, with
+nothing wrong in the app. Client names carry `Date.now()` now and the new-SKU
+suite mints its own row code.
 
 ## Put away by file — a whole stock position from a spreadsheet
 

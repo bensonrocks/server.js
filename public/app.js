@@ -18280,7 +18280,10 @@
       // and the sentence says what it does NOT do, because "supersede" is the
       // word Putaway uses for replacing a whole position and the two must never
       // be confused. Cancel = nothing happens, not even the quantities.
-      if (locMode === 'supersede' && !confirm(
+      // In REPLACE mode the locations are superseded as part of the stock-take
+      // itself (the file IS the position, bins included), so this second dialog
+      // would be asking about something already covered by the main confirm.
+      if (qtyMode !== 'set' && locMode === 'supersede' && !confirm(
         '⚛ SUPERSEDE LOCATIONS\n\n'
         + 'For every SKU in this file that names a Location:\n'
         + '  • its current bin(s) are cleared, and\n'
@@ -18309,21 +18312,39 @@
         if (r.status === 409 && d.needsApplyConfirm) {
           const p = d.preview || {};
           const word = d.mode === 'set'
-            ? "REPLACE these SKUs' on-hand with the file's figures"
+            ? 'SUPERSEDE — THIS FILE BECOMES THE WHOLE POSITION'
             : 'ADD the file on top of what is on hand';
           let m = `${word.toUpperCase()}\n\nClient: ${d.client}\nFile: ${d.filename}\n`
             + `${p.rows} row(s), ${p.skus} SKU(s), ${p.units} pc(s) in the file.\n\n`
             + `ON HAND NOW: ${p.currentTotal} pc(s)  →  AFTER: ${p.afterTotal} pc(s)`;
+          // A SUPERSEDE HAS TO NAME WHAT IT WIPES. After it, on hand IS the sum
+          // of the sheet — so anything holding stock that the sheet does not
+          // list goes to zero, and that has to be read before it happens.
+          if (d.mode === 'set') {
+            if (p.zeroUnits) {
+              m += `\n\n⚠ ${p.zeroSkuCount} SKU(s) holding ${p.zeroUnits} pc(s) are NOT in this file`
+                + ` and will be set to ZERO:\n`
+                + (p.zeroSkus || []).map(x => `• ${x.sku}: ${x.was} → 0`).join('\n')
+                + (p.zeroSkuCount > (p.zeroSkus || []).length ? '\n…' : '');
+            } else {
+              m += `\n(Nothing is left behind — every SKU holding stock is in this file.)`;
+            }
+            if (p.unbinnedUnits) {
+              m += `\n\n📍 ${p.unbinnedRows} row(s) have NO Location, so ${p.unbinnedUnits} pc(s) are counted`
+                + ` but NOT binned — they will show "not binned" and carry no pick location until located:\n`
+                + (p.unbinnedSkus || []).slice(0, 10).map(x => `• ${x.sku}: ${x.qty} pc`).join('\n')
+                + ((p.unbinnedSkus || []).length > 10 ? '\n…' : '');
+            }
+            m += `\n\n📍 Locations come from this file too — each SKU's bins are replaced by what it says.`;
+          }
           if (p.newSkuCount) m += `\n\n${p.newSkuCount} SKU(s) are new and will be created: `
             + `${(p.newSkus || []).join(', ')}${p.newSkuCount > (p.newSkus || []).length ? '…' : ''}`;
+          if (p.newBinCount) m += `\n${p.newBinCount} new bin(s) will be created.`;
           if (p.noSku) m += `\n\n⚠ ${p.noSku} row(s) have no SKU and will be skipped.`;
-          // The honest limit of this screen: it is PER-SKU either way. A count
-          // that must zero the SKUs the sheet omits is Putaway's job, and
-          // saying so here is what stops someone landing on the wrong total.
-          if (p.untouchedSkus) m += `\n\n⚠ ${p.untouchedSkus} SKU(s) holding stock are NOT in this file and are LEFT AS THEY ARE.`
-            + `\nIf this is a stock-take and those should go to ZERO, cancel and use`
-            + `\nPutaway → Upload stock by file → Mass SUPERSEDE instead.`;
-          if (d.locateMode === 'supersede') m += `\n\n📍 Locations will be SUPERSEDED for the SKUs in this file.`;
+          if (p.errorCount) m += `\n\n⚠ ${p.errorCount} row(s) have ERRORS and will be skipped:\n`
+            + (p.errors || []).map(x => `• ${x.sku || '(no SKU)'} @ ${x.location || '?'} — ${x.reason}`).join('\n')
+            + (p.errorCount > (p.errors || []).length ? '\n…' : '');
+          if (d.mode !== 'set' && d.locateMode === 'supersede') m += `\n\n📍 Locations will be SUPERSEDED for the SKUs in this file.`;
           m += `\n\nReversible for 3 days.\n\nOK = apply · Cancel = nothing happens`;
           if (confirm(m)) return uploadFile(file, { ...opts, confirmApply: true });
           st.classList.add('hidden');
@@ -18335,7 +18356,7 @@
         // expected, which is what someone actually needs to know.
         const moved = (d.unitsMoved === null || d.unitsMoved === undefined) ? null : d.unitsMoved;
         let msg = d.mode === 'set'
-          ? `✓ Replaced on-hand for ${d.applied} SKU(s)`
+          ? `✓ Superseded — this client's position IS this file: ${d.applied} SKU(s)`
           : `✓ Added stock for ${d.applied} SKU(s)`;
         if (moved !== null) msg += ` · ${moved >= 0 ? '+' : '−'}${Math.abs(moved)} pc(s)`;
         if (d.clientTotal !== undefined) msg += ` · this client now holds ${d.clientTotal} pc(s)`;
@@ -18343,6 +18364,26 @@
         if (d.pushedToZort) msg += ` · ${d.enqueued} stock update(s) queued to the sales channels`;
         if (d.errors && d.errors.length) msg += ` · first issue: row ${d.errors[0].row} (${d.errors[0].sku}) — ${d.errors[0].error}`;
         if (d.txnId) msg += ` · undoable for ${d.reversibleHours || 72}h below`;
+        // A SUPERSEDE REPORTS WHAT IT TOOK AWAY, by name. "now holds 1244" is
+        // only checkable if the stock that went to zero is listed beside it.
+        if (d.mode === 'set') {
+          if (d.zeroedUnits) msg += ` · ${(d.zeroed || []).length} SKU(s) zeroed (−${d.zeroedUnits} pc)`;
+          if ((d.unbinned || []).length) msg += ` · ${d.unbinned.length} SKU(s) counted but NOT binned`;
+          st.className = 'status-bar success'; st.textContent = msg;
+          const gone = (d.zeroed || []).length
+            ? `\n\nNot in the file, so set to ZERO:\n`
+              + d.zeroed.slice(0, 20).map(x => `• ${x.sku}: ${x.was} → 0`).join('\n')
+              + (d.zeroed.length > 20 ? '\n…' : '')
+            : '';
+          const loose = (d.unbinned || []).length
+            ? `\n\nCounted with no Location — on hand but NOT binned (no pick location until located):\n`
+              + d.unbinned.slice(0, 20).map(x => `• ${x.sku}: ${x.qty} pc`).join('\n')
+              + (d.unbinned.length > 20 ? '\n…' : '')
+            : '';
+          if (gone || loose) alert((d.note || '') + gone + loose);
+          load(); loadInvImports();
+          return;
+        }
         if (d.locationsRecorded) {
           // ONE LEDGER: the sheet carried locations and they were recorded in
           // the same upload — the SKUs are now both in stock AND binned.
@@ -18608,6 +18649,11 @@
       // not the first time anyone hears what "supersede" means here.
       const locHint = () => {
         const h = $('invLocModeHint'); if (!h) return;
+        if ($('invQtyMode')?.value === 'set') {
+          h.innerHTML = 'Not used for a supersede — <b>the file itself says where everything sits</b>, '
+            + 'so each SKU\'s bins are replaced by what it names.';
+          return;
+        }
         h.innerHTML = $('invLocMode')?.value === 'supersede'
           ? '⚛ SKUs named in the file are <b>moved</b>: their current bins are cleared and their on-hand is binned where the file says. '
             + '<b>Quantities are not changed</b>, and a SKU the file does not mention keeps its locations. Reversible for 3 days.'
@@ -18621,11 +18667,23 @@
       const qtyHint = () => {
         const h = $('invQtyModeHint'); if (!h) return;
         h.innerHTML = $('invQtyMode')?.value === 'set'
-          ? '⚛ Each SKU in the file is <b>set to the file\'s figure</b> (not added). A SKU the file does '
-            + '<b>not</b> mention keeps its stock — for a stock-take that zeroes those too, use '
-            + '<b>Putaway → Upload stock by file → Mass SUPERSEDE</b>.'
+          ? '⚛ After this, <b>on hand IS the sum of this file</b> — no arithmetic at our end. A SKU listed at '
+            + 'several locations is <b>summed</b>; a SKU the file does <b>not</b> mention goes to <b>zero</b> '
+            + '(named first); a row with a quantity but no Location is still counted, simply <b>not binned</b>. '
+            + 'Locations come from the file too. Reversible for 3 days.'
           : '➕ The file\'s quantities go <b>on top of</b> what is already on hand. Uploading the same file '
             + 'twice adds it twice — you will be shown the before and after first.';
+        // A supersede carries its own locations by definition, so the picker
+        // below has nothing left to decide — greyed out rather than left live
+        // and ignored, which would be a control that lies about what it does.
+        const lm = $('invLocMode');
+        if (lm) {
+          const sup = $('invQtyMode')?.value === 'set';
+          lm.disabled = sup;
+          lm.style.opacity = sup ? '.5' : '';
+          lm.title = sup ? 'A supersede takes its locations from the file itself.' : '';
+        }
+        locHint();
       };
       $('invQtyMode')?.addEventListener('change', qtyHint);
       qtyHint();

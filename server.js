@@ -25908,6 +25908,33 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
   const locOf = r => String(r.location ?? r.bin ?? r.locationid ?? r.binlocation ?? '').trim();
   const posRows = [];   // {sku, location, qty} for rows that name a bin
   const locationRows = rows.filter(r => locOf(r)).length;
+  const skuOf = r => String(r.sku ?? r.skucode ?? r.itemcode ?? '').trim();
+
+  // ── ⚛ REPLACE IS A SUPERSEDE: THE FILE IS THE POSITION ─────────────────────
+  // Per the user, twice over: "just supersede with whatever file I agree to
+  // use, with no further calculations at the back end." The PER-SKU version of
+  // this option could never deliver that, and on a live account it landed a
+  // 1,244-pc sheet on 661. Two reasons, both arithmetic nobody asked for:
+  //
+  //   1. It walked the ROWS and wrote each SKU's on-hand from whichever row it
+  //      saw LAST. A real stock file lists a SKU once PER LOCATION, so a SKU
+  //      sitting in three bins came out holding one bin's figure.
+  //   2. Every SKU the sheet did not mention stayed standing, so the total was
+  //      neither the old position nor the file's.
+  //
+  // So this option now runs THE SAME whole-position supersede as Putaway →
+  // Mass SUPERSEDE (inventory.setStockPositions, mode 'set'): a SKU's bins SUM,
+  // absent SKUs go to zero and are named, a row with a quantity but no Location
+  // is still counted (unbinned), and afterwards on-hand IS the sum of the
+  // sheet. ONE implementation, so the two screens can never disagree again.
+  const supersedeRows = () => rows.map(r => ({
+    sku: skuOf(r),
+    location: locOf(r),
+    qty: qtyOf(r),
+    name: String(r.name ?? r.description ?? '').trim(),
+    barcode: String(r.barcode ?? r.ean ?? r.upc ?? '').trim(),
+    uom: String(r.uom ?? r.packing ?? '').trim(),
+  })).filter(r => r.sku);
 
   // ── SAY WHAT IT WILL DO BEFORE IT DOES IT ────────────────────────────────
   // Reported live, and it cost a real client's position: this uploader took a
@@ -25917,6 +25944,33 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
   // it shipped; this one — the EASIER of the two to reach, and the one people
   // actually use — just wrote. Now both ask, and both state before → after.
   if (String(req.body?.confirm_apply || '') !== 'yes') {
+    // A SUPERSEDE IS PREVIEWED BY THE SUPERSEDE'S OWN CODE — the number someone
+    // approves has to be the number the write produces, so both come from
+    // previewStockPositions/setStockPositions rather than a second sum here.
+    if (mode === 'set') {
+      let pv;
+      try { pv = inventory.previewStockPositions(cid, supersedeRows(), 'set'); }
+      catch (e) { return res.status(400).json({ error: e.message }); }
+      return res.status(409).json({
+        needsApplyConfirm: true, mode, locateMode: 'supersede', wholePosition: true,
+        client: cid, filename: req.file.originalname || 'stock upload',
+        preview: {
+          rows: pv.rows, units: pv.units, skus: (pv.skus || []).length,
+          newSkus: (pv.newSkus || []).slice(0, 30), newSkuCount: (pv.newSkus || []).length,
+          newBins: (pv.newBins || []).slice(0, 30), newBinCount: (pv.newBins || []).length,
+          errors: (pv.errors || []).slice(0, 30), errorCount: (pv.errors || []).length,
+          noSku: rows.filter(r => !skuOf(r)).length,
+          currentTotal: pv.currentTotal, afterTotal: pv.afterTotal,
+          zeroUnits: pv.zeroUnits, replacedUnits: pv.replacedUnits,
+          zeroSkuCount: (pv.zeroSkus || []).length,
+          zeroSkus: (pv.zeroSkus || []).slice(0, 30),
+          unbinnedSkus: (pv.unbinnedSkus || []).slice(0, 30),
+          unbinnedUnits: pv.unbinnedUnits || 0,
+          unbinnedRows: pv.unbinnedRows || 0,
+          untouchedSkus: 0,          // nothing is left standing in a supersede
+        },
+      });
+    }
     let currentTotal = 0;
     try {
       for (const r of (inventory.getAll({ clientId: cid }) || [])) currentTotal += Number(r.stock_qty) || 0;
@@ -25949,6 +26003,75 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     return res.status(409).json({
       needsApplyConfirm: true, mode, locateMode: locSupersede ? 'supersede' : 'fill',
       client: cid, filename: req.file.originalname || 'stock upload', preview: pv,
+    });
+  }
+
+  const who = req.userId || _tokenUserId(req) || '';
+  // ── THE SUPERSEDE ITSELF ───────────────────────────────────────────────────
+  // Straight through to setStockPositions, exactly as Putaway's Mass SUPERSEDE
+  // does, so the file IS the position afterwards: bins summed per SKU, absent
+  // SKUs zeroed and named, location-less rows counted unbinned, one snapshot
+  // covering everything it cleared for the 3-day undo.
+  if (mode === 'set') {
+    let before = 0;
+    try { for (const r of (inventory.getAll({ clientId: cid }) || [])) before += Number(r.stock_qty) || 0; } catch (_) {}
+    let result;
+    try {
+      result = inventory.setStockPositions(cid, supersedeRows(), {
+        operator: who,
+        reason: `Stock upload (SUPERSEDE) — ${req.file.originalname || 'stock upload'}`,
+        mode: 'set',
+      });
+    } catch (e) { return res.status(400).json({ error: e.message }); }
+
+    let clientTotal = 0;
+    try { for (const r of (inventory.getAll({ clientId: cid }) || [])) clientTotal += Number(r.stock_qty) || 0; } catch (_) {}
+
+    const rdb = readDb();
+    rdb.stockImports = rdb.stockImports || [];
+    const txnId = uuidv4();
+    rdb.stockImports.unshift({
+      id: txnId, hash: `inv:${txnId}`, clientId: cid,
+      filename: req.file.originalname || 'stock upload',
+      at: new Date().toISOString(), by: who,
+      mode: 'set', source: 'inventory', lines: result.placed,
+      locate_mode: 'supersede', whole_position: true,
+      units: clientTotal, unitsMoved: clientTotal - before,
+      snapshot: result.snapshot,
+      reversible_until: new Date(Date.now() + STOCK_IMPORT_REVERSE_HOURS * 3600000).toISOString(),
+    });
+    pruneStockImportSnapshots(rdb);
+    if (rdb.stockImports.length > 500) rdb.stockImports.length = 500;
+    writeDb(rdb);
+
+    logAudit('stock_mass_superseded', {
+      txnId, clientId: cid, filename: req.file.originalname || 'stock upload', via: 'inventory-tab',
+      lines: result.placed, units: result.units, skus: result.skus.length,
+      skusCreated: result.skusCreated, binsCreated: result.binsCreated,
+      zeroed: (result.zeroed || []).length, zeroedUnits: result.zeroedUnits || 0,
+      unbinned: (result.unbinned || []).length, by: who,
+    });
+    if (pushToZort && result.skus.length) {
+      const zdb = readDb();
+      zortNotifyStockChange(zdb, cid, result.skus.slice(0, 200));
+    }
+    return res.json({
+      ok: true, mode: 'set', wholePosition: true, clientId: cid, txnId,
+      reversibleHours: STOCK_IMPORT_REVERSE_HOURS,
+      applied: result.skus.length, skipped: (result.skipped || []).length,
+      // `units` is THE FILE'S OWN SUM — binned rows plus the ones counted with
+      // no location. Reporting only the binned half would contradict the very
+      // total this action exists to guarantee.
+      lines: result.placed,
+      units: result.units + (result.unbinned || []).reduce((n, x) => n + (Number(x.qty) || 0), 0),
+      unitsMoved: clientTotal - before, clientTotal,
+      skusCreated: result.skusCreated, binsCreated: result.binsCreated,
+      locationRows, locateMode: 'supersede',
+      locationsRecorded: result.placed,
+      zeroed: (result.zeroed || []).slice(0, 50), zeroedUnits: result.zeroedUnits || 0,
+      unbinned: (result.unbinned || []).slice(0, 50),
+      errors: (result.skipped || []).slice(0, 20).map(s => ({ row: 0, sku: s.sku, error: s.reason })),
+      note: 'The file IS the position — on hand for this client is now the sum of the sheet.',
     });
   }
 
