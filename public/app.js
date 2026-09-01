@@ -18332,9 +18332,15 @@
           return;
         }
         if (!r.ok) { st.className = 'status-bar error'; st.textContent = d.error || 'Upload failed'; return; }
+        // SAY WHAT MOVED AND WHERE IT LANDED. "Added stock for 209 SKU(s)" was
+        // true and useless — it could not tell you the balance was not what you
+        // expected, which is what someone actually needs to know.
+        const moved = (d.unitsMoved === null || d.unitsMoved === undefined) ? null : d.unitsMoved;
         let msg = d.mode === 'set'
           ? `✓ Replaced on-hand for ${d.applied} SKU(s)`
           : `✓ Added stock for ${d.applied} SKU(s)`;
+        if (moved !== null) msg += ` · ${moved >= 0 ? '+' : '−'}${Math.abs(moved)} pc(s)`;
+        if (d.clientTotal !== undefined) msg += ` · this client now holds ${d.clientTotal} pc(s)`;
         if (d.skipped) msg += `, skipped ${d.skipped}`;
         if (d.pushedToZort) msg += ` · ${d.enqueued} stock update(s) queued to the sales channels`;
         if (d.errors && d.errors.length) msg += ` · first issue: row ${d.errors[0].row} (${d.errors[0].sku}) — ${d.errors[0].error}`;
@@ -18420,7 +18426,15 @@
         box.innerHTML = rows.map(x => `
           <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.4rem .55rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.35rem;font-size:.8rem">
             ${x.source === 'ledger-undo' ? '<span style="font-weight:700;color:#b45309">&#9100; Stock taken off</span>' : ''}
-            <span class="hint">${esc(x.filename)} · ${x.lines} SKU(s) · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}</span>
+            <span class="hint">${esc(x.filename)} · ${x.lines} SKU(s)${
+              // WHAT IT MOVED, in pieces. Without this the row could not answer
+              // "why is the balance not what I expected" — which is exactly the
+              // question it was asked. Older rows carry no delta and say so
+              // rather than showing a post-state total as if it were one.
+              x.unitsMoved === null || x.unitsMoved === undefined
+                ? ''
+                : ` · <b>${x.unitsMoved >= 0 ? '+' : '&minus;'}${Math.abs(x.unitsMoved)} pc(s)</b>`
+            } · by ${esc(x.by || '?')} · ${new Date(x.at).toLocaleString(undefined, { timeZone: 'Asia/Singapore' })}</span>
             ${x.reversed_at
               ? `<span style="color:#b45309;font-weight:600">undone ${new Date(x.reversed_at).toLocaleDateString(undefined, { timeZone: 'Asia/Singapore' })} by ${esc(x.reversed_by || '?')}</span>`
               : x.reversible

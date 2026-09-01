@@ -13615,6 +13615,9 @@ app.get('/api/putaway/imports', (req, res) => {
     .map(x => ({
       id: x.id, at: x.at, by: x.by || '', mode: x.mode || 'add', client: x.clientId,
       filename: x.filename, lines: x.lines, units: x.units,
+      // What the upload MOVED (after − before). `units` on an inventory-source
+      // row is a post-state total and cannot answer "how much did this add".
+      unitsMoved: (x.unitsMoved === undefined ? null : x.unitsMoved),
       reversed_at: x.reversed_at || null, reversed_by: x.reversed_by || null,
       completed_at: x.completed_at || null, completed_by: x.completed_by || null,
       whole_position: !!x.whole_position, source: x.source || 'putaway',
@@ -26006,6 +26009,19 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     zortNotifyStockChange(db, cid, [...affected]);
     pushed = ((readDb().zortOutbox || []).length) - before;
   }
+  // ── WHAT THIS UPLOAD ACTUALLY MOVED ──────────────────────────────────────
+  // Asked live and unanswerable from the screen: the row read "209 SKU(s)" with
+  // NO piece count, and the figure stored as `units` was the sum of on-hand
+  // AFTER for every SKU touched — a post-state total, not a delta, so it could
+  // not say what the upload did either. The real answer is after − before,
+  // summed, which is what a person means by "how much did this add".
+  let unitsMoved = 0, unitsAfter = 0;
+  for (const [sku, before] of beforeStock.entries()) {
+    let now = 0;
+    try { now = Number(inventory.get(sku, cid)?.stock_qty) || 0; } catch (_) {}
+    unitsAfter += now;
+    unitsMoved += now - (Number(before) || 0);
+  }
   // The reversal record. In 'fill' mode this route writes on-hand figures and
   // only ever fills BLANK bins, so there is nothing destructive to restore. A
   // 'supersede' clears the bins the named SKUs sat in — destructive — so those
@@ -26021,9 +26037,7 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
       filename: req.file.originalname || 'stock upload',
       at: new Date().toISOString(), by: req.userId || _tokenUserId(req) || '',
       mode, source: 'inventory', lines: applied, locate_mode: locSupersede ? 'supersede' : 'fill',
-      units: [...beforeStock.keys()].reduce((n, sku) => {
-        const it = inventory.get(sku, cid); return n + (Number(it?.stock_qty) || 0);
-      }, 0),
+      units: unitsAfter, unitsMoved,
       snapshot: {
         at: new Date().toISOString(),
         cells: (located && located.snapshot && located.snapshot.cells) || [],
@@ -26048,7 +26062,12 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
     // the SKUs that were moved and what they were moved off.
     relocated: located ? (located.cleared || []).length : 0,
     relocatedSkus: located ? (located.cleared || []).slice(0, 50).map(c => `${c.sku}:${c.from.join('/')}`) : [] });
+  // The client's WHOLE position after this upload, so the success line can be
+  // checked against the tiles without anyone reloading and adding up.
+  let clientTotal = 0;
+  try { for (const r of (inventory.getAll({ clientId: cid }) || [])) clientTotal += Number(r.stock_qty) || 0; } catch (_) {}
   res.json({ applied, skipped, mode, clientId: cid, pushedToZort: pushToZort, enqueued: pushed,
+             unitsMoved, clientTotal,
              txnId, reversibleHours: STOCK_IMPORT_REVERSE_HOURS, errors: errors.slice(0, 20),
              // ONE LEDGER: if the sheet carried locations, they were recorded in
              // this same upload — the SKUs are now both in stock AND binned.
