@@ -14364,6 +14364,17 @@
           } else {
             msg += `\n(Nothing is left behind \u2014 every SKU holding stock is in this file.)`;
           }
+          // A SKU the file NAMES but cannot place is left untouched by the
+          // write, so it must be named here too \u2014 otherwise the total on screen
+          // and the total afterwards disagree, and the operator never learns
+          // which rows to fix.
+          if (p.untouchedUnits) {
+            msg += `\n\n\u26a0 ${p.untouchedSkus.length} SKU(s) are IN this file but their row(s) cannot be used`
+              + ` (usually a blank Location), so they are LEFT EXACTLY AS THEY ARE and keep ${p.untouchedUnits} pc(s):\n`
+              + (p.untouchedSkus || []).slice(0, 10).map(x => `\u2022 ${x.sku}: keeps ${x.keeps}`).join('\n')
+              + (p.untouchedSkus.length > 10 ? '\n\u2026' : '')
+              + `\nFix those rows and re-upload if they should be counted.`;
+          }
         }
         if (p.newSkuCount) msg += `\n${p.newSkuCount} new SKU(s) will be created: ${(p.newSkus || []).join(', ')}${p.newSkuCount > (p.newSkus || []).length ? '\u2026' : ''}`;
         if (p.newBinCount) msg += `\n${p.newBinCount} new bin(s) will be created.`;

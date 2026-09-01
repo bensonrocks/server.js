@@ -13463,6 +13463,11 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
         zeroUnits: pv.zeroUnits, replacedUnits: pv.replacedUnits,
         zeroSkuCount: (pv.zeroSkus || []).length,
         zeroSkus: (pv.zeroSkus || []).slice(0, 30),
+        // A SKU the file NAMES but cannot place (blank Location, say) is left
+        // exactly as it is — so it is neither replaced nor zeroed, and saying
+        // so is what makes afterTotal a number the upload actually reaches.
+        untouchedSkus: (pv.untouchedSkus || []).slice(0, 30),
+        untouchedUnits: pv.untouchedUnits || 0,
       },
     });
   }
@@ -13525,6 +13530,12 @@ app.post('/api/putaway/import', upload.single('file'), tenantMiddleware, (req, r
     skusCreated: result.skusCreated, binsCreated: result.binsCreated,
     skipped: result.skipped.slice(0, 50),
     short: (result.short || []).slice(0, 50),
+    // SKUs the file named but could not place — left exactly as they were,
+    // reported so the operator knows which rows to fix rather than discovering
+    // a SKU that did not move by reading the stock list later.
+    untouched: (result.untouched || []).slice(0, 50),
+    zeroed: (result.zeroed || []).slice(0, 50),
+    zeroedUnits: result.zeroedUnits || 0,
     reversibleUntil: new Date(Date.now() + STOCK_IMPORT_REVERSE_HOURS * 3600000).toISOString(),
     note: mode === 'set' ? 'The sheet\'s quantities REPLACED each bin\'s position.'
         : mode === 'reduce' ? 'The sheet\'s quantities were SUBTRACTED from each bin.'

@@ -5762,6 +5762,30 @@ audit trail that reads as the mass action it was, with who did it.
     how this was found.
   - **ADD is untouched** and still additive (asserted) — a delivery being
     binned is not a stock-take.
+  - **A NEW SKU IN THE FILE IS CREATED, WITH ITS QUANTITY AND ITS BIN.** Asked
+    directly, so proven directly rather than read off the code: a supersede
+    sheet carrying SKUs the item master has never seen creates them
+    (`skusCreated`), takes their **description and barcode** from the sheet,
+    sets on-hand to the sheet's figure and bins them at the named location,
+    creating the bin if it does not exist. The preview NAMES them first
+    (`newSkus`). Reversing removes them again. (REDUCE still never invents —
+    an unknown SKU there is an error row, not a create-then-subtract.)
+  - **A SKU THE FILE NAMES BUT CANNOT PLACE IS LEFT COMPLETELY ALONE.** Found
+    while proving the above, on the client's own file shape — their upload
+    reported "209 SKU(s) · 206 located", i.e. **3 rows with no usable
+    Location**. A row with a SKU and a quantity but a BLANK location is
+    unplaceable, and the first cut cleared that SKU's bins anyway while leaving
+    its on-hand standing: **bins gone, the old 200 pcs still on the books, and
+    a preview promising zero — three disagreeing answers from one upload.**
+    Now `placeable` (sku + location + qty) decides the clear, not merely being
+    mentioned: an unplaceable SKU keeps its bins AND its on-hand, is returned
+    as `untouched`, and the confirm names it with what it keeps. Zeroing it
+    would destroy real stock over a blank cell; half-clearing strands it.
+    - **THE PREVIEW'S `afterTotal` COUNTS IT.** It previously read
+      `out.units` alone, so on a sheet with unplaceable rows the confirm
+      promised a total the upload could never reach (60, actual 260) — the one
+      thing a confirm must never do. `afterTotal = units + untouchedUnits`, and
+      those SKUs are no longer listed as going to zero.
   - **FINISHING A HALF-DONE ONE WITHOUT THE FILE**
     (`POST /api/putaway/imports/:id/complete-supersede`, admin or master). Per
     the user: *"adjust it now without any reuploading."* A supersede run under
