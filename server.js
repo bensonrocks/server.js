@@ -757,6 +757,48 @@ app.use((err, req, res, next) => {
 // and still do their own enforcement independently. Unauthenticated requests
 // (public pages, login itself, etc.) proceed with no tenant context, which
 // readDb()/writeDb() fall back to treating as the "default" tenant.
+// ── ONE SCRYPT PER KEY, NOT PER REQUEST — AND ONE VERIFIER, NOT TWO ─────────
+// scrypt is deliberately slow (~45ms here), which is the point of using it,
+// but paying it on every read would make a polling partner crawl. So a
+// SUCCESSFUL verification is remembered for a few minutes, keyed by a digest
+// of the presented secret rather than the secret itself.
+//
+// `verifyApiKey` is the ONLY way a presented key is checked. The first cut put
+// the cache inside the auth middleware alone — and TWO places verify a key on
+// every request, because tenant resolution runs BEFORE the auth gate and has
+// to know whose data this is. So the uncached one still paid scrypt on every
+// single call and the cache bought nothing at all. Measured, not assumed: a
+// warm call sat ~45ms above a staff-token baseline, i.e. exactly one scrypt.
+// Two verifiers is the bug; this is one.
+//
+// REVOCATION STILL BITES AT ONCE, which is the property that matters: the
+// cache only says "this secret matches that key's hash", and the key RECORD is
+// still read from the database on every request — so switching a key off or
+// deleting it refuses the very next call, cache or no cache. (Asserted.)
+const _apiKeyVerified = new Map();          // keyId:digest -> expires-at
+const API_KEY_CACHE_MS = 5 * 60 * 1000;
+const API_KEY_CACHE_CAP = 500;
+function _apiKeyCacheKey(keyId, secret) {
+  return keyId + ':' + crypto.createHash('sha256').update(String(secret)).digest('hex');
+}
+function verifyApiKey(db, presented) {
+  const parsed = integration.parseApiKey(presented);
+  if (!parsed) return null;
+  // The record is looked up EVERY request — that is what keeps revoke instant.
+  const rec = (db.apiKeys || []).find(k => k && k.keyId === parsed.id);
+  if (!rec || rec.enabled === false || !rec.salt || !rec.hash) return null;
+  const ck = _apiKeyCacheKey(parsed.id, parsed.secret);
+  const now = Date.now();
+  const exp = _apiKeyVerified.get(ck);
+  if (exp && exp > now) return rec;                    // verified recently
+  if (!integration.sameSecret(integration.hashApiKey(parsed.secret, rec.salt), rec.hash)) return null;
+  if (_apiKeyVerified.size > API_KEY_CACHE_CAP) {
+    for (const [kk, e] of _apiKeyVerified) { if (e <= now) _apiKeyVerified.delete(kk); }
+    if (_apiKeyVerified.size > API_KEY_CACHE_CAP) _apiKeyVerified.clear();
+  }
+  _apiKeyVerified.set(ck, now + API_KEY_CACHE_MS);
+  return rec;
+}
 function _resolveTenantId(req) {
   // AN API KEY CARRIES ITS OWN TENANT. This runs before the auth gate, and a
   // key that resolved to `null` here would fall back to the DEFAULT tenant and
@@ -766,7 +808,7 @@ function _resolveTenantId(req) {
   const apiKey = req.headers['x-api-key'];
   if (apiKey) {
     try {
-      const rec = integration.findApiKey(readGlobalDb().apiKeys || [], apiKey);
+      const rec = verifyApiKey(readGlobalDb(), apiKey);
       if (rec) return rec.tenant_id || tenantStore.DEFAULT_TENANT_ID;
     } catch (_) {}
     return null;
@@ -8878,8 +8920,26 @@ function apiKeyScopeFor(req) {
 }
 function apiKeyAuth(req, res, next) {
   const db = readGlobalDb();
-  const rec = integration.findApiKey(db.apiKeys || [], req.headers['x-api-key']);
-  if (!rec) return res.status(401).json({ error: 'Invalid or disabled API key' });
+  // The SAME verifier tenant resolution used a few microseconds ago, so this
+  // request pays scrypt at most once between them — see verifyApiKey.
+  const rec = verifyApiKey(db, req.headers['x-api-key']);
+  if (!rec) {
+    // A KEY FROM THE EARLIER FORMAT SAYS SO, rather than reading as broken.
+    // Keys used to be one opaque string; they now carry a public id half
+    // (`iok_<id>_<secret>`) so verification is one hash instead of a sweep.
+    // Anything issued before that cannot be verified — which is correct, and
+    // is a REISSUE, not a fault. A bare "invalid key" would send somebody
+    // hunting for a problem that is not there.
+    const presented = String(req.headers['x-api-key'] || '');
+    if (presented.startsWith(integration.KEY_PREFIX) && !integration.parseApiKey(presented)) {
+      return res.status(401).json({
+        error: 'This key was issued under the earlier key format and can no longer be used. '
+             + 'Issue a new one on Connections → Partner API (the old one can be deleted there).',
+        reissue: true,
+      });
+    }
+    return res.status(401).json({ error: 'Invalid or disabled API key' });
+  }
   const need = apiKeyScopeFor(req);
   if (!need) {
     return res.status(403).json({
@@ -17250,10 +17310,15 @@ app.post('/api/master/api-keys', express.json(), (req, res) => {
   if ((db.apiKeys || []).some(k => String(k.name).toLowerCase() === name.toLowerCase())) {
     return res.status(409).json({ error: `A key named "${name}" already exists. Names are how a call is attributed, so they have to be unique.` });
   }
-  const key = integration.mintApiKey();
+  const minted = integration.mintApiKey();
+  const key = minted.key;
   const salt = crypto.randomBytes(12).toString('hex');
   const rec = {
-    id: uuidv4(), name, salt, hash: integration.hashApiKey(key, salt),
+    id: uuidv4(), name, salt,
+    // The public half, stored in the clear — it is what makes verification a
+    // single lookup instead of a sweep, and it is not a secret.
+    keyId: minted.id,
+    hash: integration.hashApiKey(minted.secret, salt),
     tail: integration.keyTail(key), scopes, enabled: true,
     // The tenant of whoever is creating it — a key must read its OWN tenant's
     // data, never the default one, and this is where that is decided.
