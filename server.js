@@ -23938,6 +23938,51 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
 // TEST THE WEB-LABEL WORKER against one real order — signs in with the store's
 // web login and tries to capture a label PDF, reporting the outcome in words.
 // Read-only: it fetches a label, changes nothing.
+// ── CAPTURE THE PAGE THE OPERATOR PRESSES PRINT ON ─────────────────────────
+// The last manual step in the daily run is ZORT's own Marketplace → "Print
+// shipping label (PDF)": it spawns the async task that fetches the AWB from
+// Lazada, and nothing in their v4 collection triggers it. Automating it means
+// driving that button the way a person does — and THAT has to be written
+// against the real DOM, not a guessed one. secure.zortout.com is unreachable
+// from the build sandbox, so this is how the evidence gets back: the operator
+// pastes the URL of the page they are standing on, and we save what is
+// actually there.
+//
+// IT CLICKS NOTHING. It signs in, reads, and saves — so running it can never
+// print, Ready-to-Ship, or otherwise move an order while we are only looking.
+app.post('/api/master/zort/stores/:id/web-capture', express.json(), async (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;      // admin or master, like Probe
+  const db = readDb();
+  const store = zortStores(db).find(s => s.id === req.params.id);
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+  const avail = zortWeb.available();
+  if (!avail.ok) return res.status(503).json({ error: `The label browser is not installed on the server — ${avail.why}` });
+  if (!store.webEmail || !store.webPassword) return res.status(400).json({ error: 'Set the ZORT web email and password first, then Save.' });
+  const url = String(req.body?.url || '').trim();
+  if (!/^https?:\/\//i.test(url)) {
+    return res.status(400).json({ error: 'Paste the full https address of the ZORT page you press Print Shipping Label on.' });
+  }
+  try {
+    const out = await zortWeb.capturePage(store, url);
+    logAudit('zort_web_page_captured', {
+      storeId: store.id, client: store.clientName || '',
+      // The URL can carry an order reference; the PAGE is saved to the volume,
+      // never onto the permanent, emailed trail. Host and control count only.
+      host: (() => { try { return new URL(out.url).host; } catch { return ''; } })(),
+      controls: (out.controls || []).length, bytes: out.bytes,
+      by: req.userId || _tokenUserId(req) || '',
+    });
+    res.json({
+      ok: true, ...out,
+      note: (out.controls || []).length
+        ? `Saved the page and found ${out.controls.length} control(s) that look label-related. Send the HTML file and this list on.`
+        : 'Saved the page, but nothing on it reads as a print/label control — it may be inside an iframe, or the button may live on a different screen.',
+    });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 app.post('/api/master/zort/stores/:id/web-label-test', express.json(), async (req, res) => {
   if (!checkMaster(req, res)) return;
   const db = readDb();

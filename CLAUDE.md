@@ -7663,3 +7663,63 @@ script-shell print viewer whose PDF is served ONLY with the session cookie —
 the exact live shape): the worker signs in and captures the 15,738-byte PDF,
 a second label reuses the saved session without re-login, and a wrong password
 is reported in words rather than hung on.
+
+#### THE LAST MANUAL STEP, AND WHY IT IS STILL MANUAL
+
+Reported from the floor, as the actual daily routine: *"I RTS in Zort, select
+Print Shipping Label, make sure it's out, then go back to IdealOne and Get
+Labels."* Four steps, and the middle two are the whole problem:
+
+| Step | Automated? |
+|---|---|
+| Ready-to-Ship | ✅ API (`completeAction: readytoship`, or `rtsAtIntake`) |
+| **Print shipping label (PDF)** | ❌ **nothing — ZORT's own web UI only** |
+| **Wait for the async "Lazada Label" task** | ❌ nothing waits on it |
+| Fetch + attach | ✅ outbox + browser worker + 🏷 Get Labels |
+
+`fetchLabelPdfViaBrowser` opens a label page that ALREADY EXISTS
+(`if (!/^https?:\/\//i.test(pageUrl)) throw` — it needs a link handed to it).
+For a marketplace order that page only comes into being once ZORT's own
+Marketplace → Print action spawns the task that fetches the AWB from Lazada,
+and no route in their 134-route collection triggers it. **So the operator's
+manual print is not a misconfiguration — it is the one link in the chain
+nothing can currently do.** Closing it means driving that button the way a
+person does, which is exactly the principle this module was built on; it just
+starts one step too late.
+
+**`capturePage(store, url)` + `POST .../stores/:id/web-capture` is the evidence
+step before that click is written.** secure.zortout.com is egress-blocked from
+the build sandbox, so writing a selector against a guessed DOM would be
+`Order/PackOrder` all over again — an interface invented rather than observed,
+reporting success while changing nothing. Instead the operator pastes the URL
+of the screen they press Print on; the worker signs in, saves the real HTML and
+a full-page screenshot to `DATA_DIR/zort-web/capture-<store>-<stamp>.*`, and
+returns every control whose text matches `/print|label|awb|waybill|shipping|
+ship|marketplace|task/i` with a selector that would find it again.
+
+- **IT CLICKS NOTHING.** It navigates and reads, so running it can never print,
+  Ready-to-Ship or otherwise move an order while we are only looking. Asserted.
+- **THE PAGE NEVER GOES ON THE AUDIT TRAIL** — a ZORT order URL carries a
+  customer reference and the trail is permanent and emailed. The file lands on
+  the volume; the trail records host, control count and bytes.
+- Admin or master (`requireInboundAdmin`), same guard as 🧪 Probe.
+- **THE RE-LOGIN MUST HAPPEN ON THE SAME CONTEXT.** The first cut signed in on
+  a page from a throwaway `browser.newPage()`, so the session cookie landed in
+  a jar that was then discarded — the re-navigation went straight back to the
+  login screen and captured THAT, which is worse than useless: it reads as a
+  page with no print button on it (`controls: []`). Log in on the live context,
+  `storageState` it, then re-navigate. And let the login's own error OUT rather
+  than `.catch(() => {})` — swallowing it returned a screenshot of the sign-in
+  form instead of saying the password was wrong.
+
+Verified 9 checks against a mock shaped like the real screen (login → an order
+page carrying "Ready to Ship", "Print shipping label (PDF)" with a `data-testid`,
+a Task Manager link and an unrelated "Edit order"): it signs in, saves the real
+HTML and a screenshot, NAMES the print button with a selector specific enough to
+click, reports the RTS button too, does NOT report the unrelated control, clicks
+nothing, and refuses a wrong password in words.
+
+TEST GOTCHA: Playwright resolves to `chrome-headless-shell`, which this sandbox
+does not ship — set `ZORT_BROWSER_PATH=/opt/pw-browsers/chromium-*/chrome-linux/chrome`
+(the escape hatch `_getBrowser` already honours) or the launch fails with a
+"just installed or updated" message that reads like a missing dependency.
