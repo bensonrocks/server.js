@@ -775,11 +775,26 @@ app.use((err, req, res, next) => {
 // cache only says "this secret matches that key's hash", and the key RECORD is
 // still read from the database on every request — so switching a key off or
 // deleting it refuses the very next call, cache or no cache. (Asserted.)
-const _apiKeyVerified = new Map();          // keyId:digest -> expires-at
+//
+// THE FINGERPRINT IS A KEYED MAC, NOT A BARE HASH. The cache has to answer
+// "is this the same secret I verified a minute ago?" without keeping the
+// secret, so it stores a fingerprint of it. A plain sha256 of the secret would
+// do that, and is what the first cut used — but a bare digest of a credential
+// is offline-guessable in principle, and it reads as exactly the weak
+// password-hash pattern this file just moved AWAY from in `hashApiKey`
+// (CodeQL flags the shape, and shipping the shape one file over is how the
+// weaker discipline spreads). The HMAC key is random PER PROCESS and never
+// stored, so the fingerprints are meaningless outside this running process and
+// cannot be attacked from a heap dump or a core file at all. It also costs
+// nothing: a MAC is microseconds, which is the whole point of not paying
+// scrypt here.
+const _apiKeyVerified = new Map();          // keyId:mac -> expires-at
+const _apiKeyCacheMacKey = crypto.randomBytes(32);   // per-process, never persisted
 const API_KEY_CACHE_MS = 5 * 60 * 1000;
 const API_KEY_CACHE_CAP = 500;
 function _apiKeyCacheKey(keyId, secret) {
-  return keyId + ':' + crypto.createHash('sha256').update(String(secret)).digest('hex');
+  return keyId + ':' + crypto.createHmac('sha256', _apiKeyCacheMacKey)
+    .update(String(secret)).digest('hex');
 }
 function verifyApiKey(db, presented) {
   const parsed = integration.parseApiKey(presented);

@@ -7377,114 +7377,6 @@ normalised key of **≥8 chars (10 if all digits)**, so short order numbers can
 never match by text scan. That guard is deliberate — it stops a 4-digit code
 matching random text on a label.
 
-## Talking to another system — API keys IN, signed webhooks OUT (lib/integration.js)
-
-Per the user: *"push from IdealOne out to another system and another system to
-IdealOne"*. Until this existed, the only way in was to sign in AS A MEMBER OF
-STAFF and carry their session token — wrong three ways at once: a session is
-one-per-user, so the integration and the human kick each other out all day; a
-staff token unlocks EVERYTHING, so a partner that only needs to read stock can
-also cancel orders; and the audit trail names a person who was asleep. And
-nothing went outward at all, so a partner could only learn an order had shipped
-by asking again and again.
-
-### IN — a key is its own identity, carrying only the scopes it was granted
-
-- **`x-api-key: iok_<12 hex id>_<32 hex secret>`.** The id is stored in the
-  CLEAR and the secret is hashed, which makes verification **O(1)** — the first
-  cut hashed the presented key against EVERY stored key until one matched, so
-  the cost of a request grew with the number of keys issued, which with a
-  deliberately slow hash is a denial-of-service vector rather than a detail.
-- **SCRYPT, not SHA-256** — corrected after CodeQL flagged it (the first alert
-  this repo's count has ever moved on new code, and it was right). The entropy
-  argument — a 128-bit random key is not a guessable password, so a fast hash is
-  ordinary practice for tokens — is TRUE and still not the point: `hashPass`
-  already uses `scryptSync`, and shipping a second, weaker discipline in the
-  same repo is how the weaker one spreads.
-- **ONE VERIFIER, `verifyApiKey(db, presented)` in server.js — and the reason
-  is a bug that was measured, not imagined.** TWO places check a key on every
-  request: `_resolveTenantId`, which runs BEFORE the auth gate because it has to
-  know whose data this is, and the auth gate itself. The cache was put in the
-  gate alone, so the other one paid scrypt on every single call and the cache
-  bought **nothing**. A stack trace on every `scryptSync` call is what settled
-  it. `lib/integration.js` deliberately exports NO `findApiKey` any more — a
-  spare cache-less verifier sitting in the library is an invitation to make the
-  same mistake again.
-- **REVOCATION STILL BITES AT ONCE.** The cache only remembers "this secret
-  matches that key's hash" (keyed by a digest of the secret, never the secret);
-  the key RECORD is re-read from the database every request, so switching a key
-  off refuses the very next call. Asserted.
-- **A KEY FROM THE FIRST FORMAT SAYS SO.** Keys briefly shipped as one opaque
-  string with no id half; those cannot be verified under the new scheme, which
-  is correct and is a REISSUE, not a fault. The 401 says exactly that and
-  points at Connections → Partner API, because a bare "invalid key" would send
-  somebody hunting for a problem that is not there.
-- **A KEY CARRIES ITS OWN TENANT**, stamped at creation. Resolving to `null`
-  here would fall back to the DEFAULT tenant and read somebody else's data —
-  the same trap the driver login hit.
-- **SCOPES ARE COARSE AND NOT A MATRIX**: `read`, `orders:write`,
-  `inventory:write`, `inbound:write`. A matrix invites half-configured keys
-  nobody can reason about later — the argument the portal's two access levels
-  already settled. Anything not on the endpoint list is **refused, never
-  inherited by silence**, and `/api/master/*` is never reachable by a key at
-  all: that stays the Administrator key.
-- **`POST /api/orders/intake`** takes orders as JSON and runs the SAME gate
-  every other door runs — canonical spelling, catalogue enrichment, the stock
-  check, reservations, pick locations, job code, pokes. A second intake path
-  would drift, and the first thing to drift would be whether stock was reserved.
-  `on_short` is `reject` (default — a machine is never guessed at) / `drop` /
-  `proceed`; a duplicate is reported as already held rather than twinned; a
-  malformed order is named with the rule it broke, never a validation blob.
-- Usage is **COUNTED, not rate-limited** — a meter that can refuse work is a
-  second failure mode (the lesson from counting ZORT's calls). Persisted at most
-  once a minute so a busy partner cannot drive a disk write per request.
-
-### OUT — five facts, signed, and retried like the ZORT outbox
-
-`order.completed`, `order.cancelled`, `order.picked_up`, `inbound.received`,
-`stock.adjusted`. Each is something that has ALREADY happened here — never an
-instruction, never a question. A receiver that is down costs a retry, never a
-stuck order.
-
-- **Stripe's signature shape**, because it is the one most partners have already
-  implemented: `t=<unix>,v1=<hmac-sha256 of "t.body">` in `X-IdealOne-Signature`.
-  The timestamp is inside the signed string so a captured delivery cannot be
-  replayed for ever. `verifySignature` is exported so a partner's own code can
-  be tested against the exact code that signs.
-- **A 2xx IS THE ONLY SUCCESS** — the "a 200 is not a success" lesson from the
-  hub, applied in the other direction. Anything else retries on a ladder
-  (0 / 30s / 2m / 10m / 30m / 2h) and then stalls saying why, in the receiver's
-  own words and status.
-- **ENQUEUING IS NOT DELIVERING.** `emitOutbound` kicks the drain on
-  `setImmediate`. Found by asserting the emit sites rather than assuming them:
-  `order.picked_up` and `order.cancelled` enqueued correctly and nothing ever
-  sent them, because only the standalone helper drained.
-- **THE LOG CARRIES THE OUTCOME, NEVER THE PAYLOAD.** A delivery body holds the
-  customer's name and address; this log is stored and shown on screen. Same rule
-  as keeping label URLs off the audit trail.
-- UI: Connections → **Partner API**, an admin issues a key (shown ONCE, never
-  readable again — only its last four) and adds a webhook (its signing secret
-  shown once, with how to verify it) with a **Test** button that reports what
-  the receiver actually said.
-
-Verified 44 API checks against a mock partner endpoint that genuinely verifies
-the HMAC (both directions end to end, revoke biting on the very next call,
-two refusals then a success proving the retry, and the log carrying no address)
-plus 28 browser checks on desktop and a Pixel 5.
-
-TEST GOTCHA — a performance check that a broken build passes is not a check.
-This one took three attempts: (1) "time one call, then another, assert the
-second is no worse + 5ms" passed at 58ms → 63ms, the second call SLOWER, while
-scrypt was in fact being paid every request; (2) comparing a keyed call against
-a staff-token call was sound in principle but measured in BLOCKS, so it picked
-up the server getting busier between them and reported a 46ms "overhead" that
-was not scrypt at all. What works is a CONTROLLED comparison — a brand-new key
-(must hash) against an already-verified one (must not), interleaved one for one
-on the same route — judged against what one scrypt actually costs on the
-machine, never against a fraction of the total, which passes or fails on how
-busy the route happens to be. It reproduces: with the cache disabled the saving
-falls from ~48ms to ~2ms and the check fails.
-
 ## Rollback points — named snapshots of a known-good state
 
 Written down HERE, in the repo, because a git tag created in a sandbox is not
@@ -7551,11 +7443,44 @@ partner could only learn an order had shipped by asking again and again.
   before the auth gate and resolved only `x-auth-token`, so a key would have
   fallen through to the DEFAULT tenant and read another tenant's data — the
   exact trap the driver login hit and the reason that lookup exists at all.
-- **Stored as a salted SHA-256 hash, shown ONCE at creation**, same discipline
+- **Shown ONCE at creation and stored only as a salted hash**, same discipline
   as a password and for the same reason: db.json is backed up nightly, gzipped
   and **emailed**. The list returns only the last four characters; there is no
   route that can return a key, and the dialog says so rather than implying a
   screen exists to recover one.
+- **`iok_<12 hex id>_<32 hex secret>` — the id is stored in the CLEAR.** That
+  makes verification **O(1)**: the first cut hashed the presented key against
+  EVERY stored key until one matched, so the cost of a request grew with the
+  number of keys issued, which with a deliberately slow hash is a
+  denial-of-service vector rather than a detail.
+- **SCRYPT, not a single SHA-256** — corrected after CodeQL flagged the first
+  version, and it was right to. The entropy argument (a 128-bit random key is
+  not a guessable password, so a fast hash is ordinary practice for tokens) is
+  TRUE and still not the point: `hashPass` already uses `scryptSync`, and
+  shipping a second, weaker discipline in the same repo is how the weaker one
+  spreads. O(1) lookup is what makes the slow hash affordable — the two are one
+  change.
+- **ONE VERIFIER, `verifyApiKey(db, presented)` in server.js, and the reason is
+  a bug that was MEASURED.** Two places check a key on every request —
+  `_resolveTenantId`, which runs before the auth gate, and the gate itself — so
+  putting the scrypt cache in the gate alone left the other paying it on every
+  call and the cache bought **nothing**. A stack trace on every `scryptSync`
+  call is what settled it, after two different latency measurements had each
+  pointed at the wrong thing. `lib/integration.js` deliberately exports NO
+  `findApiKey`: a spare cache-less verifier sitting in the library is an
+  invitation to make the same mistake again.
+  - The cache fingerprints the presented secret with an **HMAC keyed by a
+    per-process random value**, never a bare digest — the fingerprints are
+    meaningless outside the running process, and a bare hash of a credential is
+    the very shape `hashApiKey` just moved away from.
+  - **REVOCATION STILL BITES AT ONCE**: the cache only says "this secret
+    matches that key's hash"; the key RECORD is re-read from the database every
+    request, so switching a key off refuses the very next call. Asserted.
+- **A KEY FROM THE FIRST FORMAT SAYS SO.** Keys briefly shipped as one opaque
+  string with no id half; those cannot be verified under the new scheme, which
+  is correct and is a REISSUE, not a fault. The 401 says exactly that and points
+  at Connections → Partner API, because a bare "invalid key" would send somebody
+  hunting for a problem that is not there.
 - **FOUR SCOPES, deliberately not a matrix** (`read`, `orders:write`,
   `inventory:write`, `inbound:write`) — a matrix invites half-configured keys
   nobody can reason about later, the same argument the portal's two access
@@ -7662,6 +7587,24 @@ TEST GOTCHA: the office app's own fetch wrapper **force-reloads on ANY 401**
 (its session-expired handler), so asking for one from inside the page with a
 revoked key destroys the execution context mid-test. The app is right; the test
 must not stand in front of it — assert that refusal from the API suite.
+
+TEST GOTCHA — **a performance check a broken build passes is not a check.** The
+"scrypt is paid once per key" assertion took three attempts, and the first two
+were worthless in different ways:
+1. "time one call, then another, assert the second is no worse + 5ms" — passed
+   at 58ms → 63ms, the second call SLOWER, against a build that was paying
+   scrypt on every single request.
+2. Comparing a keyed call against a STAFF-TOKEN call. Sound in principle, but
+   measured in BLOCKS, so it picked up the server getting busier between the
+   two blocks and reported a 46ms "overhead" that a stack trace on every scrypt
+   call proved was not scrypt at all — it was the route's own cost.
+
+What holds is a CONTROLLED comparison: a brand-new key (never verified, must
+hash) against one already verified (must not), **interleaved one for one** on
+the same route, judged against what one scrypt actually costs on the machine —
+never against a fraction of the total, which passes or fails on how busy the
+route happens to be. It reproduces: with the cache disabled the saving falls
+from ~42ms to ~2ms and the check fails.
 
 ### The browser-automation worker — the Lazada label ZORT keeps behind its login (lib/zort-web.js)
 
