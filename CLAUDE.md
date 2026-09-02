@@ -7569,7 +7569,7 @@ spreadsheet to send us records it already held.
   actually said, in a dialog (a tooltip is unreadable on the phone the floor
   works from, and the answer is the whole point of a test).
 
-Verified 41 API checks through the real endpoints against a mock partner
+Verified 45 API checks through the real endpoints against a mock partner
 endpoint that genuinely verifies the signature: a key is minted once and never
 readable again, reads within scope and is refused outside it BY SCOPE NAME,
 cannot touch `/api/master/*` or any undocumented route, and dies on revoke;
@@ -7578,7 +7578,7 @@ Orders tab; a retry creates no twin; short stock refuses by default and drops
 only when told to; a mixed addressed/unaddressed batch is refused in words; the
 partner is TOLD on completion, pickup, cancellation and a stock adjustment,
 each signed and verified; two refusals then a success prove the retry; and the
-log carries the outcome with no customer address in it. Plus 40 browser checks
+log carries the outcome with no customer address in it. Plus 32 browser checks
 on desktop and a Pixel 5 (the key shown once and only its tail listed, the
 scope ticks built from what the server offers, the secret and how to verify it,
 Test reporting the receiver's real answer, and revoke/delete from the screen).
