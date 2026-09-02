@@ -2430,6 +2430,65 @@
           </div>
         </div>
       </details>
+      <!-- ANOTHER SYSTEM, BOTH WAYS. A partner used to have to borrow a staff
+           login (one seat, every permission, and a trail naming a person who
+           was asleep) and could only learn an order had shipped by asking
+           again and again. A key is its own identity; a webhook is the answer
+           coming to them. -->
+      <details class="conn-sec" id="secIntegration">
+        <summary><span class="cs-t">&#128279; Partner API &amp; Webhooks</span><span class="cs-h">Another system talking to IdealOne — keys in, signed pushes out</span></summary>
+
+        <div class="admin-section-title" style="font-size:.95rem;margin-top:.4rem">&#8594; Coming IN &mdash; API keys</div>
+        <div class="admin-section-sub" style="margin:.2rem 0 .6rem">
+          A key is the partner system's own identity: it carries only the scopes you tick, holds no session (so it can never
+          sign a person out), and every call it makes is attributed to its name on the audit trail.
+          It is sent as the <code>x-api-key</code> header. <b>A key can never reach Administrator routes</b> &mdash; that stays the Administrator key.
+        </div>
+        <div id="apiKeyStatus" class="status-bar hidden"></div>
+        <div class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Name</th><th>Key</th><th>Can do</th><th>Calls</th><th>Last used</th><th>Actions</th></tr></thead>
+            <tbody id="apiKeysTbody"><tr><td colspan="6" style="color:#94a3b8;padding:.8rem">No API keys issued.</td></tr></tbody>
+          </table>
+        </div>
+        <button class="btn-primary btn-sm" id="apiKeyAddBtn" style="margin-top:.5rem">+ Issue an API key</button>
+        <div id="apiKeyForm" class="hidden" style="margin-top:1rem;max-width:520px">
+          <div class="form-group"><label>Which system is this for?</label><input type="text" id="akName" placeholder="e.g. Acme ERP" autocomplete="off" /></div>
+          <div class="form-group"><label>What may it do?</label><div id="akScopes" style="display:flex;flex-direction:column;gap:.3rem"></div></div>
+          <div style="display:flex;gap:.5rem;margin-top:.6rem">
+            <button class="btn-primary btn-sm" id="apiKeySaveBtn">Issue key</button>
+            <button class="btn-secondary btn-sm" id="apiKeyCancelBtn">Cancel</button>
+          </div>
+        </div>
+
+        <div class="admin-section-title" style="font-size:.95rem;margin-top:1.2rem">&#8592; Going OUT &mdash; webhooks</div>
+        <div class="admin-section-sub" style="margin:.2rem 0 .6rem">
+          We POST the event to your URL as JSON, signed with a shared secret in the <code>X-IdealOne-Signature</code> header
+          (<code>t=&lt;unix&gt;,v1=&lt;hmac-sha256 of "&lt;t&gt;.&lt;body&gt;"&gt;</code>). Your endpoint answers <b>2xx</b> to accept;
+          anything else is retried on a widening ladder and then flagged &mdash; never silently dropped.
+        </div>
+        <div id="webhookStatus" class="status-bar hidden"></div>
+        <div class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Name</th><th>URL</th><th>Events</th><th>Delivered</th><th>Last</th><th>Actions</th></tr></thead>
+            <tbody id="webhooksTbody"><tr><td colspan="6" style="color:#94a3b8;padding:.8rem">Nothing is pushed out yet.</td></tr></tbody>
+          </table>
+        </div>
+        <div style="display:flex;gap:.5rem;margin-top:.5rem;flex-wrap:wrap">
+          <button class="btn-primary btn-sm" id="webhookAddBtn">+ Add a webhook</button>
+          <button class="btn-secondary btn-sm" id="webhookRetryBtn">&#8635; Retry everything stalled</button>
+        </div>
+        <div id="webhookForm" class="hidden" style="margin-top:1rem;max-width:520px">
+          <div class="form-group"><label>Which system is receiving?</label><input type="text" id="whName" placeholder="e.g. Acme ERP" autocomplete="off" /></div>
+          <div class="form-group"><label>URL (https)</label><input type="text" id="whUrl" placeholder="https://acme.example.com/idealone" autocomplete="off" /></div>
+          <div class="form-group"><label>Tell them about</label><div id="whEvents" style="display:flex;flex-direction:column;gap:.3rem"></div></div>
+          <div style="display:flex;gap:.5rem;margin-top:.6rem">
+            <button class="btn-primary btn-sm" id="webhookSaveBtn">Create &amp; show secret</button>
+            <button class="btn-secondary btn-sm" id="webhookCancelBtn">Cancel</button>
+          </div>
+        </div>
+        <div id="webhookLogWrap" style="margin-top:1rem"></div>
+      </details>
       <details class="conn-sec" id="secStores" open>
         <summary><span class="cs-t">&#128268; Channel Connections</span><span class="cs-h">The client store connections themselves — pull, push, channels, probe</span></summary>
       <div id="connZortPanel">

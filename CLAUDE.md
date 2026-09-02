@@ -7422,6 +7422,138 @@ records it, so the name and the sha can never drift apart.
 - Master key: `process.env.MASTER_KEY || '201432547E'`
 - User auth: `x-auth-token` header checked against `activeSessions` Map
 - Admin routes use `checkMaster(req, res)`
+- Partner systems: `x-api-key` — see below. NOT a session, and never a way
+  into `/api/master/*`.
+
+## Talking to another system — both directions (lib/integration.js)
+
+Per the user: *"push from IdealOne out to another system and another system to
+IdealOne"*. Before this, neither existed. A partner had to sign in as a member
+of STAFF and carry their session token, which is wrong three ways — a session
+is ONE PER USER, so the integration and the human kicked each other off the
+seat all day; a staff token unlocks everything, so a system that only needed to
+read stock could also cancel orders; and the audit trail named a person who was
+asleep. Outward, nothing was pushed at all except to ZORT and Shopify, so a
+partner could only learn an order had shipped by asking again and again.
+
+### IN — API keys (`x-api-key`)
+
+- **`db.apiKeys[]` is GLOBAL** (like `users[]`/`sessions`) and each key carries
+  its own `tenant_id`. **`_resolveTenantId` had to learn about keys**: it runs
+  before the auth gate and resolved only `x-auth-token`, so a key would have
+  fallen through to the DEFAULT tenant and read another tenant's data — the
+  exact trap the driver login hit and the reason that lookup exists at all.
+- **Stored as a salted SHA-256 hash, shown ONCE at creation**, same discipline
+  as a password and for the same reason: db.json is backed up nightly, gzipped
+  and **emailed**. The list returns only the last four characters; there is no
+  route that can return a key, and the dialog says so rather than implying a
+  screen exists to recover one.
+- **FOUR SCOPES, deliberately not a matrix** (`read`, `orders:write`,
+  `inventory:write`, `inbound:write`) — a matrix invites half-configured keys
+  nobody can reason about later, the same argument the portal's two access
+  levels settled.
+- **A PATH NOT ON THE LIST IS REFUSED, not inherited by silence.**
+  `apiKeyScopeFor()` maps path → required scope and returns `null` for anything
+  else, which is a 403 naming the route. That is the OPPOSITE default from the
+  staff gate and the right one: a staff user is a person we employ, a key is a
+  system somebody else runs. A route added tomorrow is granted deliberately.
+- **A key can NEVER reach `/api/master/*`** (asserted) — issuing keys, wiping
+  clients and reading every client's data stay with the Administrator key.
+- Usage is **COUNTED, never rate-limited** — a meter that can refuse work is a
+  second failure mode (the lesson from counting ZORT's calls). Persisted at
+  most once a minute so a busy partner cannot drive a disk write per request.
+- Switching a key off or revoking it **bites on the next call** (asserted).
+
+### IN — orders as JSON (`POST /api/orders/intake`)
+
+Orders could only ever arrive as a FILE, so a partner had to render a
+spreadsheet to send us records it already held.
+
+- **IT IS NOT A SECOND PIPELINE.** It calls the SAME functions the file upload
+  calls in the same order — `normalizeOrderRowsToInhouseSku` → `explodeBundleRows`
+  → `enrichLinesFromCatalogue` → `summarizeOrders` → `validateRows` →
+  `checkIntakeStock` → `reserveIntakeOrders` → `addOutboundPoke` →
+  `harvestCatalogueFromOrders`. It is the FIFTH door through the one gate, and
+  the standing rule is why: the first thing a second copy would drift on is
+  whether stock was reserved at all. (Asserted: an intake reserves stock and the
+  batch reads `inventory_tracked`.)
+- **A MACHINE CANNOT ANSWER A DIALOG.** Every decision the screen asks a human
+  is either declared up front or refused with the numbers:
+  - `on_short` — **`reject` is the DEFAULT and the safe one**: a partner that
+    says nothing is told, and NOTHING is written. Silently dropping orders for
+    a caller who never asked is how work disappears. `drop` takes the covered
+    ones and names what was left behind; `proceed` takes everything and carries
+    the shortfall as a backorder.
+  - **An order number already held is IDEMPOTENCY, not an error** — reported as
+    a duplicate with the job and client already holding it, never overwritten
+    and never twinned, so a retry after a timeout is safe. (Order numbers are
+    unique SYSTEM-WIDE, not per client, which is how the file upload has always
+    behaved; reporting the holder is what tells "my own retry" apart from
+    "another client used that number".)
+  - **A 422 NAMES THE ORDER AND THE FIELD**, not a validation blob. The rule
+    that genuinely surprises a partner gets a sentence: a batch is either a
+    DELIVERY order (every order carrying `customer_name` + `delivery_address`)
+    or a PICKING LIST (none of them do). Mixing the two fails, because one
+    address makes the whole batch a delivery order — `isPicklistOnly` in
+    lib/validation.js. Found by the test, not by reading.
+- Malformed orders are named individually (`rejected[]`) and never silently
+  skipped. Capped at `INTAKE_MAX_ORDERS` (500) per call.
+
+### OUT — signed webhooks
+
+- `db.outboundHooks[]` + `db.outboundQueue[]` + `db.outboundLog[]`, per tenant.
+- Events: `order.completed`, `order.cancelled`, `order.picked_up`,
+  `inbound.received`, `stock.adjusted` — each a fact that has ALREADY happened
+  here, never an instruction and never a request for an answer.
+- **SIGNED** `X-IdealOne-Signature: t=<unix>,v1=<hmac-sha256 of "<t>.<raw body>">`
+  — Stripe's shape, because it is the one partners have already implemented.
+  The timestamp is INSIDE the signed string or a captured delivery could be
+  replayed for ever. `verifySignature()` is exported so a partner's own check
+  can be tested against the exact code that signs — and the test's receiver
+  really verifies, rather than asserting a header merely exists.
+- **EVERY RULE HERE THE ZORT OUTBOX TAUGHT**: fire-and-forget (a receiver being
+  down must never fail a pick); a widening retry LADDER, not a flat interval;
+  only a **2xx** counts; and a give-up is a **STATE that says why**
+  (`stalled`, listed on screen with a Retry-everything-stalled button) rather
+  than a silent drop. `HOOK_BACKOFF_MS` flattens the ladder for tests, the same
+  escape hatch `ZORT_BACKOFF_MS` has.
+- **THE LOG NEVER CARRIES THE BODY** — an order payload holds the customer's
+  name and address, and this log lives in db.json, which is emailed nightly.
+  Status, timing, attempt and the receiver's own reply; nothing else. Asserted:
+  no delivery address anywhere in the log.
+- A hook is **re-read at send time**, so switching one off stops deliveries
+  already queued (same discipline as `rtsAtIntake`), and deleting one takes its
+  queue with it.
+- **ENQUEUING IS NOT DELIVERING.** `emitOutbound` kicks a drain on
+  `setImmediate` — without it an event sat until the 30s sweep, which is not
+  "pushed" in any sense a partner would recognise. Caught by the test:
+  completions went out at once (they use the standalone helper, which kicked)
+  while cancellations and pickups silently waited. `writeDb` updates the
+  in-memory db synchronously, so the queue is on the books by the time the
+  immediate runs.
+- UI: **Connections → 🔗 Partner API & Webhooks** — issue/revoke keys, add
+  hooks, and a **Test** button that fires one now and reports what the receiver
+  actually said, in a dialog (a tooltip is unreadable on the phone the floor
+  works from, and the answer is the whole point of a test).
+
+Verified 41 API checks through the real endpoints against a mock partner
+endpoint that genuinely verifies the signature: a key is minted once and never
+readable again, reads within scope and is refused outside it BY SCOPE NAME,
+cannot touch `/api/master/*` or any undocumented route, and dies on revoke;
+orders arrive as JSON, get a real job code, reserve stock and appear on the
+Orders tab; a retry creates no twin; short stock refuses by default and drops
+only when told to; a mixed addressed/unaddressed batch is refused in words; the
+partner is TOLD on completion, pickup, cancellation and a stock adjustment,
+each signed and verified; two refusals then a success prove the retry; and the
+log carries the outcome with no customer address in it. Plus 40 browser checks
+on desktop and a Pixel 5 (the key shown once and only its tail listed, the
+scope ticks built from what the server offers, the secret and how to verify it,
+Test reporting the receiver's real answer, and revoke/delete from the screen).
+
+TEST GOTCHA: the office app's own fetch wrapper **force-reloads on ANY 401**
+(its session-expired handler), so asking for one from inside the page with a
+revoked key destroys the execution context mid-test. The app is right; the test
+must not stand in front of it — assert that refusal from the API suite.
 
 ### The browser-automation worker — the Lazada label ZORT keeps behind its login (lib/zort-web.js)
 

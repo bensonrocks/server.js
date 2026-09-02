@@ -40,6 +40,10 @@ const {
 
 // Upload validation ruleset — edit lib/validation.js to change rules
 const { validateRows } = require('./lib/validation');
+// API keys (another system → IdealOne) and signed outbound webhooks
+// (IdealOne → another system). Required at the top because tenant resolution,
+// which runs before every request, has to be able to read a key's tenant.
+const integration = require('./lib/integration');
 
 // OCR parser for photo-based picklist upload
 const { parseOcrPicklist } = require('./lib/ocr-parse');
@@ -754,6 +758,19 @@ app.use((err, req, res, next) => {
 // (public pages, login itself, etc.) proceed with no tenant context, which
 // readDb()/writeDb() fall back to treating as the "default" tenant.
 function _resolveTenantId(req) {
+  // AN API KEY CARRIES ITS OWN TENANT. This runs before the auth gate, and a
+  // key that resolved to `null` here would fall back to the DEFAULT tenant and
+  // read somebody else's data — exactly the trap the driver login hit, where a
+  // tenant-scoped identity was looked up in the global users[] store and
+  // silently missed. The tenant is stamped on the key when it is created.
+  const apiKey = req.headers['x-api-key'];
+  if (apiKey) {
+    try {
+      const rec = integration.findApiKey(readGlobalDb().apiKeys || [], apiKey);
+      if (rec) return rec.tenant_id || tenantStore.DEFAULT_TENANT_ID;
+    } catch (_) {}
+    return null;
+  }
   const token = req.headers['x-auth-token'] || req.query.token;
   if (!token) return null;
   for (const [userId, t] of activeSessions) {
@@ -8817,8 +8834,220 @@ app.use((req, res, next) => {
       || req.path.startsWith('/api/zort/webhook/')) return next();
   // Allow master key access to /api/master/* and /api/transport/import/* endpoints
   if ((req.path.startsWith('/api/master/') || req.path === '/api/transport/import') && req.headers['x-master-key'] === MASTER_PASS) return next();
+  // ── A PARTNER SYSTEM IS ITS OWN IDENTITY, NOT A BORROWED STAFF LOGIN ──────
+  // An API key carries only the scopes it was granted, is attributable by name
+  // on the trail, and holds no session — so it can never kick a human off the
+  // one-device-per-user seat, which is what sharing a staff login did.
+  if (req.headers['x-api-key']) return apiKeyAuth(req, res, next);
   requireAuth(req, res, next);
 });
+
+// ── WHAT AN API KEY MAY DO ──────────────────────────────────────────────────
+// Path → the scope required to call it. Checked longest-prefix-first, and a
+// path matching NOTHING here is REFUSED rather than allowed: a route added
+// tomorrow must be granted deliberately, never inherited by silence. That is
+// the opposite default from the staff gate, and the right one — a staff user
+// is a person we employ, a key is a system somebody else runs.
+const API_KEY_SCOPE_RULES = [
+  ['/api/orders/intake',          'orders:write'],
+  ['/api/orders/bulk-cancel',     'orders:write'],
+  ['/api/inventory/:sku/adjust',  'inventory:write'],   // matched by shape below
+  ['/api/inventory/import',       'inventory:write'],
+  ['/api/inventory/import-file',  'inventory:write'],
+  ['/api/inventory/import-product-master', 'inventory:write'],
+  ['/api/inbound/upload',         'inbound:write'],
+  ['/api/inbound/return',         'inbound:write'],
+];
+// Everything a key may READ. Explicit list, not "any GET": a GET can still be
+// expensive or carry personal data, so each one is a decision.
+const API_KEY_READ_PATHS = [
+  '/api/orders', '/api/orders/archived', '/api/stats', '/api/inventory',
+  '/api/inventory/export', '/api/inbound', '/api/transport', '/api/backorders',
+  '/api/waves', '/api/pokes', '/api/putaway/queue', '/api/putaway/history',
+];
+function apiKeyScopeFor(req) {
+  const p = req.path;
+  // A per-SKU stock adjustment is the one write whose path carries an id.
+  if (/^\/api\/inventory\/[^/]+\/adjust$/.test(p)) return 'inventory:write';
+  if (/^\/api\/inbound\/[^/]+\/(scan|setqty|end-receipt|arrival)$/.test(p)) return 'inbound:write';
+  for (const [prefix, scope] of API_KEY_SCOPE_RULES) {
+    if (!prefix.includes(':') && (p === prefix || p.startsWith(prefix + '/'))) return scope;
+  }
+  if (req.method === 'GET' && API_KEY_READ_PATHS.some(r => p === r || p.startsWith(r + '/'))) return 'read';
+  return null;                     // not on the list → not reachable by a key
+}
+function apiKeyAuth(req, res, next) {
+  const db = readGlobalDb();
+  const rec = integration.findApiKey(db.apiKeys || [], req.headers['x-api-key']);
+  if (!rec) return res.status(401).json({ error: 'Invalid or disabled API key' });
+  const need = apiKeyScopeFor(req);
+  if (!need) {
+    return res.status(403).json({
+      error: `This endpoint is not available to API keys (${req.method} ${req.path}). `
+           + `Keys are limited to the documented integration endpoints; a staff login or the Administrator key is required for the rest.`,
+    });
+  }
+  if (!integration.hasScope(rec, need)) {
+    return res.status(403).json({
+      error: `This key does not carry the "${need}" scope.`,
+      needed: need, held: rec.scopes || [],
+    });
+  }
+  // Usage is COUNTED, not rate-limited. A meter that can refuse work is a
+  // second failure mode (the lesson from counting ZORT's calls); what an
+  // operator actually needs is to see that a key is alive and how hard it is
+  // being used. Written at most once a minute so a busy partner cannot drive
+  // a disk write per request.
+  rec.calls = (rec.calls || 0) + 1;
+  const now = Date.now();
+  if (!rec._lastPersist || now - rec._lastPersist > 60000) {
+    rec._lastPersist = now;
+    rec.last_used_at = new Date().toISOString();
+    try { writeGlobalDb(db); } catch (_) {}
+  }
+  req.apiKey = rec;
+  // The trail names the SYSTEM, never a person who was not there.
+  req.userId = `api:${rec.name || rec.id}`;
+  next();
+}
+
+// ── OUTBOUND WEBHOOKS — telling another system what happened here ───────────
+// Nothing in this app has ever pushed outward except to ZORT and Shopify, so a
+// partner could only learn that an order shipped by asking repeatedly. These
+// are the same facts the audit trail already records, delivered once each.
+//
+// EVERY RULE HERE IS ONE THE ZORT OUTBOX TAUGHT:
+//   · fire-and-forget — a receiver being down must never fail a pick;
+//   · retried on a LADDER, not a flat interval, so a dead endpoint costs a
+//     handful of calls a day rather than thousands;
+//   · a give-up is a STATE that says why, never a silent drop;
+//   · only a 2xx counts, because a 200 is the only thing that means "taken".
+// HOOK_BACKOFF_MS overrides the ladder flat, for tests only — the same escape
+// hatch ZORT_BACKOFF_MS already has, since a ladder measured in hours cannot
+// otherwise be exercised.
+const HOOK_LADDER_MS = process.env.HOOK_BACKOFF_MS
+  ? new Array(6).fill(Number(process.env.HOOK_BACKOFF_MS) || 0)
+  : [0, 30_000, 120_000, 600_000, 1_800_000, 7_200_000];
+const HOOK_MAX_ATTEMPTS = HOOK_LADDER_MS.length;
+const HOOK_DRAIN_MAX_PER_PASS = 25;
+const HOOK_LOG_CAP = 200;
+let _hookDraining = false;
+
+// Raise an event for every hook subscribed to it. Takes the db it was given
+// and does NOT write — the caller is mid-transaction and owns the write, so
+// enqueuing here can never land a half-finished order state on disk.
+function emitOutbound(db, event, payload) {
+  try {
+    const hooks = (db.outboundHooks || []).filter(h => h.enabled !== false && (h.events || []).includes(event));
+    if (!hooks.length) return 0;
+    db.outboundQueue = db.outboundQueue || [];
+    const now = Date.now();
+    for (const h of hooks) {
+      db.outboundQueue.push({
+        id: uuidv4(), hookId: h.id, event, payload,
+        at: new Date().toISOString(), attempts: 0, nextAt: now,
+      });
+    }
+    // A queue that grows without limit is a second outage. The OLDEST entries
+    // go first: a delivery nobody drained for hours has already missed its
+    // moment, while the newest still describes what is happening now.
+    if (db.outboundQueue.length > 2000) db.outboundQueue.splice(0, db.outboundQueue.length - 2000);
+    // KICK THE DRAIN, or the event sits until the 30s sweep — which is not
+    // "pushed" in any sense a partner would recognise. Caught by the test:
+    // completions went out at once (they use the standalone helper, which
+    // kicks) while cancellations and pickups silently waited, because
+    // enqueuing alone is not delivering. setImmediate runs AFTER this handler
+    // finishes, and writeDb updates the in-memory db synchronously, so the
+    // queue is on the books by the time the drain reads it.
+    setImmediate(() => { drainOutbound().catch(() => {}); });
+    return hooks.length;
+  } catch (e) { console.warn('[webhook] emit failed:', e.message); return 0; }
+}
+
+// Convenience for the emit sites: read, emit, write. Used where the caller has
+// already finished its own write and just wants the event out.
+function emitOutboundStandalone(event, payload) {
+  try {
+    const db = readDb();
+    if (emitOutbound(db, event, payload)) { writeDb(db); setImmediate(drainOutbound); }
+  } catch (e) { console.warn('[webhook] standalone emit failed:', e.message); }
+}
+
+function _hookLog(db, row) {
+  db.outboundLog = db.outboundLog || [];
+  db.outboundLog.unshift(row);
+  if (db.outboundLog.length > HOOK_LOG_CAP) db.outboundLog.length = HOOK_LOG_CAP;
+}
+
+async function drainOutbound() {
+  if (_hookDraining) return;
+  _hookDraining = true;
+  try {
+    const db = readDb();
+    const q = db.outboundQueue || [];
+    const now = Date.now();
+    const due = q.filter(e => !e.stalled && (e.nextAt || 0) <= now).slice(0, HOOK_DRAIN_MAX_PER_PASS);
+    if (!due.length) return;
+    for (const entry of due) {
+      const hook = (db.outboundHooks || []).find(h => h.id === entry.hookId);
+      // The hook was deleted or switched off while this sat in the queue.
+      // Drop the entry rather than delivering to an endpoint the operator has
+      // since withdrawn — re-read at send time, exactly as rtsAtIntake is.
+      if (!hook || hook.enabled === false) {
+        db.outboundQueue = (db.outboundQueue || []).filter(x => x.id !== entry.id);
+        continue;
+      }
+      const r = await integration.deliverOnce(hook.url, hook.secret, entry.event, entry.payload, { deliveryId: entry.id });
+      const fresh = readDb();
+      const fq = fresh.outboundQueue || [];
+      const idx = fq.findIndex(x => x.id === entry.id);
+      const h2 = (fresh.outboundHooks || []).find(x => x.id === entry.hookId);
+      if (h2) {
+        h2.lastDeliveryAt = new Date().toISOString();
+        h2.lastStatus = r.ok ? 'ok' : (r.error || 'failed');
+        h2.failures = r.ok ? 0 : (h2.failures || 0) + 1;
+        if (r.ok) h2.delivered = (h2.delivered || 0) + 1;
+      }
+      // THE LOG NEVER CARRIES THE BODY. An order payload holds the customer's
+      // name and address, and this log is stored in db.json, which is backed
+      // up nightly and emailed. What a partner debugging their endpoint needs
+      // is the status, the timing and their own reply — not our copy of their
+      // customer's address.
+      _hookLog(fresh, {
+        at: new Date().toISOString(), hookId: entry.hookId, hook: h2 ? h2.name : '(deleted)',
+        event: entry.event, ok: r.ok, status: r.status, ms: r.ms,
+        attempt: (entry.attempts || 0) + 1,
+        error: r.error || '', reply: r.ok ? '' : String(r.reply || '').slice(0, 120),
+      });
+      if (idx >= 0) {
+        if (r.ok) {
+          fq.splice(idx, 1);
+        } else {
+          const e2 = fq[idx];
+          e2.attempts = (e2.attempts || 0) + 1;
+          e2.lastError = r.error || `HTTP ${r.status}`;
+          if (e2.attempts >= HOOK_MAX_ATTEMPTS) {
+            // GIVING UP IS A STATE, NOT A DELETION. The entry stays, flagged,
+            // so the operator can see WHAT never arrived and retry it once the
+            // endpoint is fixed — a silently dropped event is indistinguishable
+            // from one that never happened.
+            e2.stalled = true;
+            logAudit('webhook_delivery_stalled', {
+              hook: h2 ? h2.name : entry.hookId, event: entry.event,
+              attempts: e2.attempts, error: e2.lastError,
+            });
+          } else {
+            e2.nextAt = Date.now() + HOOK_LADDER_MS[e2.attempts];
+          }
+        }
+      }
+      writeDb(fresh);
+    }
+  } catch (e) {
+    console.warn('[webhook] drain error:', e.message);
+  } finally { _hookDraining = false; }
+}
+setInterval(() => { drainOutbound().catch(() => {}); }, 30_000).unref?.();
 
 // Lightweight system-health snapshot for the in-app warning banner. Unlike the
 // master-gated /api/master/system-errors/health (which also carries error counts
@@ -12803,6 +13032,23 @@ app.post('/api/inbound/:id/end-receipt', (req, res) => {
   logAudit('inbound_end_receipt', { id: rec.id, jobType: rec.type, reference: rec.reference, received: receivedSkus.length, discrepancies: mismatches.length, extras: extras.length, by: req.userId || '' });
   // Received stock raised availability → notify ZORT stock-sync stores.
   if (receivedSkus.length) zortNotifyStockChange(db, invClientId(rec.client_name), receivedSkus);
+  // WHAT ACTUALLY ARRIVED, not what was expected — a supplier's system asking
+  // "did it land, and was it all there?" wants the counted figures and the
+  // discrepancies, which is exactly what the GRN carries.
+  emitOutboundStandalone('inbound.received', {
+    receipt: rec.serial || rec.id,
+    reference: rec.reference || '',
+    client: rec.client_name || '',
+    type: rec.type || 'po',
+    closed_at: new Date().toISOString(),
+    by: req.userId || '',
+    lines: (rec.lines || []).map(l => ({
+      sku: l.sku, expected: Number(l.expected_qty) || 0,
+      received: Number(rec.state?.scanned?.[l.sku]) || 0,
+    })),
+    discrepancies: mismatches.length,
+    extras: extras.length,
+  });
   // GRN email to the configured alert recipient — fire-and-forget, never blocks.
   // Captured HERE: the callbacks below run after the response, and closing over
   // req at that point is what leaves an audit row with no actor.
@@ -15819,9 +16065,282 @@ function completeOrderCore(db, batch, ord, state, { startTime, endTime, operator
   pushZortCompletion(db, ord, state);
   // Direct-Shopify order? Mark it FULFILLED on the shop with our tracking.
   pushShopifyCompletion(db, ord, state);
+  // …and tell any partner system subscribed to completions. Same discipline as
+  // the two pushes above: fire-and-forget, never in the way of finishing work.
+  emitOutboundStandalone('order.completed', {
+    order_number: orderNumber,
+    client: batch.client_name || '',
+    job: batch.idealscan_code || '',
+    waybill_number: ord.waybill_number || '',
+    issue_no: ord.issue_no || '',
+    po_number: ord.po_number || '',
+    completed_at: state.endTime || new Date().toISOString(),
+    operator: state.operator || '',
+    cartons: (state.cartons || []).length || 1,
+    lines: (ord.lines || []).map(l => ({ sku: l.sku, qty: l.qty, description: l.description || '' })),
+  });
   // Shipped stock changed availability → notify ZORT stock-sync stores.
   if (deductedSkus.length) zortNotifyStockChange(db, batch.inventory_client || invClientId(batch.client_name), deductedSkus);
 }
+
+// ── ORDERS IN, AS JSON — the fifth door, through the same gate ─────────────
+// Orders could only ever arrive as a FILE (or through a connected channel), so
+// a partner system had to render a spreadsheet to send us work it already held
+// as records. This takes the records.
+//
+// IT IS NOT A SECOND PIPELINE. It calls the SAME functions the file upload
+// calls, in the same order — normalize → explode → enrich → summarize →
+// validate → stock gate → reserve → poke → harvest — because the standing rule
+// in this codebase is that every door shares one gate, and the first thing a
+// second copy would drift on is whether stock was reserved at all.
+//
+// WHAT IS DELIBERATELY DIFFERENT: a machine cannot answer a dialog. Every
+// decision the screen asks a human (short stock, duplicates) is either
+// DECLARED UP FRONT in the request or REFUSED with the numbers — never guessed
+// at on the caller's behalf.
+const INTAKE_MAX_ORDERS = 500;
+app.post('/api/orders/intake', express.json({ limit: '4mb' }), (req, res) => {
+  try {
+    const clientName = String(req.body?.client || '').trim();
+    if (!clientName) return res.status(400).json({ error: 'client is required — every order belongs to one client account.' });
+    const inOrders = Array.isArray(req.body?.orders) ? req.body.orders : null;
+    if (!inOrders || !inOrders.length) return res.status(400).json({ error: 'orders[] is required and must not be empty.' });
+    if (inOrders.length > INTAKE_MAX_ORDERS) {
+      return res.status(400).json({ error: `${inOrders.length} orders in one call — the maximum is ${INTAKE_MAX_ORDERS}. Send them in batches.` });
+    }
+    // 'reject' is the DEFAULT and the safe one: a partner that says nothing
+    // about short stock is told, and nothing is written. Silently dropping
+    // orders for a caller who never asked for that is how work disappears.
+    const onShort = ['drop', 'proceed', 'reject'].includes(String(req.body?.on_short || '').toLowerCase())
+      ? String(req.body.on_short).toLowerCase() : 'reject';
+
+    // ── Flatten to the row shape every other door produces ────────────────
+    const rows = [];
+    const badOrders = [];
+    for (const o of inOrders) {
+      const orderNo = String(o?.order_number || '').trim();
+      const lines = Array.isArray(o?.lines) ? o.lines : [];
+      if (!orderNo) { badOrders.push({ order_number: '', reason: 'order_number is missing' }); continue; }
+      if (!lines.length) { badOrders.push({ order_number: orderNo, reason: 'no lines' }); continue; }
+      let ok = true;
+      for (const l of lines) {
+        const sku = String(l?.sku || '').trim();
+        const qty = Math.floor(Number(l?.qty));
+        if (!sku || !Number.isFinite(qty) || qty <= 0) {
+          badOrders.push({ order_number: orderNo, reason: `line needs a sku and a positive qty (got sku="${sku}", qty=${l?.qty})` });
+          ok = false; break;
+        }
+      }
+      if (!ok) continue;
+      for (const l of lines) {
+        rows.push({
+          order_number:     orderNo,
+          sku:              String(l.sku).trim(),
+          qty:              Math.floor(Number(l.qty)),
+          description:      String(l.description || '').trim(),
+          client_name:      clientName,
+          customer_name:    String(o.customer_name || '').trim(),
+          tel:              String(o.tel || '').trim(),
+          delivery_address: String(o.delivery_address || '').trim(),
+          carrier:          String(o.carrier || '').trim(),
+          waybill_number:   String(o.waybill_number || '').trim(),
+          issue_no:         String(o.issue_no || '').trim(),
+          po_number:        String(o.po_number || '').trim(),
+          pick_ticket:      String(o.pick_ticket || '').trim(),
+          platform:         String(o.platform || '').trim(),
+          date:             String(o.date || '').trim() || new Date().toISOString().slice(0, 10),
+          batch_number:     String(l.batch_number || '').trim(),
+          expiry_date:      String(l.expiry_date || '').trim(),
+        });
+      }
+    }
+    if (badOrders.length && !rows.length) {
+      return res.status(400).json({ error: 'No usable orders in this call.', rejected: badOrders.slice(0, 50) });
+    }
+
+    // ── The same pipeline, in the same order ──────────────────────────────
+    const cid0 = invClientId(clientName);
+    let mapped = normalizeOrderRowsToInhouseSku(rows, () => cid0);
+    mapped = explodeBundleRows(mapped, () => cid0);
+    enrichLinesFromCatalogue(mapped, clientName);
+    let orders = summarizeOrders(mapped);
+
+    // ── ALREADY HERE IS NOT AN ERROR, IT IS IDEMPOTENCY ──────────────────
+    // A partner that retries after a timeout must not create twins, and must
+    // not be told its whole call failed. An order number we already hold is
+    // SKIPPED and named; nothing is ever overwritten from this door (the
+    // overwrite path exists on the file upload, where a human confirms it).
+    //
+    // ORDER NUMBERS ARE UNIQUE SYSTEM-WIDE, NOT PER CLIENT — which is how the
+    // file upload has always behaved, so this door does not invent a second
+    // rule. It matters enough to be said out loud: the duplicate is reported
+    // WITH the job and client already holding it, so "that is my own retry" and
+    // "another client already used that number" are told apart on sight rather
+    // than both reading as a mysterious rejection.
+    const existing = new Map();
+    for (const b of readDb().batches || []) {
+      for (const o of b.orders || []) {
+        if (!existing.has(o.order_number)) {
+          existing.set(o.order_number, {
+            job: b.idealscan_code || '', client: b.client_name || '',
+            status: b.orderStates?.[o.order_number]?.status || 'pending',
+          });
+        }
+      }
+    }
+    const duplicates = orders.filter(o => existing.has(o.order_number))
+      .map(o => ({ order_number: o.order_number, ...existing.get(o.order_number) }));
+    orders = orders.filter(o => !existing.has(o.order_number));
+    if (!orders.length) {
+      return res.status(200).json({
+        ok: true, created: 0, orders: [], duplicates, rejected: badOrders,
+        note: 'Every order in this call is already in IdealOne — nothing was created. This call is safe to retry.',
+      });
+    }
+
+    // ── Validation, exactly as the file path validates ────────────────────
+    const wmsRows = []; let vLine = 1;
+    for (const order of orders) for (const line of order.lines) wmsRows.push(buildRow(vLine++, order, line));
+    const validation = validateRows(wmsRows);
+    if (!validation.passed) {
+      // A MACHINE CANNOT READ A VALIDATION BLOB. The same errors, turned into
+      // "this order is missing this field" — and, for the one rule that
+      // genuinely surprises a partner, a sentence saying what the rule IS.
+      //
+      // THE RULE: a batch is either a full DELIVERY order — every order
+      // carrying a recipient name and address — or a PICKING LIST, where none
+      // of them do. Mixing the two is what fails: the presence of an address
+      // anywhere makes the batch a delivery order, and every order in it then
+      // needs one. Identical to the file upload, deliberately: an order that
+      // could not arrive as a spreadsheet must not arrive as JSON either.
+      const byOrder = {};
+      for (const e of validation.errors || []) {
+        (byOrder[e.orderId] = byOrder[e.orderId] || []).push({ field: e.field, issue: e.issue, fix: e.action });
+      }
+      const someAddressed = orders.some(o => String(o.delivery_address || '').trim());
+      const mixed = someAddressed && orders.some(o => !String(o.delivery_address || '').trim());
+      return res.status(422).json({
+        error: 'These orders were refused by the same validation the file upload uses. Nothing was saved.',
+        created: 0,
+        rejected: Object.entries(byOrder).map(([order_number, problems]) => ({ order_number, problems })),
+        ...(mixed ? { hint: 'Some orders in this call carry a delivery address and some do not. A batch is either a delivery order (EVERY order needs customer_name and delivery_address) or a picking list (none of them do) — send the two kinds in separate calls.' } : {}),
+        validation,
+      });
+    }
+
+    // ── The stock gate — declared policy, never a guess ───────────────────
+    const invCid = invClientId(clientName);
+    let inventoryTracked = false, noItemMaster = false, dropped = [];
+    if (inventory.available()) {
+      const stock = checkIntakeStock(invCid, orders);
+      if (stock.noItemMaster) {
+        noItemMaster = true;
+        logAudit('upload_untracked_no_item_master', { clientId: invCid, orders: orders.length, via: 'api-intake' });
+      } else if (stock.shortOrders.length) {
+        if (onShort === 'drop') {
+          const dropSet = new Set(stock.shortOrders.map(x => x.order_number));
+          dropped = stock.shortOrders.map(x => ({ order_number: x.order_number, reason: x.reason, lines: x.lines || [] }));
+          orders = orders.filter(o => !dropSet.has(o.order_number));
+          if (!orders.length) {
+            return res.status(409).json({
+              error: 'Every order in this call is short on stock — dropping them would leave nothing to create.',
+              shortOrders: stock.shortOrders.slice(0, 100), created: 0,
+            });
+          }
+          logAudit('upload_short_orders_dropped', { dropped: dropped.length, kept: orders.length, clientId: invCid, via: 'api-intake' });
+        } else if (onShort === 'proceed') {
+          logAudit('upload_short_orders_accepted', { shortOrders: stock.shortOrders.length, clientId: invCid, via: 'api-intake' });
+        } else {
+          // The machine-readable form of the dialog a person would have seen.
+          const onlyUnknown = stock.shortOrders.every(o => !(o.lines || []).length);
+          return res.status(409).json({
+            needsStockDecision: true, onlyUnknown,
+            unknownSkus: stock.unknownSkus.slice(0, 50),
+            shortOrders: stock.shortOrders.slice(0, 100),
+            okCount: stock.okOrders.length, shortCount: stock.shortOrders.length,
+            created: 0,
+            message: onlyUnknown
+              ? `${stock.unknownSkus.length} SKU(s) are not in ${clientName}'s item master, so ${stock.shortOrders.length} order(s) cannot be checked against stock. Nothing is short — these products have never been registered.`
+              : `${stock.shortOrders.length} of ${orders.length} order(s) cannot be covered by this client's stock. Nothing was created.`,
+            howToProceed: 'Re-send with "on_short":"drop" to create only the covered orders, or "proceed" to create them all and carry the shortfall as a backorder.',
+          });
+        }
+      }
+      if (!stock.noItemMaster) {
+        const uniqueSkus = [...new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))];
+        const missing = uniqueSkus.filter(sku => !inventory.get(sku, invCid));
+        for (const sku of missing) { try { inventory.upsert({ sku, name: sku, clientId: invCid }); } catch (_) {} }
+        if (missing.length) logAudit('upload_inventory_skus_created', { count: missing.length, skus: missing.slice(0, 20), clientId: invCid, via: 'api-intake' });
+        inventoryTracked = true;
+      }
+    }
+
+    // ── Create the batch, exactly as a file upload creates one ────────────
+    const db = readDb();
+    const batchId = uuidv4();
+    const pickStrategy = String(req.body?.pick_strategy || 'fefo').toLowerCase() === 'fifo' ? 'fifo' : 'fefo';
+    const batch = {
+      id: batchId,
+      filename: String(req.body?.reference || '').trim() || `API intake — ${req.userId || 'partner'}`,
+      idealscan_code: nextIdealscanCode(db),
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: req.userId || '',
+      client_name: canonicalClientName(db, clientName),
+      order_count: orders.length,
+      row_count: mapped.length,
+      orderStates: {},
+      orders,
+      inventory_tracked: inventoryTracked,
+      inventory_client: inventoryTracked ? invCid : undefined,
+      pick_strategy: pickStrategy,
+      source: 'api',
+    };
+    let reservedSkus = new Set();
+    if (inventoryTracked && inventory.available()) {
+      const rr = reserveIntakeOrders(db, invCid, clientName, orders, batchId, pickStrategy, 'wait');
+      reservedSkus = rr.reservedSkus;
+      batch.pick_staging = 'wait';
+    }
+    batch.orders = orders;
+    batch.order_count = orders.length;
+    if (dropped.length) batch.dropped_short_orders = dropped;
+    db.batches.unshift(batch);
+    addOutboundPoke(db, batch, 'api-intake');
+    harvestCatalogueFromOrders(db, batch.client_name, batch.orders, 'api-intake');
+    let transportJobsCreated = 0;
+    if (req.body?.arrange_delivery === true || req.body?.arrange_delivery === 'yes') {
+      transportJobsCreated = createTransportJobsFromOrders(db, orders, clientName, batchId);
+    }
+    writeDb(db);
+    if (reservedSkus.size) zortNotifyStockChange(db, invCid, [...reservedSkus]);
+    logAudit('orders_intake_api', {
+      client: batch.client_name, job: batch.idealscan_code, orders: orders.length,
+      lines: mapped.length, duplicates: duplicates.length, dropped: dropped.length,
+      tracked: inventoryTracked, by: req.userId || '',
+    });
+
+    res.json({
+      ok: true,
+      job: batch.idealscan_code,
+      batchId,
+      client: batch.client_name,
+      created: orders.length,
+      orders: orders.map(o => ({ order_number: o.order_number, lines: o.lines.length, qty: o.total_qty })),
+      duplicates,                     // already held — safe to retry, not created twice
+      dropped,                        // short on stock, left out at your request
+      rejected: badOrders,            // malformed, named individually
+      transportJobsCreated,
+      inventoryTracked,
+      noItemMaster,
+      note: noItemMaster
+        ? 'This client has no item master, so nothing was reserved and nothing will be deducted at completion.'
+        : undefined,
+    });
+  } catch (e) {
+    console.error('[orders/intake]', e);
+    res.status(500).json({ error: 'Intake failed: ' + e.message });
+  }
+});
 
 app.post('/api/scan/complete', (req, res) => {
   const { orderNumber, startTime, endTime, operator } = req.body;
@@ -15952,6 +16471,18 @@ app.post('/api/orders/bulk-cancel', express.json(), (req, res) => {
     batch.orderStates[orderNumber] = st;
     // TELL THE HUB. Off unless the store opts in — see tellHubWeCancelled.
     tellHubWeCancelled(db, orderNumber, reason, 'office');
+    // …and any partner system watching cancellations. Enqueued on the db we
+    // already hold, so it lands in the SAME write as the cancellation itself —
+    // an event that says an order was cancelled must never outlive a write
+    // that failed.
+    emitOutbound(db, 'order.cancelled', {
+      order_number: orderNumber,
+      client: batch.client_name || '',
+      cancelled_at: now,
+      reason,
+      by: who,
+      via: 'office',
+    });
     cancelled.push(orderNumber);
   }
   // Give back whatever they had promised — same reconciler every other
@@ -16686,6 +17217,200 @@ function checkMaster(req, res) {
   }
   return true;
 }
+
+// ── PARTNER API KEYS — issued, scoped and revoked here ──────────────────────
+// MASTER-KEY gated, deliberately: issuing a key hands a system outside this
+// building the ability to move a client's stock. That is not an everyday admin
+// action, and it is not something to do by accident.
+app.get('/api/master/api-keys', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readGlobalDb();
+  // THE KEY ITSELF IS NEVER READ BACK. Only its last four characters, so a row
+  // on screen can be matched to the key a partner is holding without this
+  // endpoint ever being a way to recover one.
+  res.json({
+    scopes: integration.SCOPES.map(s => ({ id: s, label: integration.SCOPE_LABEL[s] })),
+    keys: (db.apiKeys || []).map(k => ({
+      id: k.id, name: k.name, tail: k.tail, scopes: k.scopes || [],
+      enabled: k.enabled !== false, created_at: k.created_at, created_by: k.created_by || '',
+      last_used_at: k.last_used_at || null, calls: k.calls || 0,
+      tenant_id: k.tenant_id || tenantStore.DEFAULT_TENANT_ID,
+    })),
+  });
+});
+
+app.post('/api/master/api-keys', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const name = String(req.body?.name || '').trim();
+  const scopes = [...new Set((req.body?.scopes || []).filter(s => integration.SCOPES.includes(s)))];
+  if (name.length < 3) return res.status(400).json({ error: 'Give the key a name of at least 3 characters — it is how it will read on the trail.' });
+  if (!scopes.length) return res.status(400).json({ error: 'A key with no scopes can do nothing. Pick at least one.' });
+  const db = readGlobalDb();
+  db.apiKeys = db.apiKeys || [];
+  if ((db.apiKeys || []).some(k => String(k.name).toLowerCase() === name.toLowerCase())) {
+    return res.status(409).json({ error: `A key named "${name}" already exists. Names are how a call is attributed, so they have to be unique.` });
+  }
+  const key = integration.mintApiKey();
+  const salt = crypto.randomBytes(12).toString('hex');
+  const rec = {
+    id: uuidv4(), name, salt, hash: integration.hashApiKey(key, salt),
+    tail: integration.keyTail(key), scopes, enabled: true,
+    // The tenant of whoever is creating it — a key must read its OWN tenant's
+    // data, never the default one, and this is where that is decided.
+    tenant_id: tenantContext.currentTenantId(),
+    created_at: new Date().toISOString(), created_by: _tokenUserId(req) || '',
+    calls: 0,
+  };
+  db.apiKeys.push(rec);
+  writeGlobalDb(db);
+  logAudit('api_key_created', { name, scopes, tail: rec.tail, by: rec.created_by });
+  // SHOWN ONCE, AND SAID SO. There is no way back to it — that is the point of
+  // storing only the hash, and the screen has to be honest that losing it means
+  // issuing a new one rather than recovering this one.
+  res.json({
+    ok: true, id: rec.id, name, scopes, tail: rec.tail,
+    key,
+    note: 'Copy this key now — it is stored only as a hash and can never be shown again. If it is lost, revoke it and issue another.',
+  });
+});
+
+app.post('/api/master/api-keys/:id/enabled', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readGlobalDb();
+  const k = (db.apiKeys || []).find(x => x.id === req.params.id);
+  if (!k) return res.status(404).json({ error: 'Key not found' });
+  k.enabled = !!req.body?.enabled;
+  writeGlobalDb(db);
+  logAudit('api_key_enabled_changed', { name: k.name, enabled: k.enabled, by: _tokenUserId(req) || '' });
+  res.json({ ok: true, enabled: k.enabled });
+});
+
+app.delete('/api/master/api-keys/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readGlobalDb();
+  const k = (db.apiKeys || []).find(x => x.id === req.params.id);
+  if (!k) return res.status(404).json({ error: 'Key not found' });
+  db.apiKeys = (db.apiKeys || []).filter(x => x.id !== req.params.id);
+  writeGlobalDb(db);
+  logAudit('api_key_revoked', { name: k.name, tail: k.tail, calls: k.calls || 0, by: _tokenUserId(req) || '' });
+  res.json({ ok: true, revoked: k.name });
+});
+
+// ── OUTBOUND WEBHOOKS — where we push, and what has actually arrived ────────
+app.get('/api/master/webhooks', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const q = db.outboundQueue || [];
+  res.json({
+    events: integration.EVENTS.map(e => ({ id: e, label: integration.EVENT_LABEL[e] })),
+    hooks: (db.outboundHooks || []).map(h => ({
+      id: h.id, name: h.name, url: h.url, events: h.events || [],
+      enabled: h.enabled !== false, created_at: h.created_at,
+      lastDeliveryAt: h.lastDeliveryAt || null, lastStatus: h.lastStatus || '',
+      delivered: h.delivered || 0, failures: h.failures || 0,
+      // The secret is set once and never read back, exactly like the API key.
+      secretTail: String(h.secret || '').slice(-4),
+    })),
+    queued:  q.filter(e => !e.stalled).length,
+    stalled: q.filter(e => e.stalled).length,
+    // What never arrived, named — a give-up the operator cannot see is a
+    // silent drop wearing a different hat.
+    stalledRows: q.filter(e => e.stalled).slice(0, 30)
+      .map(e => ({ id: e.id, event: e.event, at: e.at, attempts: e.attempts, error: e.lastError || '' })),
+    log: (db.outboundLog || []).slice(0, 60),
+  });
+});
+
+app.post('/api/master/webhooks', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const name = String(req.body?.name || '').trim();
+  const url  = String(req.body?.url || '').trim();
+  const events = [...new Set((req.body?.events || []).filter(e => integration.EVENTS.includes(e)))];
+  if (name.length < 3) return res.status(400).json({ error: 'Name the receiving system — at least 3 characters.' });
+  // HTTPS ONLY, except on localhost. The payload carries a customer's name and
+  // address and the signature proves nothing over a channel anyone can read.
+  // Localhost is allowed because that is how this gets tested.
+  let u; try { u = new URL(url); } catch { return res.status(400).json({ error: 'That is not a URL.' }); }
+  const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  if (u.protocol !== 'https:' && !local) {
+    return res.status(400).json({ error: 'The URL must be https — these deliveries carry customer names and addresses.' });
+  }
+  if (!events.length) return res.status(400).json({ error: 'Pick at least one event, or the hook would never fire.' });
+  const db = readDb();
+  db.outboundHooks = db.outboundHooks || [];
+  const secret = integration.mintHookSecret();
+  const rec = { id: uuidv4(), name, url, secret, events, enabled: true,
+                created_at: new Date().toISOString(), created_by: _tokenUserId(req) || '',
+                delivered: 0, failures: 0 };
+  db.outboundHooks.push(rec);
+  writeDb(db);
+  logAudit('webhook_created', { name, url: u.origin + u.pathname, events, by: rec.created_by });
+  res.json({
+    ok: true, id: rec.id, name, url, events, secret,
+    note: 'Copy this signing secret now — it is not shown again. Your endpoint verifies X-IdealOne-Signature with it.',
+  });
+});
+
+app.post('/api/master/webhooks/:id/enabled', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const h = (db.outboundHooks || []).find(x => x.id === req.params.id);
+  if (!h) return res.status(404).json({ error: 'Hook not found' });
+  h.enabled = !!req.body?.enabled;
+  writeDb(db);
+  logAudit('webhook_enabled_changed', { name: h.name, enabled: h.enabled, by: _tokenUserId(req) || '' });
+  res.json({ ok: true, enabled: h.enabled });
+});
+
+app.delete('/api/master/webhooks/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const h = (db.outboundHooks || []).find(x => x.id === req.params.id);
+  if (!h) return res.status(404).json({ error: 'Hook not found' });
+  db.outboundHooks = (db.outboundHooks || []).filter(x => x.id !== req.params.id);
+  db.outboundQueue = (db.outboundQueue || []).filter(e => e.hookId !== req.params.id);
+  writeDb(db);
+  logAudit('webhook_deleted', { name: h.name, by: _tokenUserId(req) || '' });
+  res.json({ ok: true });
+});
+
+// FIRE ONE NOW, AND REPORT WHAT THE RECEIVER SAID. Synchronous on purpose:
+// somebody is standing there wiring up an endpoint, and "queued" tells them
+// nothing. The same lesson as the ZORT re-push reporting in a dialog.
+app.post('/api/master/webhooks/:id/test', express.json(), async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const h = (db.outboundHooks || []).find(x => x.id === req.params.id);
+  if (!h) return res.status(404).json({ error: 'Hook not found' });
+  const r = await integration.deliverOnce(h.url, h.secret, 'test.ping',
+    { message: 'This is a test delivery from IdealOne.', at: new Date().toISOString() },
+    { deliveryId: 'test-' + uuidv4().slice(0, 8) });
+  const fresh = readDb();
+  _hookLog(fresh, { at: new Date().toISOString(), hookId: h.id, hook: h.name, event: 'test.ping',
+                    ok: r.ok, status: r.status, ms: r.ms, attempt: 1, error: r.error || '',
+                    reply: r.ok ? '' : String(r.reply || '').slice(0, 120) });
+  writeDb(fresh);
+  logAudit('webhook_tested', { name: h.name, ok: r.ok, status: r.status, by: _tokenUserId(req) || '' });
+  res.json({ ok: r.ok, status: r.status, ms: r.ms, error: r.error || '', reply: String(r.reply || '').slice(0, 200) });
+});
+
+// A stalled delivery is not a lost one — the endpoint is fixed, this puts the
+// queue back to work. Same shape as 🏷 Get Labels reviving stalled label jobs.
+app.post('/api/master/webhooks/retry-stalled', express.json(), async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  let revived = 0;
+  for (const e of db.outboundQueue || []) {
+    if (!e.stalled) continue;
+    if (req.body?.hookId && e.hookId !== req.body.hookId) continue;
+    e.stalled = false; e.attempts = 0; e.nextAt = Date.now(); revived++;
+  }
+  writeDb(db);
+  logAudit('webhook_stalled_retried', { revived, by: _tokenUserId(req) || '' });
+  await drainOutbound();
+  const after = readDb();
+  res.json({ ok: true, revived, stillStalled: (after.outboundQueue || []).filter(e => e.stalled).length });
+});
 
 app.get('/api/master/inspect-descriptions', (req, res) => {
   if (!checkMaster(req, res)) return;
@@ -17871,6 +18596,17 @@ app.post('/api/orders/pickup', express.json(), (req, res) => {
       method: String(req.body?.method || 'manual').slice(0, 20),
       collection_day: collectionDayFor(state.endTime, policy),
     };
+    // The parcel physically left — a terminal fact, and the one a partner's
+    // own customer-facing tracking most wants. Not fired on an UNDO: that is a
+    // correction to our record, not a second departure.
+    emitOutbound(db, 'order.picked_up', {
+      order_number: num,
+      client: batch.client_name || '',
+      waybill_number: (batch.orders || []).find(o => o.order_number === num)?.waybill_number || '',
+      picked_up_at: at,
+      method: state.pickup.method,
+      by: req.userId || '',
+    });
     done.push(num);
   }
   if (done.length) {
@@ -26334,6 +27070,17 @@ app.post('/api/inventory/:sku/adjust', requireAuth, express.json(), (req, res) =
       viaMaster: !!auth.viaMaster, by: req.userId || '',
     });
     zortNotifyStockChange(readDb(), cid, [req.params.sku]);
+    // A hand adjustment is the one stock change with no document behind it, so
+    // it is also the one a partner's own books most need to hear about.
+    emitOutboundStandalone('stock.adjusted', {
+      sku: req.params.sku, client: cid,
+      delta: Number(qty),
+      from: Number(before.stock_qty) || 0,
+      to: Number(result?.stock_qty ?? 0),
+      reason: why.slice(0, 200),
+      at: new Date().toISOString(),
+      by: req.userId || '',
+    });
     res.json({ ...result, from: Number(before.stock_qty) || 0, reason: why });
   }
   catch (e) { res.status(400).json({ error: e.message }); }

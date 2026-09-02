@@ -799,7 +799,7 @@
     }
     if (name === 'labels') { renderLabelsTab(); }
     if (name === 'reports') { window.fillTxnClientPicker?.(); }
-    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); loadLazadaDirect(); loadAutoCancelPanel(); window.shopifyUI?.load(); }
+    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); loadLazadaDirect(); loadAutoCancelPanel(); window.shopifyUI?.load(); window.integrationUI?.load(); }
   }
 
   function lockTabsForDownload() {
@@ -12782,6 +12782,203 @@
     }
     document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', wire) : wire();
     return { load };
+  })();
+
+  // ── PARTNER API KEYS + OUTBOUND WEBHOOKS ─────────────────────────────────
+  // Both directions on one panel, because they are two halves of the same
+  // question ("how does that system and this one talk?") and an operator
+  // wiring up a partner needs them side by side.
+  window.integrationUI = (() => {
+    const $id = x => document.getElementById(x);
+    const H = () => ({ 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD, 'x-auth-token': localStorage.getItem('wms_token') || '' });
+    const sayK = (cls, m) => { const el = $id('apiKeyStatus'); if (!el) return; el.className = 'status-bar ' + cls; el.textContent = m; el.classList.remove('hidden'); };
+    const sayW = (cls, m) => { const el = $id('webhookStatus'); if (!el) return; el.className = 'status-bar ' + cls; el.textContent = m; el.classList.remove('hidden'); };
+    const when = t => t ? new Date(t).toLocaleString(undefined, { timeZone: 'Asia/Singapore', hour12: false }) : '—';
+
+    async function loadKeys() {
+      const tb = $id('apiKeysTbody'); if (!tb) return;
+      try {
+        const d = await fetch('/api/master/api-keys', { headers: H() }).then(r => r.json());
+        // The scope ticks are built from what the SERVER says the scopes are,
+        // so a scope added later cannot be missing from this screen.
+        const box = $id('akScopes');
+        if (box && !box.dataset.built) {
+          box.innerHTML = (d.scopes || []).map(s =>
+            `<label style="display:flex;gap:.4rem;align-items:flex-start;font-size:.82rem">
+               <input type="checkbox" class="ak-scope" value="${esc(s.id)}" style="margin-top:.15rem" />
+               <span><code>${esc(s.id)}</code> — ${esc(s.label)}</span></label>`).join('');
+          box.dataset.built = '1';
+        }
+        if (!(d.keys || []).length) {
+          tb.innerHTML = '<tr><td colspan="6" style="color:#94a3b8;padding:.8rem">No API keys issued.</td></tr>';
+          return;
+        }
+        tb.innerHTML = d.keys.map(k => `<tr${k.enabled ? '' : ' style="opacity:.55"'}>
+          <td><b>${esc(k.name)}</b>${k.enabled ? '' : ' <span style="color:#b45309">· switched off</span>'}</td>
+          <td><code>iok_…${esc(k.tail || '')}</code></td>
+          <td style="font-size:.78rem">${(k.scopes || []).map(s => `<code>${esc(s)}</code>`).join(' ') || '—'}</td>
+          <td>${k.calls || 0}</td>
+          <td style="font-size:.78rem">${esc(when(k.last_used_at))}</td>
+          <td>
+            <button class="btn-secondary btn-sm ak-toggle" data-id="${esc(k.id)}" data-on="${k.enabled ? '0' : '1'}">${k.enabled ? 'Switch off' : 'Switch on'}</button>
+            <button class="btn-danger btn-sm ak-del" data-id="${esc(k.id)}" data-name="${esc(k.name)}">Revoke</button>
+          </td></tr>`).join('');
+      } catch (e) { sayK('error', 'Could not load API keys: ' + e.message); }
+    }
+
+    async function loadHooks() {
+      const tb = $id('webhooksTbody'); if (!tb) return;
+      try {
+        const d = await fetch('/api/master/webhooks', { headers: H() }).then(r => r.json());
+        const box = $id('whEvents');
+        if (box && !box.dataset.built) {
+          box.innerHTML = (d.events || []).map(e =>
+            `<label style="display:flex;gap:.4rem;align-items:flex-start;font-size:.82rem">
+               <input type="checkbox" class="wh-event" value="${esc(e.id)}" style="margin-top:.15rem" />
+               <span><code>${esc(e.id)}</code> — ${esc(e.label)}</span></label>`).join('');
+          box.dataset.built = '1';
+        }
+        tb.innerHTML = (d.hooks || []).length ? d.hooks.map(h => `<tr${h.enabled ? '' : ' style="opacity:.55"'}>
+          <td><b>${esc(h.name)}</b>${h.enabled ? '' : ' <span style="color:#b45309">· off</span>'}</td>
+          <td style="font-size:.75rem;word-break:break-all">${esc(h.url)}</td>
+          <td style="font-size:.75rem">${(h.events || []).map(e => `<code>${esc(e)}</code>`).join(' ')}</td>
+          <td>${h.delivered || 0}${h.failures ? ` · <span style="color:#dc2626">${h.failures} failing</span>` : ''}</td>
+          <td style="font-size:.78rem">${esc(when(h.lastDeliveryAt))}${h.lastStatus && h.lastStatus !== 'ok' ? `<br><span style="color:#dc2626">⚠ ${esc(String(h.lastStatus).slice(0, 40))}</span>` : ''}</td>
+          <td>
+            <button class="btn-secondary btn-sm wh-test" data-id="${esc(h.id)}">Test</button>
+            <button class="btn-secondary btn-sm wh-toggle" data-id="${esc(h.id)}" data-on="${h.enabled ? '0' : '1'}">${h.enabled ? 'Off' : 'On'}</button>
+            <button class="btn-danger btn-sm wh-del" data-id="${esc(h.id)}" data-name="${esc(h.name)}">Delete</button>
+          </td></tr>`).join('')
+          : '<tr><td colspan="6" style="color:#94a3b8;padding:.8rem">Nothing is pushed out yet.</td></tr>';
+
+        // WHAT NEVER ARRIVED IS THE LINE THAT MATTERS. A give-up nobody can
+        // see is a silent drop; this names the count and offers the way back.
+        const wrap = $id('webhookLogWrap');
+        if (wrap) {
+          const stalled = d.stalled || 0;
+          wrap.innerHTML =
+            (stalled ? `<div class="status-bar error" style="margin-bottom:.5rem">⚠ ${stalled} delivery(s) gave up after retrying — they are still here. Fix the endpoint, then press “Retry everything stalled”.</div>` : '')
+            + (d.queued ? `<div class="hint" style="margin-bottom:.4rem">${d.queued} waiting to go out.</div>` : '')
+            + ((d.log || []).length
+              ? `<div class="admin-section-title" style="font-size:.85rem">Recent deliveries</div>
+                 <div class="dcs-wrap"><table class="dcs-table">
+                 <thead><tr><th>When</th><th>Hook</th><th>Event</th><th>Result</th></tr></thead><tbody>`
+                 + d.log.slice(0, 25).map(x => `<tr>
+                     <td style="font-size:.75rem">${esc(when(x.at))}</td>
+                     <td style="font-size:.78rem">${esc(x.hook || '')}</td>
+                     <td style="font-size:.78rem"><code>${esc(x.event)}</code></td>
+                     <td style="font-size:.78rem">${x.ok
+                        ? `<span style="color:#059669">✓ ${x.status} · ${x.ms}ms</span>`
+                        : `<span style="color:#dc2626">✗ ${esc(x.error || x.status)}</span>${x.attempt > 1 ? ` · try ${x.attempt}` : ''}`}</td>
+                   </tr>`).join('')
+                 + '</tbody></table></div>'
+              : '');
+        }
+      } catch (e) { sayW('error', 'Could not load webhooks: ' + e.message); }
+    }
+
+    function wire() {
+      if (!$id('apiKeysTbody')) return;
+      $id('apiKeyAddBtn')?.addEventListener('click', () => {
+        $id('akName').value = '';
+        document.querySelectorAll('.ak-scope').forEach(c => { c.checked = false; });
+        $id('apiKeyForm').classList.remove('hidden');
+      });
+      $id('apiKeyCancelBtn')?.addEventListener('click', () => $id('apiKeyForm').classList.add('hidden'));
+      $id('apiKeySaveBtn')?.addEventListener('click', async () => {
+        const name = $id('akName').value.trim();
+        const scopes = [...document.querySelectorAll('.ak-scope:checked')].map(c => c.value);
+        if (name.length < 3) return sayK('error', 'Name the system this key is for — at least 3 characters.');
+        if (!scopes.length) return sayK('error', 'A key with no scopes can do nothing. Tick at least one.');
+        try {
+          const r = await fetch('/api/master/api-keys', { method: 'POST', headers: H(), body: JSON.stringify({ name, scopes }) });
+          const d = await r.json();
+          if (!r.ok) return sayK('error', '✗ ' + (d.error || 'Failed'));
+          $id('apiKeyForm').classList.add('hidden');
+          sayK('success', `✓ Issued "${name}".`);
+          // SHOWN ONCE, AND THE DIALOG SAYS SO. There is no way back to it —
+          // storing only the hash is the point, and pretending otherwise would
+          // send someone hunting for a screen that cannot exist.
+          alert(`API KEY FOR "${name}"\n\n${d.key}\n\n`
+            + `Copy it NOW — it is stored only as a hash and can never be shown again.\n`
+            + `If it is lost, revoke this key and issue another.\n\n`
+            + `The partner sends it as the header:\n  x-api-key: ${d.key}\n\n`
+            + `It may: ${scopes.join(', ')}`);
+          loadKeys();
+        } catch (e) { sayK('error', e.message); }
+      });
+      $id('webhookAddBtn')?.addEventListener('click', () => {
+        $id('whName').value = ''; $id('whUrl').value = '';
+        document.querySelectorAll('.wh-event').forEach(c => { c.checked = false; });
+        $id('webhookForm').classList.remove('hidden');
+      });
+      $id('webhookCancelBtn')?.addEventListener('click', () => $id('webhookForm').classList.add('hidden'));
+      $id('webhookSaveBtn')?.addEventListener('click', async () => {
+        const name = $id('whName').value.trim(), url = $id('whUrl').value.trim();
+        const events = [...document.querySelectorAll('.wh-event:checked')].map(c => c.value);
+        if (!events.length) return sayW('error', 'Pick at least one event, or the hook would never fire.');
+        try {
+          const r = await fetch('/api/master/webhooks', { method: 'POST', headers: H(), body: JSON.stringify({ name, url, events }) });
+          const d = await r.json();
+          if (!r.ok) return sayW('error', '✗ ' + (d.error || 'Failed'));
+          $id('webhookForm').classList.add('hidden');
+          sayW('success', `✓ "${name}" added. Press Test to prove the endpoint answers.`);
+          alert(`SIGNING SECRET FOR "${name}"\n\n${d.secret}\n\n`
+            + `Copy it NOW — it is not shown again.\n\n`
+            + `Their endpoint verifies the X-IdealOne-Signature header with it:\n`
+            + `  header is  t=<unix>,v1=<hex>\n`
+            + `  v1 = HMAC-SHA256(secret, "<t>." + <raw request body>)\n\n`
+            + `A 2xx reply means taken. Anything else is retried.`);
+          loadHooks();
+        } catch (e) { sayW('error', e.message); }
+      });
+      $id('webhookRetryBtn')?.addEventListener('click', async () => {
+        try {
+          const d = await fetch('/api/master/webhooks/retry-stalled', { method: 'POST', headers: H(), body: '{}' }).then(r => r.json());
+          sayW(d.stillStalled ? 'error' : 'success',
+            d.revived ? `Retried ${d.revived}. ${d.stillStalled ? d.stillStalled + ' still failing — check the endpoint.' : 'All delivered.'}` : 'Nothing was stalled.');
+          loadHooks();
+        } catch (e) { sayW('error', e.message); }
+      });
+      // Delegated: both tables are rebuilt on every load, so a bound listener
+      // would be thrown away with the rows it was attached to.
+      document.addEventListener('click', async ev => {
+        const t = ev.target.closest('.ak-toggle, .ak-del, .wh-test, .wh-toggle, .wh-del');
+        if (!t) return;
+        try {
+          if (t.classList.contains('ak-toggle')) {
+            await fetch(`/api/master/api-keys/${t.dataset.id}/enabled`, { method: 'POST', headers: H(), body: JSON.stringify({ enabled: t.dataset.on === '1' }) });
+            loadKeys();
+          } else if (t.classList.contains('ak-del')) {
+            if (!confirm(`Revoke the key "${t.dataset.name}"?\n\nThe system holding it stops working immediately, and the key cannot be restored — you would issue a new one.`)) return;
+            await fetch(`/api/master/api-keys/${t.dataset.id}`, { method: 'DELETE', headers: H() });
+            sayK('success', `✓ Revoked "${t.dataset.name}".`);
+            loadKeys();
+          } else if (t.classList.contains('wh-test')) {
+            t.disabled = true;
+            try {
+              const d = await fetch(`/api/master/webhooks/${t.dataset.id}/test`, { method: 'POST', headers: H(), body: '{}' }).then(r => r.json());
+              // WHAT THE RECEIVER SAID, in a dialog — a tooltip is unreadable
+              // on the phone the floor works from, and the whole point of a
+              // test is the answer.
+              alert(d.ok
+                ? `✓ The endpoint took it.\n\nHTTP ${d.status} in ${d.ms}ms.`
+                : `✗ The endpoint did not take it.\n\n${d.error || 'HTTP ' + d.status}\n${d.reply ? '\nIt replied:\n' + d.reply : ''}`);
+              loadHooks();
+            } finally { t.disabled = false; }
+          } else if (t.classList.contains('wh-toggle')) {
+            await fetch(`/api/master/webhooks/${t.dataset.id}/enabled`, { method: 'POST', headers: H(), body: JSON.stringify({ enabled: t.dataset.on === '1' }) });
+            loadHooks();
+          } else if (t.classList.contains('wh-del')) {
+            if (!confirm(`Delete the webhook "${t.dataset.name}"?\n\nAnything still queued for it is dropped, and that system stops being told.`)) return;
+            await fetch(`/api/master/webhooks/${t.dataset.id}`, { method: 'DELETE', headers: H() });
+            loadHooks();
+          }
+        } catch (e) { sayW('error', e.message); }
+      });
+    }
+    document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', wire) : wire();
+    return { load: () => { loadKeys(); loadHooks(); } };
   })();
 
   async function loadZortStores() {
