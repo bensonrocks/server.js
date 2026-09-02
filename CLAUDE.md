@@ -7703,6 +7703,24 @@ ship|marketplace|task/i` with a selector that would find it again.
   customer reference and the trail is permanent and emailed. The file lands on
   the volume; the trail records host, control count and bytes.
 - Admin or master (`requireInboundAdmin`), same guard as 🧪 Probe.
+- **THE URL IS PINNED TO ZORT'S OWN HOST.** Without it the route drives a
+  headless browser, from inside the deployment's network, to any address a
+  caller names — the ordinary SSRF shape, reaching localhost and the cloud
+  metadata endpoint as easily as a website. Admin-or-master gating means it was
+  never an open door; it is closed anyway because the cost is nil (the same
+  reasoning the ZORT push receiver's hardening records) and because it is what
+  the tool IS — there is no legitimate reason to capture a non-ZORT page, so
+  the restriction costs no capability.
+- **IT READS THE PAGE'S OWN FUNCTIONS, not just its buttons.** The floor
+  supplied the real entry point — on **`/Sell/list`**, the print action is
+  `javascript:printMainMarketplaceDocument("shippingLabelPDF")` — so the click
+  is a `page.evaluate` away and no selector hunting is needed. What that call
+  DOES was still unknown, and its own `toString()` answers it: whether it posts,
+  opens a window, or queues a Task Manager job, and whether it acts on the
+  grid's selected rows. Named functions are **read, never called**, siblings
+  matching `print|export|download…document|label|shipping|marketplace` are
+  picked up too, and the row checkboxes are reported alongside — because a
+  function that acts on a selection is useless without knowing how to make one.
 - **THE RE-LOGIN MUST HAPPEN ON THE SAME CONTEXT.** The first cut signed in on
   a page from a throwaway `browser.newPage()`, so the session cookie landed in
   a jar that was then discarded — the re-navigation went straight back to the
@@ -7717,7 +7735,12 @@ page carrying "Ready to Ship", "Print shipping label (PDF)" with a `data-testid`
 a Task Manager link and an unrelated "Edit order"): it signs in, saves the real
 HTML and a screenshot, NAMES the print button with a selector specific enough to
 click, reports the RTS button too, does NOT report the unrelated control, clicks
-nothing, and refuses a wrong password in words.
+nothing, and refuses a wrong password in words. Plus 8 more against a second
+mock built to the ACTUAL `/Sell/list` shape the floor supplied (a grid with row
+checkboxes and the print action as a named global): the function is read back by
+name, its source shows what it really does, the row and select-all checkboxes
+are reported with their values, a sibling export function is found, and a
+non-ZORT host (`169.254.169.254`) is refused by the host pin.
 
 TEST GOTCHA: Playwright resolves to `chrome-headless-shell`, which this sandbox
 does not ship — set `ZORT_BROWSER_PATH=/opt/pw-browsers/chromium-*/chrome-linux/chrome`

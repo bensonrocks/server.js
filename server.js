@@ -23962,8 +23962,15 @@ app.post('/api/master/zort/stores/:id/web-capture', express.json(), async (req, 
   if (!/^https?:\/\//i.test(url)) {
     return res.status(400).json({ error: 'Paste the full https address of the ZORT page you press Print Shipping Label on.' });
   }
+  // The floor supplied the real entry point off /Sell/list —
+  // `printMainMarketplaceDocument("shippingLabelPDF")` — so that is the default
+  // function to read back. A caller can name others; these are only READ
+  // (`toString()`), never called.
+  const fns = Array.isArray(req.body?.fns) && req.body.fns.length
+    ? req.body.fns.map(String).filter(n => /^[\w$]{1,64}$/.test(n)).slice(0, 12)
+    : ['printMainMarketplaceDocument'];
   try {
-    const out = await zortWeb.capturePage(store, url);
+    const out = await zortWeb.capturePage(store, url, { fns });
     logAudit('zort_web_page_captured', {
       storeId: store.id, client: store.clientName || '',
       // The URL can carry an order reference; the PAGE is saved to the volume,
