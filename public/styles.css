@@ -600,6 +600,10 @@ main {
   border: 1px solid currentColor; border-radius: 999px;
   padding: 0 .3rem; white-space: nowrap;
 }
+/* The per-day total row — a summary of the rows above it, so it reads as a
+   rule under the table rather than as one more station. */
+.stp-tot > td { border-top: 2px solid var(--border, #cbd5e1); font-weight: 700; }
+.stp-tot > td.dcs-name { color: var(--text-light, #64748b); text-transform: uppercase; font-size: .62rem; letter-spacing: .04em; }
 .dstat-today { background: rgba(37,99,235,.09); outline: 1px solid rgba(37,99,235,.35); }
 .dstat-today .dstat-val { color: var(--primary, #2563eb); }
 .dstat-today .dstat-lbl em { font-style: normal; color: var(--primary, #2563eb); font-weight: 700; }

@@ -17646,13 +17646,25 @@ function sgDashDays(n) {
   for (let i = n - 1; i >= 0; i--) days.push(sgDateStr(new Date(Date.now() - i * 86400000)));
   return days;
 }
+// WHICH DAY A COMPLETION COUNTS ON — ONE definition, shared by the live
+// dashboards and the Station Throughput REPORT. They are the same feature seen
+// over two windows (4 days on screen, up to 12 months in the file), so a report
+// bucketing on `at` while the modal bucketed on `endTime` would let the two
+// disagree about the same station on the same day — the class of split this
+// codebase keeps having to close. `endTime` is when packing actually finished
+// (an offline replay legitimately supplies an earlier one than the audit entry's
+// own timestamp); `at` is the fallback when a record predates that field.
+// NOTE the older `productivity` report buckets on `at` alone and is deliberately
+// left as it is — it is a different report with its own history.
+function stationDayOf(e) { return sgDateStr(new Date(e.endTime || e.at)); }
+
 function completedOrderEventsForDays(db, days) {
   const from = days[0], to = days[days.length - 1];
   const log  = readAuditLogForRange(db, from, to);
   const set  = new Set(days);
   return log
     .filter(e => e.type === 'order_completed')
-    .map(e => ({ ...e, sgDay: sgDateStr(new Date(e.endTime || e.at)) }))
+    .map(e => ({ ...e, sgDay: stationDayOf(e) }))
     .filter(e => set.has(e.sgDay));
 }
 
@@ -17962,7 +17974,7 @@ app.post('/api/master/reset', (req, res) => {
 //   • Commercial/oversight reports → MASTER key only (client-activity =
 //     billing data; exceptions = includes the deletion audit that watches
 //     the admins themselves).
-const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers', 'outbound-stock', 'fulfilment', 'throughput']);
+const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers', 'outbound-stock', 'fulfilment', 'throughput', 'station-throughput']);
 
 app.get('/api/master/report/:kind', (req, res) => {
   const { kind } = req.params;
@@ -18041,6 +18053,91 @@ app.get('/api/master/report/:kind', (req, res) => {
           return [d, op, x.done, x.pieces, avg(x.durs), x.durs.length ? Math.min(...x.durs) : '', x.durs.length ? Math.max(...x.durs) : ''];
         }),
       ]);
+
+    } else if (kind === 'station-throughput') {
+      // STATION THROUGHPUT OVER TIME — the historical companion to the
+      // Station Throughput modal on the Orders tab. Per the user: track it by
+      // year, month and day, and by which station.
+      //
+      // THE MODAL AND THIS FILE ARE THE SAME FEATURE OVER TWO WINDOWS. The
+      // modal reads the LIVE audit log and shows 4 days because that is all a
+      // floor screen needs; this goes through `readAuditLogForRange`, which
+      // transparently merges the archived months, so it reaches the full
+      // 12-month retention. Both bucket a completion with `stationDayOf`, so
+      // the same station on the same day reads the same on both.
+      title = 'Station_Throughput';
+      const stFilter = String(req.query.station || '').trim().toLowerCase();
+      if (stFilter) title += `_${stFilter.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
+
+      // FOUR GRAINS OFF ONE PASS. Building each sheet from its own filter
+      // would let them disagree the moment one gained a rule the others
+      // missed; every row below is tallied once, here.
+      // THE SAME "(unassigned)" WORDING THE MODAL USES — the two are compared
+      // side by side, and a station reading "—" in one and "(unassigned)" in
+      // the other would look like two different stations.
+      const stationOf = e => byUserId.get(e.operator) || e.operator || '(unassigned)';
+
+      const cell = { day: {}, month: {}, year: {}, station: {} };
+      // `d` is passed in rather than stamped on the event: these objects are
+      // LIVE entries out of db.auditLog, and a scratch field written onto one
+      // would ride into the next db.json write.
+      const bump = (bucket, key, e, d) => {
+        const x = (bucket[key] ||= { orders: 0, lines: 0, pieces: 0, days: new Set() });
+        x.orders++;
+        x.lines  += (e.lines || []).length;
+        x.pieces += e.pieces || 0;
+        x.days.add(d);
+        return x;
+      };
+      // READ FROM `log`, NOT `completed`. The shared `completed` list is sliced
+      // on the audit entry's own timestamp, which would drop a completion whose
+      // `endTime` falls inside the period but whose entry was written just after
+      // midnight — an offline replay does exactly that. Slicing once, on the
+      // same day this report buckets by, is the only way the file and the modal
+      // can hold the same order on the same day.
+      let counted = 0;
+      for (const e of log) {
+        if (e.type !== 'order_completed') continue;
+        const d = stationDayOf(e);
+        if (d < from || d > to) continue;
+        const who = stationOf(e);
+        if (stFilter && who.toLowerCase() !== stFilter) continue;
+        counted++;
+        bump(cell.day,     `${d}|${who}`, e, d);
+        bump(cell.month,   `${d.slice(0, 7)}|${who}`, e, d);
+        bump(cell.year,    `${d.slice(0, 4)}|${who}`, e, d);
+        bump(cell.station, who, e, d);
+      }
+      // EVERY ROW IS ONE (period × station) PAIR, so summing a column down a
+      // sheet gives that period's real total — said in words rather than left
+      // for the reader to work out, and no order-level figure is ever repeated
+      // across rows (the trap the portal orders workbook documents).
+      const head = period => [period, 'Station', 'Orders', 'Lines', 'Pieces'];
+      const rowsOf = (bucket, splitKey) => Object.keys(bucket).sort().map(k => {
+        const x = bucket[k];
+        return splitKey ? [k.split('|')[0], k.split('|')[1], x.orders, x.lines, x.pieces]
+                        : [k, x.orders, x.lines, x.pieces];
+      });
+      const note = `Period: ${from} to ${to} (by completion day, SGT)${stFilter ? ` · Station: ${stFilter}` : ''}`
+        + ' — one row per period and station; sum a column for that period\'s total.';
+
+      addSheet('By Station', [
+        [note],
+        ['Station', 'Orders', 'Lines', 'Pieces', 'Days Worked', 'Avg Orders / Day'],
+        ...Object.keys(cell.station).sort().map(s => {
+          const x = cell.station[s];
+          return [s, x.orders, x.lines, x.pieces, x.days.size,
+                  x.days.size ? Math.round(x.orders / x.days.size * 10) / 10 : 0];
+        }),
+      ]);
+      addSheet('By Day',   [[note], head('Day'),   ...rowsOf(cell.day, true)]);
+      addSheet('By Month', [[note], head('Month'), ...rowsOf(cell.month, true)]);
+      addSheet('By Year',  [[note], head('Year'),  ...rowsOf(cell.year, true)]);
+      if (!counted) {
+        addSheet('Notes', [['No completed orders in this period.'],
+          ['"Station" is the packer who completed the order — this system has no separate physical station id.'],
+          ['An order completed with no operator recorded shows as (unassigned).']]);
+      }
 
     } else if (kind === 'client-activity') {
       title = 'Client_Activity';

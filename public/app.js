@@ -15134,14 +15134,30 @@
 
     const stations = d.stations || [];
     const cell = (day, v) => `<td${day === today ? ' class="stp-today"' : ''}>${v}</td>`;
-    document.getElementById('stpOrdersBody').innerHTML = stations.map(s => {
-      const total = days.reduce((sum, day) => sum + (s.byDay[day]?.orders || 0), 0);
-      return `<tr><td class="dcs-name">${esc(s.stationName)}</td>${days.map(day => cell(day, s.byDay[day]?.orders || 0)).join('')}<td><strong>${total}</strong></td></tr>`;
-    }).join('');
-    document.getElementById('stpLinesBody').innerHTML = stations.map(s => {
-      const total = days.reduce((sum, day) => sum + (s.byDay[day]?.lines || 0), 0);
-      return `<tr><td class="dcs-name">${esc(s.stationName)}</td>${days.map(day => cell(day, s.byDay[day]?.lines || 0)).join('')}<td><strong>${total}</strong></td></tr>`;
-    }).join('');
+    // EACH TABLE ENDS IN ITS OWN PER-DAY TOTAL ROW. The tiles above give the
+    // day's ORDERS across every station, but nothing gave the day's LINES at
+    // all, and reading a column down eight stations to add it up is not a
+    // thing anyone does standing at a bench. Built by summing the SAME cells
+    // the rows render, so the total can never disagree with what is above it.
+    const body = (id, pick) => {
+      const perDay = Object.fromEntries(days.map(day => [day, 0]));
+      const rows = stations.map(s => {
+        let total = 0;
+        const tds = days.map(day => {
+          const v = pick(s.byDay[day]);
+          perDay[day] += v; total += v;
+          return cell(day, v);
+        }).join('');
+        return `<tr><td class="dcs-name">${esc(s.stationName)}</td>${tds}<td><strong>${total}</strong></td></tr>`;
+      }).join('');
+      const grand = days.reduce((n, day) => n + perDay[day], 0);
+      const totRow = stations.length
+        ? `<tr class="stp-tot"><td class="dcs-name">All stations</td>${days.map(day => cell(day, perDay[day])).join('')}<td><strong>${grand}</strong></td></tr>`
+        : '';
+      document.getElementById(id).innerHTML = rows + totRow;
+    };
+    body('stpOrdersBody', b => b?.orders || 0);
+    body('stpLinesBody',  b => b?.lines  || 0);
 
     document.getElementById('stpEmpty').classList.toggle('hidden', stations.length > 0);
   }

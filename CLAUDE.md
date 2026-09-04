@@ -4244,6 +4244,61 @@ ticked (client-enforced).
   Lines per Station) rather than one table with day+metric sub-columns —
   fewer columns keeps it readable on a phone screen, which the task
   explicitly allowed as an alternative to sub-columns.
+- **EACH TABLE ENDS IN AN "ALL STATIONS" PER-DAY TOTAL ROW** (`.stp-tot`), per
+  the user. The tiles gave the day's ORDERS across every station; **nothing
+  gave the day's LINES at all**, and reading a column down eight stations to
+  add it up is not a thing anyone does at a bench. Summed from the SAME cells
+  the rows render, in one pass (`body(id, pick)` builds rows and totals
+  together), so the total can never disagree with what is above it — asserted
+  by recomputing every column from the rendered DOM, and by checking the
+  Orders total row against the tiles.
+
+### The REPORT — `kind === 'station-throughput'`
+
+Per the user: *"there should also be a report for this so we can track annual,
+month, day and which station throughput etc"*. In `ADMIN_REPORT_KINDS`, on both
+report panes, with the pane's ordinary from/to and an optional `?station=`.
+
+- **THE MODAL AND THE REPORT ARE THE SAME FEATURE OVER TWO WINDOWS.** The modal
+  reads the live audit log and shows 4 days because that is what a floor screen
+  needs; the report goes through `readAuditLogForRange`, which merges the
+  archived months, so it reaches the full 12-month retention.
+- **`stationDayOf(e)` is ONE definition, shared by both** (`endTime || at`, SGT).
+  A report bucketing on `at` while the modal bucketed on `endTime` would let the
+  two disagree about the same station on the same day — the split this file
+  keeps having to close. Asserted directly: the modal's today figure and the
+  report's one-day period return the same number, orders AND lines.
+  (The older `productivity` report still buckets on `at` alone. Deliberately
+  left — different report, its own history.)
+- **IT READS `log`, NOT the shared `completed` list.** That list is pre-sliced on
+  the audit entry's own timestamp, which would drop a completion whose `endTime`
+  is inside the period but whose entry was written just after midnight — exactly
+  what an offline replay produces. One slice, on the day it buckets by.
+- **FOUR GRAINS OFF ONE PASS** — By Station / By Day / By Month / By Year.
+  Filtering four times would let them disagree the moment one gained a rule the
+  others missed; asserted that all three period grains total the identical
+  orders. Every row is one (period × station) pair, so summing a column gives
+  that period's real total — said on the sheet, because the portal orders
+  workbook already paid for the lesson that a repeated order-level figure sums
+  to a wrong number silently.
+- **`(unassigned)` matches the modal's wording**, not the report route's own
+  `nameFor` default of `—`: the two get compared side by side and one station
+  reading differently in each would look like two stations.
+- **The bucketing helper takes the day as an ARGUMENT** rather than stamping it
+  on the event. Those objects are LIVE `db.auditLog` entries and a scratch field
+  written onto one rides into the next db.json write — asserted by grepping the
+  persisted file for it after running the report.
+
+Verified 24 API checks (all four sheets; two stations; days counted distinctly
+so avg orders/day is orders÷days rather than invented; the three grains totalling
+the same 7 orders; day/month/year key shapes; a genuine two-YEAR and two-month
+span; lines and pieces carried not just an order count; a one-day period
+returning only that day; the station filter narrowing both sheets; the modal and
+the report agreeing; nothing written into the audit log by reading it; no token
+refused) plus 21 browser checks on desktop and a Pixel 5 (one total row per
+table, labelled, every column recomputed from the DOM, the tiles and the Orders
+total row agreeing, and the report button firing with the pane's period and
+downloading).
 
 ## Transport Management — TMS Importer (server.js — `/api/transport/*`)
 
