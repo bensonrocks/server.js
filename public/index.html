@@ -811,7 +811,7 @@
         <div class="admin-section-header">
           <div>
             <div class="admin-section-title">Activity Overview</div>
-            <div class="admin-section-sub">Orders and lines processed on each of the last 3 full calendar days (SGT), plus the largest order of each day. Admin/Master only.</div>
+            <div class="admin-section-sub">Orders and lines processed today so far, and on each of the 3 full calendar days before it (SGT), plus the largest order of each day. Today is marked, since it is still running. Admin/Master only.</div>
           </div>
         </div>
         <div class="dcs-wrap">
@@ -4284,8 +4284,8 @@
   <div id="stationThroughputOverlay" class="modal-overlay hidden">
     <div class="modal" style="max-width:760px">
       <div class="modal-title">Station Throughput</div>
-      <p class="modal-desc">Orders and lines processed per packing station, for each of the last 3 full calendar days (SGT). "Station" = the packer who completed the order.</p>
-      <div class="dash-stats-grid" id="stpTotalsGrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:1.1rem"></div>
+      <p class="modal-desc">Orders and lines processed per packing station &mdash; today so far, and the 3 full calendar days before it (SGT). Today is still running, so it is marked and is not a finished day's figure. "Station" = the packer who completed the order.</p>
+      <div class="dash-stats-grid" id="stpTotalsGrid" style="margin-bottom:1.1rem"></div>
       <div class="admin-section-title" style="font-size:.8rem">Orders per Station</div>
       <div class="dcs-wrap">
         <table class="dcs-table">

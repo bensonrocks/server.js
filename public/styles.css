@@ -587,6 +587,22 @@ main {
 .dcs-table td { padding: .35rem .6rem; border-bottom: 1px solid var(--border); color: var(--text); }
 .dcs-name { font-weight: 700; }
 .dcs-today, .dcs-pend, .dcs-bal { text-align: center; font-weight: 700; }
+/* TODAY on the two dashboards — deliberately NOT `.dcs-today`, which already
+   means a different thing on this same table class (the client breakdown's
+   today-uploaded column). A partial day sitting beside three finished ones has
+   to be visibly the odd column out, or it gets read as a bad day rather than
+   an unfinished one. */
+.stp-today { background: rgba(37,99,235,.07); }
+.stp-today-row > td { background: rgba(37,99,235,.07); }
+.stp-sofar {
+  font-size: .58rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--primary, #2563eb);
+  border: 1px solid currentColor; border-radius: 999px;
+  padding: 0 .3rem; white-space: nowrap;
+}
+.dstat-today { background: rgba(37,99,235,.09); outline: 1px solid rgba(37,99,235,.35); }
+.dstat-today .dstat-val { color: var(--primary, #2563eb); }
+.dstat-today .dstat-lbl em { font-style: normal; color: var(--primary, #2563eb); font-weight: 700; }
 .dcs-pend.warn, .dcs-bal.warn { color: #f59e0b; }
 .dcs-pend.ok,   .dcs-bal.ok   { color: var(--text-muted); font-weight: 400; }
 .live-idle { color: #f59e0b; font-weight: 700; }

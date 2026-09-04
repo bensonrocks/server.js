@@ -4162,9 +4162,9 @@ ticked (client-enforced).
   gzip snapshots, not the underlying data. No archive TABLE is needed beyond
   what already exists — the monthly JSON archive files already hold
   everything indefinitely, and since the two dashboards below only ever
-  query the last 3 days, they read `db.auditLog` directly and never need to
-  touch archives at all (3 days is always inside the 12-month
-  live window).
+  query the last 4 days (today plus the 3 before it), they read `db.auditLog`
+  directly and never need to touch archives at all (4 days is always inside
+  the 12-month live window).
 
 ## Admin/Warehouse dashboards — Activity Overview & Station Throughput (server.js `/api/master/dashboard/*`, public/app.js)
 
@@ -4172,9 +4172,41 @@ ticked (client-enforced).
   Administrator report already uses (`completionAuditData()` at completion
   time — `order`, `client`, `operator`, `pieces`, `lines[]`, `endTime`) — no
   new data source, no new retention concern (see above).
-- `previousSgDays(3)` returns the 3 full SGT calendar days immediately
-  BEFORE today, oldest first — today is excluded since it's still in
-  progress, not a completed day. `completedOrderEventsForDays()` filters
+- **TODAY IS INCLUDED, AND MARKED AS PARTIAL** (`sgDashDays(4)` — SUPERSEDES
+  `previousSgDays(3)`, which returned the 3 full SGT days BEFORE today and
+  excluded today "since it's still in progress, not a completed day").
+  Reported from a phone with the modal open: it read Tue/Wed/Thu with **today
+  absent**, so an order packed that morning was nowhere on the board. The old
+  reasoning was sound and the trade was wrong — the first question anyone opens
+  this screen to ask is "how are we doing TODAY", and a board that can only
+  answer about yesterday is one nobody opens before knock-off.
+  - **APPENDED, not swapped in**: today is the LAST column and all three full
+    days are still there, so nothing was traded away for it.
+  - **THE SERVER NAMES IT** (`today` on both responses). A browser in another
+    timezone working out "today" for itself is exactly how two surfaces come to
+    disagree about the same day — the standing SGT rule, applied to which
+    COLUMN is today rather than to the bucketing.
+  - **EVERY SURFACE SAYS IT IS STILL RUNNING** — a `SO FAR TODAY` tile in
+    `--primary`, a `so far` pill on the column header, and the tinted column
+    (`.stp-today` / `.dstat-today`). A partial day silently compared against
+    three finished ones reads as a bad day rather than an unfinished one, and
+    marking it is what replaces the guard the old exclusion provided.
+  - **`.stp-today`, deliberately NOT `.dcs-today`** — that class already means
+    something else on the SAME `.dcs-table` (the client breakdown's
+    today-uploaded column). Caught when a rename swept it up by mistake.
+  - The tiles' column count was hardcoded `repeat(3,1fr)` in the markup and is
+    set from `days.length` now, so widening the window again cannot silently
+    squash them.
+  - **Activity Overview moved with it** — same helper, same complaint, and
+    leaving one twin ending at yesterday is the inconsistency this file keeps
+    documenting.
+  - KNOWN, not hidden: on a phone today's column in the per-station TABLE is
+    the furthest right and needs a sideways scroll to reach (the table has
+    always scrolled — the reported screenshot cut off its Total column at three
+    days). The TILES carry today's figure without scrolling, and the columns
+    stay in date order because reversing them to put today first would break
+    the trend the table exists to show.
+  `completedOrderEventsForDays()` filters
   `order_completed` events to that window and tags each with its SGT day
   (`sgDateStr`, the same Asia/Singapore helper the nightly backup uses) —
   get this right deliberately, since naive UTC date-slicing (what the

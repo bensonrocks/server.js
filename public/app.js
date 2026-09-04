@@ -13890,9 +13890,10 @@
   }
   function renderActivityOverview(d) {
     const days = d.days || [];
+    const today = d.today || '';           // the SERVER's SGT day — see renderStationThroughput
     document.getElementById('overviewBody').innerHTML = days.map(day => `
-      <tr>
-        <td>${fmtDashDate(day.date)}</td>
+      <tr${day.date === today ? ' class="stp-today-row"' : ''}>
+        <td>${fmtDashDate(day.date)}${day.date === today ? ' <span class="stp-sofar">so far</span>' : ''}</td>
         <td>${day.totalOrders}</td>
         <td>${day.totalLines}</td>
         <td>${largestOrderCell(day.largestBySize, 'pcs')}</td>
@@ -15115,22 +15116,31 @@
   });
   function renderStationThroughput(d) {
     const days = d.days || [];
-    document.getElementById('stpTotalsGrid').innerHTML = days.map(day => `
-      <div class="dstat"><div class="dstat-val">${d.totalsByDay?.[day] ?? 0}</div><div class="dstat-lbl">${fmtDashDate(day)}</div></div>
+    // WHICH COLUMN IS TODAY COMES FROM THE SERVER, never from this browser —
+    // a device on another timezone working it out for itself is how two
+    // screens end up disagreeing about the same day.
+    const today = d.today || '';
+    const grid = document.getElementById('stpTotalsGrid');
+    // The column count was hardcoded to 3 in the markup; today makes it four,
+    // and it will make it five if anyone widens the window again.
+    grid.style.gridTemplateColumns = `repeat(${Math.max(1, days.length)},1fr)`;
+    grid.innerHTML = days.map(day => `
+      <div class="dstat${day === today ? ' dstat-today' : ''}"><div class="dstat-val">${d.totalsByDay?.[day] ?? 0}</div><div class="dstat-lbl">${fmtDashDate(day)}${day === today ? '<br><em>so far today</em>' : ''}</div></div>
     `).join('');
 
-    const headRow = `<tr><th>Station</th>${days.map(day => `<th>${fmtDashDate(day)}</th>`).join('')}<th>Total</th></tr>`;
+    const headRow = `<tr><th>Station</th>${days.map(day => `<th${day === today ? ' class="stp-today"' : ''}>${fmtDashDate(day)}${day === today ? ' <span class="stp-sofar">so far</span>' : ''}</th>`).join('')}<th>Total</th></tr>`;
     document.getElementById('stpOrdersHead').innerHTML = headRow;
     document.getElementById('stpLinesHead').innerHTML = headRow;
 
     const stations = d.stations || [];
+    const cell = (day, v) => `<td${day === today ? ' class="stp-today"' : ''}>${v}</td>`;
     document.getElementById('stpOrdersBody').innerHTML = stations.map(s => {
       const total = days.reduce((sum, day) => sum + (s.byDay[day]?.orders || 0), 0);
-      return `<tr><td class="dcs-name">${esc(s.stationName)}</td>${days.map(day => `<td>${s.byDay[day]?.orders || 0}</td>`).join('')}<td><strong>${total}</strong></td></tr>`;
+      return `<tr><td class="dcs-name">${esc(s.stationName)}</td>${days.map(day => cell(day, s.byDay[day]?.orders || 0)).join('')}<td><strong>${total}</strong></td></tr>`;
     }).join('');
     document.getElementById('stpLinesBody').innerHTML = stations.map(s => {
       const total = days.reduce((sum, day) => sum + (s.byDay[day]?.lines || 0), 0);
-      return `<tr><td class="dcs-name">${esc(s.stationName)}</td>${days.map(day => `<td>${s.byDay[day]?.lines || 0}</td>`).join('')}<td><strong>${total}</strong></td></tr>`;
+      return `<tr><td class="dcs-name">${esc(s.stationName)}</td>${days.map(day => cell(day, s.byDay[day]?.lines || 0)).join('')}<td><strong>${total}</strong></td></tr>`;
     }).join('');
 
     document.getElementById('stpEmpty').classList.toggle('hidden', stations.length > 0);

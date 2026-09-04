@@ -17628,11 +17628,22 @@ app.get('/api/master/live-activity', (req, res) => {
 // ≥12-month-retained source every other Administrator report already uses.
 // Calendar days are bucketed in SGT (Asia/Singapore), matching sgDateStr()
 // used everywhere else timezone-sensitive in this file (nightly backup, etc).
-// Returns the 3 full calendar days immediately BEFORE today, oldest first —
-// "today" is still in progress, so it's excluded rather than shown partial.
-function previousSgDays(n) {
+// TODAY IS INCLUDED, AND EVERY SURFACE SAYS IT IS STILL RUNNING. Per the user.
+// These dashboards used to end at YESTERDAY, on the reasoning that a day still
+// in progress is not a completed day. That reasoning is sound and the trade was
+// wrong: the first question anyone opens this screen to ask is "how are we
+// doing TODAY", and a board that can only answer about yesterday is one nobody
+// opens before knock-off. So today is appended as the LAST column — the three
+// full days it used to show are all still there, nothing was traded away — and
+// the response NAMES it (`today`) so the screen can mark it. The server decides
+// which column that is, not the browser: a viewer in another timezone
+// recomputing "today" for itself is exactly how two surfaces come to disagree
+// about the same day. A partial day silently compared against three full ones
+// is the misreading the old exclusion was guarding against, and marking it is
+// what replaces that guard.
+function sgDashDays(n) {
   const days = [];
-  for (let i = n; i >= 1; i--) days.push(sgDateStr(new Date(Date.now() - i * 86400000)));
+  for (let i = n - 1; i >= 0; i--) days.push(sgDateStr(new Date(Date.now() - i * 86400000)));
   return days;
 }
 function completedOrderEventsForDays(db, days) {
@@ -17652,7 +17663,7 @@ app.get('/api/master/dashboard/activity-overview', (req, res) => {
     if (role !== 'admin') return res.status(403).json({ error: 'This dashboard requires Administrator access' });
   }
   const db     = readDb();
-  const days   = previousSgDays(3);
+  const days   = sgDashDays(4);          // 3 full days + today, oldest first
   const events = completedOrderEventsForDays(db, days);
 
   const byDay = new Map(days.map(d => [d, []]));
@@ -17671,7 +17682,7 @@ app.get('/api/master/dashboard/activity-overview', (req, res) => {
     }
     return { date: d, totalOrders, totalLines, largestBySize, largestByLines };
   });
-  res.json({ days: result });
+  res.json({ days: result, today: sgDateStr() });
 });
 
 app.get('/api/master/dashboard/station-throughput', (req, res) => {
@@ -17681,7 +17692,7 @@ app.get('/api/master/dashboard/station-throughput', (req, res) => {
     if (role !== 'admin' && role !== 'warehouse') return res.status(403).json({ error: 'Forbidden' });
   }
   const db     = readDb();
-  const days   = previousSgDays(3);
+  const days   = sgDashDays(4);          // 3 full days + today, oldest first
   const events = completedOrderEventsForDays(db, days);
   const byId   = new Map(readUsers().map(u => [u.id, u.name || u.id]));
   const nameFor = id => byId.get(id) || id || '(unassigned)';
@@ -17705,7 +17716,7 @@ app.get('/api/master/dashboard/station-throughput', (req, res) => {
     s.lines += (e.lines || []).length;
   }
   const stations = [...stationsMap.values()].sort((a, b) => a.stationName.localeCompare(b.stationName));
-  res.json({ days, totalsByDay, stations });
+  res.json({ days, totalsByDay, stations, today: sgDateStr() });
 });
 
 // Full JSON backup — DB (batches, orders, scan states, users, sessions) plus
