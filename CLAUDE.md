@@ -213,6 +213,49 @@ between them.
   report confirming its own default is unaffected) and a real Chromium run
   proving the fields load blank, a click with either blank fires NO network
   request and shows the inline error, and filling both then fires it.
+- **TODAY / MONTH TO DATE / YEAR TO DATE — three chips, and they are NOT a
+  default.** Per the user: *"include today/current til date throughput"*. The
+  no-default rule above had made "how are we doing today?" a two-date-picker
+  job, which on a phone is two calendar widgets to answer the commonest
+  question there is. `.rep-quick-btn` FILLS the two visible fields and does
+  nothing else — it never touches the request — so the rule stands exactly as
+  written: the fields still load blank, both guards still fire, and whatever is
+  in them is still what runs and what the operator reads back first.
+  - **THE LIT CHIP CLEARS THE MOMENT A DATE IS HAND-EDITED**, or the row would
+    go on claiming "This month" over a range somebody has since changed — the
+    same rule as the KPI tiles' `.kpi-filter-note`.
+  - Month/year starts are **sliced off the SGT day STRING** (`t.slice(0,7)+
+    '-01'`), never computed from a Date, so no timezone arithmetic can put the
+    1st on the 31st. The range is recomputed **on click**, so a tab left open
+    overnight cannot set yesterday.
+  - **THE SHARED `today()`/`daysAgo()` IN THAT IIFE WERE UTC**
+    (`toISOString().slice(0,10)`) — not a formatting detail: the server buckets
+    every report on the SGT day, so before 08:00 SGT they name YESTERDAY and a
+    report run first thing in the morning ends a day early and silently drops
+    everything completed today. Squarely the standing day-bucketing rule, and
+    it bites hardest on the "today" chip whose whole point is to include today.
+    Both are `toLocaleDateString('en-CA', {timeZone:'Asia/Singapore'})` now.
+  - **A PERIOD ENDING TODAY IS STILL RUNNING, AND THE SHEET SAYS SO** — most of
+    these files are now taken mid-day, and a lead time only exists once an order
+    has FINISHED, so anything still being picked is legitimately absent. Without
+    it a 10am file reads as a full day's work and gets compared against
+    yesterday's complete one. **On the TITLE line, not a row of its own**: an
+    extra row would put the header on row 3 for a today-ending period and row 2
+    otherwise, so anything reading the sheet by offset would take a header for
+    data on some files and not others. The sheet keeps ONE shape.
+  - 42px minimum height on a phone — the desktop padding left them 29px, which
+    is not a thumb target on the device the floor works from (caught by the
+    browser test measuring the box, not by looking at it).
+  Verified 23 API checks (an order completed today IS in a from=today&to=today
+  report with a real computed lead time; month- and year-to-date include it;
+  a period ending yesterday does NOT and is not flagged as running; the header
+  is on row 2 in both cases; all three missing-date shapes still 400; a sibling
+  report's own default untouched) plus 16 browser checks on desktop and a Pixel
+  5 (fields still blank on load, each chip's exact dates, only one lit at a
+  time, lit-by-computed-style, hand-edit clearing it, the outgoing request
+  carrying the chip's dates, and no sideways scroll at 393px) — and the SGT fix
+  proved at a real boundary instant (2026-09-04T22:30Z = 05 Sep 06:30 SGT,
+  where the old expression names the 4th and the new one the 5th).
 - **PHONE: the filter row is now ONE grouped panel, not loose floating
   fields.** Below 768px, `.report-range-row` (any row carrying its own
   filter controls beside a report card — Total Throughput Time, Client

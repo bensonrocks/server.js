@@ -16157,8 +16157,15 @@
   // reports, plain session auth) and #adminTab-reports (master panel — all
   // seven, master-key auth).
   (() => {
-    const today = () => new Date().toISOString().slice(0, 10);
-    const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+    // SGT CALENDAR DAYS, never UTC. The server buckets every report on the
+    // SGT day (sgDateStr), so a UTC `toISOString().slice(0,10)` here is not a
+    // formatting detail — before 08:00 SGT it names YESTERDAY, and a report
+    // run first thing in the morning would end a day early and silently drop
+    // everything completed today. That is the exact bug the standing
+    // day-bucketing rule exists for, and it bites hardest on the "today"
+    // period below, whose whole point is to include today.
+    const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+    const daysAgo = n => new Date(Date.now() - n * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
     document.querySelectorAll('.rep-from').forEach(el => el.value = daysAgo(30));
     document.querySelectorAll('.rep-to').forEach(el => el.value = today());
     document.querySelectorAll('.rep-mdate').forEach(el => el.value = today());
@@ -16170,6 +16177,45 @@
     // silent 30-day fallback read as "why do I only have data from Aug 1"
     // when that was just 30 days before whatever today happened to be. The
     // click handler below refuses to run without both dates picked.
+    //
+    // …WHICH MADE "how are we doing today?" A TWO-DATE-PICKER JOB. Per the
+    // user: today, and the current period to date. These chips FILL the two
+    // visible fields and nothing more — they are not a default and they do not
+    // touch the request, so the no-default rule above stands exactly as it is:
+    // the fields still load blank, and whatever is in them is still what the
+    // report runs on and what the operator can read back before pressing it.
+    // Month/year starts are sliced off the SGT day STRING rather than computed
+    // from a Date, so no timezone arithmetic can put the 1st on the 31st.
+    const quickRange = kindKey => {
+      const t = today();
+      if (kindKey === 'today') return [t, t];
+      if (kindKey === 'month') return [t.slice(0, 7) + '-01', t];
+      if (kindKey === 'year')  return [t.slice(0, 4) + '-01-01', t];
+      return null;
+    };
+    document.querySelectorAll('.rep-quick').forEach(wrap => {
+      const row  = wrap.closest('.report-range-row');
+      const fEl  = row?.querySelector('.rep-throughput-from');
+      const tEl  = row?.querySelector('.rep-throughput-to');
+      if (!fEl || !tEl) return;
+      // A LIT CHIP MUST NEVER OUTLIVE THE PERIOD IT NAMES — hand-editing
+      // either date clears it, or the row would go on claiming "This month"
+      // over a range somebody has since changed.
+      const clear = () => wrap.querySelectorAll('.rep-quick-btn').forEach(b => b.classList.remove('on'));
+      fEl.addEventListener('input', clear);
+      tEl.addEventListener('input', clear);
+      wrap.querySelectorAll('.rep-quick-btn').forEach(btn => {
+        const r = quickRange(btn.dataset.quick);
+        if (r) btn.title = `${r[0]} to ${r[1]}`;
+        btn.addEventListener('click', () => {
+          const range = quickRange(btn.dataset.quick);   // recomputed: a tab left open overnight must not set yesterday
+          if (!range) return;
+          fEl.value = range[0]; tEl.value = range[1];
+          clear(); btn.classList.add('on');
+          btn.title = `${range[0]} to ${range[1]}`;
+        });
+      });
+    });
     // The client list for the transaction statement — a statement is per
     // account, so the picker is filled from every client that actually has
     // one, not from whatever orders happen to be on screen.

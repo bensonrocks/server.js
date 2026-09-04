@@ -18422,8 +18422,22 @@ app.get('/api/master/report/:kind', (req, res) => {
         if (leadHrs !== null) { g.withLead++; g.hrs.push(leadHrs); }
       }
       rows.sort((a, b) => String(b[3]).localeCompare(String(a[3])));   // newest completion first
+      // A PERIOD THAT ENDS TODAY IS STILL RUNNING, AND THE SHEET SAYS SO.
+      // Now that today / this-month / this-year are one tap away, most of
+      // these files are taken mid-day — and a lead time can only exist once an
+      // order has FINISHED, so anything still being picked is legitimately
+      // absent. Without this, a 10am file reads as a full day's work and gets
+      // compared against yesterday's complete one; with it, the reader knows
+      // the figure is a running total taken at a stated moment.
+      // ON THE TITLE LINE, NOT A ROW OF ITS OWN: an extra row would push the
+      // header down to row 3 for a today-ending period and row 2 otherwise,
+      // so anything reading this sheet by offset would silently read a header
+      // as data on some files and not others. The sheet keeps ONE shape.
+      const runningNote = to >= today
+        ? ` · STILL RUNNING — taken ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })} SGT; orders finishing later today are not in it yet, and one still being picked has no lead time to report`
+        : '';
       addSheet('Throughput', [
-        [`Period: ${from} to ${to} (by completion date)${clientFilter ? ` · Client: ${clientFilter}` : ''}`],
+        [`Period: ${from} to ${to} (by completion date)${clientFilter ? ` · Client: ${clientFilter}` : ''}${runningNote}`],
         ['Order No', 'Client', 'Uploaded At (SGT)', 'Completed At (SGT)', 'Lead Time', 'Lead Time (hrs)'],
         ...rows,
       ]);
