@@ -7407,6 +7407,19 @@ function buildLabelMatchIndexFor(allOrders) {
 
 function matchLabelPage(rawText, extracted, index) {
   const f = extracted || {};
+  // THE GI NUMBER IS AN EXPLICITLY CAPTIONED FIELD, so it identifies the page
+  // outright and is tried FIRST — ahead of the tracking number, because a
+  // picking document's own GI must outrank any other order's identifier that
+  // happens to be printed elsewhere on the same page (a previous consignment's
+  // tracking number, say, which used to win and file the label on that order).
+  // This is an EXACT key lookup, so unlike the blind whole-page scan below it
+  // carries no length floor: a short GI (GI-9931, or a 7-digit issue no) is
+  // matchable here and nowhere else. The scan's floor is left exactly as it is
+  // — it guards a substring test, where short keys really do match noise.
+  if (f.giNumber) {
+    const hit = index.byOrderNo.get(normStr(f.giNumber));
+    if (hit) return { hit, method: 'gi_number' };
+  }
   if (f.orderNumber) {
     const hit = index.byOrderNo.get(normStr(f.orderNumber));
     if (hit) return { hit, method: 'order_number' };
@@ -7422,6 +7435,97 @@ function matchLabelPage(rawText, extracted, index) {
     }
   }
   return null;
+}
+
+// ── "This number was read off the label, and it is not this order's" ────────
+// A label page shows what OCR read — Tracking, Order No., GI No. — as plain
+// fact, directly above the order it was filed against. When one of those
+// disagrees with the order (an OCR slip of a single digit in the small print,
+// while the big tracking number reads perfectly) the row says two different
+// things and gives the reader no way to tell a good match from a bad one. It
+// reads as a mismatch even when the match is right, which is exactly what the
+// floor reported. So every displayed field is compared against the matched
+// order's OWN identifiers and the disagreement is SAID, not left to the eye.
+//
+// This never changes what matched — it is a read-time explanation of a match
+// already made, and matching itself is untouched.
+const LABEL_ID_FIELDS = [
+  ['order_number',   'order number'],
+  ['issue_no',       'GI / issue no'],
+  ['waybill_number', 'waybill'],
+  ['po_number',      'PO number'],
+  ['pick_ticket',    'pick ticket'],
+];
+
+// How far apart two identifiers are in single-character edits — computed only
+// far enough to answer "is this a misread?". A full edit distance between two
+// unrelated 15-digit numbers is a number nobody acts on, so anything past a
+// couple of edits is simply reported as far apart.
+function _idDistance(a, b) {
+  if (a === b) return 0;
+  if (a.length === b.length) {                    // substitution — OCR's usual slip
+    let d = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) { d++; if (d > 2) return 99; }
+    return d;
+  }
+  if (Math.abs(a.length - b.length) === 1) {      // one character dropped or gained
+    const [lo, hi] = a.length < b.length ? [a, b] : [b, a];
+    let i = 0, j = 0, skipped = 0;
+    while (i < lo.length && j < hi.length) {
+      if (lo[i] === hi[j]) { i++; j++; continue; }
+      if (++skipped > 1) return 99;
+      j++;
+    }
+    return 1;
+  }
+  return 99;
+}
+
+function _labelFieldVerdict(raw, order) {
+  const v = normStr(raw);
+  if (!v) return null;
+  let best = null;
+  for (const [key, label] of LABEL_ID_FIELDS) {
+    const cand = normStr(order[key]);
+    if (!cand) continue;
+    if (cand === v) return { verdict: 'agrees', field: label, orderValue: order[key] };
+    const d = _idDistance(v, cand);
+    if (d < 99 && (!best || d < best.d)) best = { d, label, value: order[key] };
+  }
+  // A NEAR MISS ONLY MEANS ANYTHING ON A LONG IDENTIFIER. Two short codes one
+  // character apart are two different codes, not a misreading of one.
+  if (best && v.length >= 8) {
+    return { verdict: 'misread', field: best.label, orderValue: best.value, chars: best.d };
+  }
+  return { verdict: 'foreign' };
+}
+
+// Returns a COPY of the import with a per-page `identity` block. A copy on
+// purpose: `imp` is a live db.json object, and a field stamped on it here
+// would ride into the next writeDb and be persisted as though it were stored
+// data (the same trap the station-throughput report documents).
+function withLabelIdentityChecks(db, imp) {
+  const pages = imp.pages || [];
+  if (!pages.some(p => p.matchedOrderNumber)) return imp;   // nothing to compare
+  const byNo = new Map();
+  for (const o of globalOrdersWithState()) byNo.set(o.order_number, o);
+
+  return { ...imp, pages: pages.map(p => {
+    const order = p.matchedOrderNumber ? byNo.get(p.matchedOrderNumber) : null;
+    if (!order) return p;
+    const f = p.extracted || {};
+    const fields = {};
+    for (const k of ['trackingNumber', 'orderNumber', 'giNumber']) {
+      const v = _labelFieldVerdict(f[k], order);
+      if (v) fields[k] = v;
+    }
+    return { ...p, identity: {
+      fields,
+      order: Object.fromEntries(LABEL_ID_FIELDS
+        .map(([key, label]) => [key, { label, value: order[key] || '' }])
+        .filter(([, v]) => v.value)),
+    } };
+  }) };
 }
 
 // ── Label-PDF processing, in ONE place ──────────────────────────────────────
@@ -7636,7 +7740,7 @@ app.get('/api/label-imports/:id', requireAuth, (req, res) => {
   const db  = readDb();
   const imp = (db.labelImports || []).find(i => i.id === req.params.id);
   if (!imp) return res.status(404).json({ error: 'Import not found' });
-  res.json(imp);
+  res.json(withLabelIdentityChecks(db, imp));
 });
 
 function csvCell(v) {
@@ -7655,12 +7759,12 @@ app.get('/api/label-imports/:id/export.csv', requireAuth, (req, res) => {
   const imp = (db.labelImports || []).find(i => i.id === req.params.id);
   if (!imp) return res.status(404).json({ error: 'Import not found' });
 
-  const headers = ['Page', 'Match Status', 'Match Method', 'Matched Order', 'Tracking Number', 'Order Number', 'Recipient', 'Sender', 'Address', 'Postal Code', 'Read By OCR'];
+  const headers = ['Page', 'Match Status', 'Match Method', 'Matched Order', 'Tracking Number', 'Order Number', 'GI Number', 'Recipient', 'Sender', 'Address', 'Postal Code', 'Read By OCR'];
   const rows = imp.pages.map(p => {
     const f = p.extracted || {};
     return [
       p.pageIndex + 1, p.matchStatus || '', p.matchMethod || '', p.matchedOrderNumber || '',
-      f.trackingNumber || '', f.orderNumber || '', f.recipientName || '', f.senderName || '',
+      f.trackingNumber || '', f.orderNumber || '', f.giNumber || '', f.recipientName || '', f.senderName || '',
       f.address || '', f.postalCode || '', p.ocr ? 'yes' : 'no',
     ];
   });

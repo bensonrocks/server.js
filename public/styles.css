@@ -2516,6 +2516,14 @@ body.ls-open { overflow: hidden; }
 .lri-field  { display: flex; flex-direction: column; gap: .1rem; }
 .lri-lbl    { font-size: .68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
 .lri-val    { font-size: .82rem; font-weight: 600; color: var(--text); }
+/* A number read off the label that disagrees with the order it was filed
+   against. Amber, not red: on a near miss the MATCH is usually right and the
+   READING is wrong, so this is "check this", never "this is broken". */
+.lri-val-off      { color: #b45309; }
+.lri-field-note   { font-size: .7rem; line-height: 1.35; color: #b45309;
+                    background: #fffbeb; border-left: 3px solid #f59e0b;
+                    padding: .3rem .45rem; border-radius: 0 4px 4px 0; margin-top: .15rem; }
+.lri-field-note strong { font-weight: 700; }
 .lri-match-action { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-top: .25rem; }
 .lri-order-matched { font-size: .82rem; font-weight: 700; color: var(--success); }
 

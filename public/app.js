@@ -17426,9 +17426,34 @@
         const pdfUrl = `/api/label-imports/${esc(importId)}/pages/${i}/pdf?token=${encodeURIComponent(token)}`;
         const statusCls = { matched: 'lri-matched', unmatched: 'lri-unmatched', duplicate: 'lri-dup', error: 'lri-err' }[page.matchStatus] || 'lri-unmatched';
         const f = page.extracted || {};
+        // WHAT WAS READ OFF THE LABEL IS NOT AUTOMATICALLY A FACT ABOUT THIS
+        // ORDER. The server compares each one against the matched order's own
+        // identifiers; anything that disagrees is said in words instead of
+        // being printed as plain fact beside a different number, which is what
+        // made a CORRECT match (tracking exact, order no. one digit out from
+        // OCR) read as a mismatch on the floor.
+        const idf = (page.identity || {}).fields || {};
+        const idField = (key, label, val) => {
+          if (!val) return '';
+          const v = idf[key];
+          let note = '', cls = '';
+          if (v && v.verdict === 'misread') {
+            cls = ' lri-val-off';
+            note = `<span class="lri-field-note">read off the label — this order's ${esc(v.field)} is `
+                 + `<strong>${esc(v.orderValue)}</strong>, ${v.chars} character${v.chars > 1 ? 's' : ''} different, `
+                 + `so this is almost certainly a misread rather than the wrong order</span>`;
+          } else if (v && v.verdict === 'foreign') {
+            cls = ' lri-val-off';
+            note = `<span class="lri-field-note">read off the label — it matches no identifier on this order. `
+                 + `Check the label before trusting the match.</span>`;
+          }
+          return `<div class="lri-field"><span class="lri-lbl">${esc(label)}</span>`
+               + `<span class="lri-val${cls}">${esc(val)}</span>${note}</div>`;
+        };
         const fields = [
-          f.trackingNumber ? `<div class="lri-field"><span class="lri-lbl">Tracking</span><span class="lri-val">${esc(f.trackingNumber)}</span></div>` : '',
-          f.orderNumber    ? `<div class="lri-field"><span class="lri-lbl">Order No.</span><span class="lri-val">${esc(f.orderNumber)}</span></div>` : '',
+          idField('trackingNumber', 'Tracking', f.trackingNumber),
+          idField('orderNumber',    'Order No.', f.orderNumber),
+          idField('giNumber',       'GI No.',   f.giNumber),
           f.recipientName  ? `<div class="lri-field"><span class="lri-lbl">Recipient</span><span class="lri-val">${esc(f.recipientName)}</span></div>` : '',
           f.senderName     ? `<div class="lri-field"><span class="lri-lbl">From</span><span class="lri-val">${esc(f.senderName)}</span></div>` : '',
           f.address        ? `<div class="lri-field"><span class="lri-lbl">Address</span><span class="lri-val">${esc(f.address)}</span></div>` : '',
@@ -17529,7 +17554,7 @@
     // The old list was newest-batch-first cut at 60 rows, so one big upload
     // from another client filled every visible slot and the order this label
     // belongs to (loaded, further down) never appeared on screen.
-    const hintKeys = [pageHints?.trackingNumber, pageHints?.orderNumber]
+    const hintKeys = [pageHints?.trackingNumber, pageHints?.orderNumber, pageHints?.giNumber]
       .map(v => String(v || '').trim().toLowerCase()).filter(Boolean);
     const orderKeys = o => [o.order_number, o.waybill_number, o.issue_no, o.po_number]
       .map(v => String(v || '').trim().toLowerCase()).filter(Boolean);
@@ -17565,6 +17590,7 @@
             ${o.client_name ? `<span class="chip">${esc(o.client_name)}</span>` : ''}
             ${o.customer_name ? `<span>${esc(o.customer_name)}</span>` : ''}
             ${o.waybill_number ? `<span class="hint">${esc(o.waybill_number)}</span>` : ''}
+            ${o.issue_no ? `<span class="hint">GI ${esc(o.issue_no)}</span>` : ''}
             ${o.carrier ? `<span class="chip chip-carrier" title="${esc(o.carrier)}">${esc(carrierLabel(o.carrier))}</span>` : ''}
             <span class="status-badge ${esc(o.scan_status)}">${esc(o.scan_status)}</span>
           </div>

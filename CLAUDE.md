@@ -865,6 +865,101 @@ orders the packers actually work from":
 prefixes (SPXSG…, SPTTND…) were being missed entirely; existing
 TRACX/SGDEX/postal patterns run first and are unaffected.
 
+### The GI number had no way to match, and a right match read as a wrong one
+
+Reported from the floor as *"labels uploaded didn't match with the GI order
+number"*. Traced read-only first, then fixed. TWO separate faults, and the
+second is why the first was hard to see.
+
+**1. `extractLabelFields` had NO GI PATTERN AT ALL.** Its `orderNumber` rules
+want a 13–18 digit Lazada id or a Shopee `Order ID:`; a `GI-25001234` or an
+`Issue No: 1300456` produced an entirely empty extraction. So `matchLabelPage`
+never queried `byOrderNo` with the GI **even though the GI is in that map**,
+and the only route left was the blind whole-page text scan — whose length floor
+(`>=8` chars, `>=10` if all digits, `server.js` `buildLabelMatchIndexFor`)
+**a short GI can never clear**. Measured: of five real GI shapes, four were
+permanently unmatchable — `GI-9931`, `1300456`, `130045678` — and no amount of
+re-uploading or ↻ Rematch All could ever change that.
+
+- `giNumber` is now its OWN extracted field, never folded into `orderNumber`:
+  a Lazada or Shopee label's extraction is byte-for-byte what it was, and no GI
+  is invented on one (asserted).
+- Two shapes are read — the literal barcoded token (`GI-25001234`, `GI 25001234`)
+  and the captioned unprefixed one (`Issue No: 1300456`, `iWMS GINo 1300456`,
+  which is where the XLSX/CSV path's `issue_no` is printed).
+- `matchLabelPage` tries it **FIRST, as an EXACT key lookup**. Exact is the
+  whole point: it carries no length floor because it is not a substring test,
+  so a 6-character GI matches here and nowhere else. **THE SCAN'S FLOOR IS
+  DELIBERATELY UNTOUCHED** — it guards a blind `hay.includes(key)` over the
+  whole page, where short keys really do match noise. Lowering it would have
+  bought the short GIs at the price of false matches everywhere.
+- **FIRST also fixes a wrong-order attach.** The old order was orderNumber →
+  trackingNumber → scan, so with the GI unreadable, ANY tracking-looking string
+  elsewhere on the page won: a page whose own GI was ORD-NEW filed itself under
+  ORD-OLD because a previous consignment's waybill was printed on it
+  (reproduced). Same for a printed DATE — `normStr` strips spaces and hyphens
+  from the WHOLE page, so `Printed 2026-07-16 H` contains the recycled
+  date-letter order number `20260716-H`, and that claimed the page.
+  **HONEST LIMIT, asserted so nobody thinks it was solved:** a page carrying NO
+  GI can still be claimed by a stripped date. That is the blind scan, and it is
+  a separate problem from this one.
+
+**2. A CORRECT MATCH READ AS A MISMATCH.** From a live screenshot: tracking
+`LZSGD1015379600` matched exactly, and printed directly above it was
+`ORDER NO. 172428924275375` against a matched order of `172429924275375` —
+**one digit apart**, the documented OCR signature (the big tracking number
+reads perfectly, the small `Order No:` line loses a digit). The match was
+right. The screen showed a garbled number as plain fact next to a different
+one and said nothing, so there was no way to tell a good match from a bad one
+by looking — which is how this became a support question rather than a glance.
+
+- `withLabelIdentityChecks(db, imp)` compares every displayed identifier
+  against the matched order's OWN (`order_number`, `issue_no`, `waybill_number`,
+  `po_number`, `pick_ticket`) and returns a per-field verdict.
+- **THREE VERDICTS, because they mean different things**: `agrees` (silent —
+  a note on every field would be noise), `misread` (within 1–2 character edits
+  of one of the order's identifiers, on an identifier of 8+ characters), and
+  `foreign` (matches nothing here). A near miss is only meaningful on a long
+  identifier; two short codes one character apart are two different codes, not
+  a misreading of one.
+- **AMBER, NOT RED, and it says which.** On a near miss the MATCH is usually
+  right and the READING is wrong, so the note reads *"…1 character different,
+  so this is almost certainly a misread rather than the wrong order"*. Calling
+  it an error would train people to distrust correct matches.
+- **IT IS A READ-TIME EXPLANATION AND CHANGES NO MATCH.** Nothing about
+  matching moved; this only describes a decision already made.
+- **RETURNS A COPY.** `imp` is a live `db.json` object, so a verdict stamped on
+  it would ride into the next `writeDb` and be persisted as though it were
+  stored data — the same trap the station-throughput report documents. Asserted
+  by grepping the persisted file after two reads.
+- The GI also joins the review card as its own `GI No.` field, the OCR-results
+  CSV as a `GI Number` column, and the manual-match picker's `hintKeys` (which
+  ranks the right order to the top — with no GI extracted it never fired for
+  these labels) and its row meta, so a picking order can be found by the number
+  actually printed on the paperwork.
+
+**NOT FIXED, and still open:** the label index has no leading-zero tolerance
+(`0012345678` vs `12345678` misses), unlike the scan-to-find-order bar and the
+manual-match picker, which both use `strip0`. And once a page falsely claims an
+order, the genuine page for it becomes `duplicate` and is never attached — one
+bad match still costs two orders.
+
+Verified 20 checks on the matching itself (all five GI shapes, the two
+that used to be won by a foreign tracking number and by a stripped date, an
+unknown GI still unmatched, and regressions proving the Lazada and Shopee
+paths and the reported screenshot's own tracking match are unchanged) — the
+pre-fix code fails 9 of them, so they reproduce the report rather than agreeing
+with themselves — plus 16 API checks through the real endpoint on the exact
+reported shape (misread named with the order's real number and the character
+count; a GI page clean; an unrelated number called foreign not misread; nothing
+written to disk) and 30 browser checks on desktop and a Pixel 5 (the note
+visible and amber by computed style, the agreeing field left clean, the GI
+field captioned, and no sideways scroll).
+
+TEST GOTCHA: `.lri-lbl` is `text-transform: uppercase` and `innerText` returns
+the RENDERED text, so a field caption reads `GI NO.` on screen — assert on the
+label element, not a case-sensitive match over the row.
+
 ## Live-wave visibility pill + build stamp (server.js `globalOrdersWithState`, public/app.js)
 
 Before a wave had a visible pill, closing the Wave Pick tab left a
