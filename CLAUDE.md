@@ -956,9 +956,25 @@ written to disk) and 30 browser checks on desktop and a Pixel 5 (the note
 visible and amber by computed style, the agreeing field left clean, the GI
 field captioned, and no sideways scroll).
 
+**EVERY QUANTIFIER IN THE GI CAPTION PATTERN IS BOUNDED**, and that is not
+fussiness. The first cut read `\s*(?:No\.?|Number|#)?\s*[:\s]\s*` — THREE
+overlapping whitespace quantifiers — over text that comes off an uploaded PDF
+or an OCR pass, i.e. uncontrolled input. Measured: `"Issue"` + 2,000 spaces +
+one non-matching character **did not finish in two minutes**; a label carrying
+a long whitespace run (a wide table cell, an OCR misread of a blank area)
+would have hung the request. It is `(?:\s{0,3}(?:No\.?|Number|#))?[:\s]{1,8}`
+now — 20,000 hostile characters in ~1ms, every reading unchanged. Found by
+MEASURING it, not by reading it; CodeQL's alert count did not move on this
+commit or the four before it, so it was no help either way. Any new regex run
+on label or OCR text gets the same treatment.
+
 TEST GOTCHA: `.lri-lbl` is `text-transform: uppercase` and `innerText` returns
 the RENDERED text, so a field caption reads `GI NO.` on screen — assert on the
 label element, not a case-sensitive match over the row.
+
+TEST GOTCHA, third time in this file: `pkill -f "<pattern>"` matches its OWN
+command line and kills the shell (exit 144). Kill a test server by scanning
+/proc for the pid whose environ carries the port.
 
 ## Live-wave visibility pill + build stamp (server.js `globalOrdersWithState`, public/app.js)
 
