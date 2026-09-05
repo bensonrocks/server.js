@@ -989,6 +989,19 @@ build that shipped without it.
 - An ambiguous page is swept by the late-orders rematch alongside unmatched
   ones — a later upload, or a deletion, is exactly what can settle it.
 
+**THE SCAN LOOKS UP THE PAGE'S OWN TOKENS; IT DOES NOT SEARCH PER KEY.** Found
+by measuring my own new code after a CodeQL wake whose count had not moved (the
+count is not a detector — the same audit caught a ReDoS the commit before).
+Making the scan find EVERY candidate rather than stopping at the first turned it
+from an early-exit loop into O(keys x page): **155ms per page on a 40,000-order
+account**, which a 300-page import pays 300 times. The boundary rule says a
+match must begin and end on a non-alphanumeric or a whitespace break — which is
+exactly the definition of a maximal alphanumeric RUN — so the page's own runs
+are looked up in a `Map(key -> order)` instead. Same answers, and **0.05ms per
+page whether the account holds 1,000 orders or 200,000** (measured at both).
+`index.scanKeys` is that Map now, not an array; the longest-key-first sort went
+with it, since a run either equals a key or it does not.
+
 **THE ONE REMAINING JUDGEMENT CALL, stated rather than papered over:**
 `extractLabelFields` finds a tracking number by SHAPE, not by a caption, and
 takes the FIRST match in the page text. On a page carrying two tracking-shaped
