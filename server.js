@@ -7376,6 +7376,7 @@ function buildLabelMatchIndex() {
 function buildLabelMatchIndexFor(allOrders) {
   const byOrderNo = new Map();
   const byWaybill = new Map();
+  const looseOrderNo = new Map();   // leading zeros stripped — consulted last
   const scanKeys  = [];
   for (const o of allOrders) {
     // issue_no carries the GI number for XLSX/CSV uploads that store it
@@ -7395,6 +7396,17 @@ function buildLabelMatchIndexFor(allOrders) {
     if (keys[1][0] && !byOrderNo.has(keys[1][0])) byOrderNo.set(keys[1][0], o.order_number);
     if (keys[2][0] && !byWaybill.has(keys[2][0])) byWaybill.set(keys[2][0], o.order_number);
     if (keys[3][0] && !byWaybill.has(keys[3][0])) byWaybill.set(keys[3][0], o.order_number);
+    // LEADING ZEROS, the same tolerance the scan-to-find-order bar and the
+    // manual-match picker have always had. A label printing 12345678 for an
+    // issue_no stored as 0012345678 is the same order; only the EXACT maps
+    // above are consulted first, so this can never displace a real match.
+    for (const [key, field] of keys) {
+      if (!key) continue;
+      const loose = _strip0(key);
+      if (loose !== key && !looseOrderNo.has(loose)) {
+        looseOrderNo.set(loose, { order: o.order_number, field });
+      }
+    }
     for (const [key, field] of keys) {
       if (!key) continue;
       const minLen = /[A-Z]/.test(key) ? 8 : 10;
@@ -7402,7 +7414,69 @@ function buildLabelMatchIndexFor(allOrders) {
     }
   }
   scanKeys.sort((a, b) => b.key.length - a.key.length); // longest key wins
-  return { byOrderNo, byWaybill, scanKeys };
+  return { byOrderNo, byWaybill, looseOrderNo, scanKeys };
+}
+
+const _strip0 = s => String(s || '').replace(/^0+(?=.)/, '');
+
+// ── The whole-page text scan, made answerable ───────────────────────────────
+// The scan is a HEURISTIC: it looks for an order's identifier anywhere in the
+// page's text with the separators stripped out. That rescues an OCR'd label
+// whose caption was unreadable, and it is the only thing that does — but it is
+// a guess, and two ways of guessing wrong put a label on the WRONG box:
+//
+//  1. IT GLUED TWO SEPARATE THINGS ON THE PAGE INTO ONE KEY. `normStr` stripped
+//     whitespace from the WHOLE page before the substring test, so a printed
+//     date `2026-07-16 H` became the recycled order number `20260716-H` and
+//     claimed a page belonging to somebody else. Proven, and it was the last
+//     known way a label could silently land on the wrong box. Closed: the
+//     match may NEVER span a whitespace gap. Hyphens and underscores INSIDE
+//     one token are still stripped, because that is the printing variation the
+//     scan exists to absorb (`GI-25001234`, `GI_25001234` — one token either
+//     way). The cost is honest and small: a label printing an identifier with
+//     spaces inside it no longer scan-matches, which is a MISS — visible on
+//     the review screen with a Match to Order button — and a miss is not in
+//     the same league as a parcel going out under another order's label.
+//  2. THE KEY SAT INSIDE A LONGER RUN. `hay.includes(key)` is happy for
+//     234567890123 to match inside 1234567890123. A match must now begin and
+//     end on a token boundary.
+//  3. THE PAGE NAMED MORE THAN ONE ORDER. Nothing in the text says which of
+//     two candidates the page is FOR, so the caller REFUSES rather than
+//     picking one (see matchLabelPage). A guess that names two orders is not
+//     a match, and picking the first is how a coin flip gets recorded as a
+//     fact.
+const _TOKEN_BREAK = ' ';   // never appears in a key: keys are [A-Z0-9]
+function _normIndexed(s) {
+  return String(s || '')
+    .toUpperCase()
+    .replace(/[-_]/g, '')          // internal to a token
+    .replace(/\s+/g, _TOKEN_BREAK); // a gap the scan may not reach across
+}
+
+// Every DISTINCT order the page's text points at, longest key first. Returns
+// [] when the text names none.
+function scanCandidates(rawText, index) {
+  if (!rawText) return [];
+  const text  = _normIndexed(rawText);
+  const alnum = c => /[A-Z0-9]/.test(c || '');
+  const out   = [];
+  const seen  = new Set();
+  for (const k of index.scanKeys || []) {
+    if (seen.has(k.orderNumber)) continue;
+    let p = text.indexOf(k.key);
+    while (p !== -1) {
+      const e = p + k.key.length;
+      // The key cannot contain the break character, so reaching here already
+      // proves it did not span a gap; only the two edges are left to check.
+      if (!alnum(text[p - 1]) && !alnum(text[e])) {
+        seen.add(k.orderNumber);
+        out.push({ hit: k.orderNumber, method: k.method, key: k.key });
+        break;
+      }
+      p = text.indexOf(k.key, p + 1);
+    }
+  }
+  return out;
 }
 
 function matchLabelPage(rawText, extracted, index) {
@@ -7416,25 +7490,37 @@ function matchLabelPage(rawText, extracted, index) {
   // carries no length floor: a short GI (GI-9931, or a 7-digit issue no) is
   // matchable here and nowhere else. The scan's floor is left exactly as it is
   // — it guards a substring test, where short keys really do match noise.
-  if (f.giNumber) {
-    const hit = index.byOrderNo.get(normStr(f.giNumber));
-    if (hit) return { hit, method: 'gi_number' };
-  }
-  if (f.orderNumber) {
-    const hit = index.byOrderNo.get(normStr(f.orderNumber));
-    if (hit) return { hit, method: 'order_number' };
-  }
-  if (f.trackingNumber) {
-    const hit = index.byWaybill.get(normStr(f.trackingNumber));
-    if (hit) return { hit, method: 'tracking_number' };
-  }
-  if (rawText) {
-    const hay = normStr(rawText);
-    for (const k of index.scanKeys) {
-      if (hay.includes(k.key)) return { hit: k.orderNumber, method: k.method };
-    }
-  }
-  return null;
+  //
+  // CONFIDENCE IS PART OF THE ANSWER. An exact hit on a field READ OFF the
+  // label is evidence; the whole-page scan below is a guess. They used to be
+  // reported identically, so nothing downstream — and nobody on the review
+  // screen — could tell a certainty from a coin flip.
+  const exact = (val, map, method) => {
+    const v = normStr(val);
+    if (!v) return null;
+    const hit = map.get(v);
+    if (hit) return { hit, method, confidence: 'exact' };
+    const loose = index.looseOrderNo && index.looseOrderNo.get(_strip0(v));
+    if (loose) return { hit: loose.order, method: method + '_leading_zero', confidence: 'exact' };
+    return null;
+  };
+  return exact(f.giNumber, index.byOrderNo, 'gi_number')
+      || exact(f.orderNumber, index.byOrderNo, 'order_number')
+      || exact(f.trackingNumber, index.byWaybill, 'tracking_number')
+      || (() => {
+        // NO CAPTIONED FIELD RESOLVED — fall back to the blind scan, which is
+        // where a wrong label gets put on a box. Two rules make that survivable:
+        // the match must sit on real boundaries (scanCandidates), and if the
+        // page names MORE THAN ONE order we attach NOTHING and say so. Picking
+        // one of two would be a guess presented as a fact, and the cost of
+        // being wrong is a parcel with someone else's label on it.
+        const cands = scanCandidates(rawText, index);
+        if (!cands.length) return null;
+        if (cands.length > 1) {
+          return { ambiguous: true, candidates: cands.map(c => ({ order: c.hit, via: c.method })) };
+        }
+        return { hit: cands[0].hit, method: cands[0].method, confidence: 'scan' };
+      })();
 }
 
 // ── "This number was read off the label, and it is not this order's" ────────
@@ -7555,7 +7641,9 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
   if (!db.orderLabels)  db.orderLabels  = {};
 
   const pages              = [];
-  const matchedThisImport  = new Set();
+  // order number → {pageIndex, confidence} of the page currently holding it,
+  // so an exact match can displace an earlier guess (see the duplicate rule).
+  const matchedThisImport  = new Map();
 
   // Per-page text from the ORIGINAL upload — pdf-lib re-saved single pages
   // frequently fail to parse, so text extraction must happen before the split
@@ -7592,16 +7680,39 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
     let matchStatus        = parseError ? 'error' : 'unmatched';
     let matchedOrderNumber = null;
     let matchMethod        = null;
+    let matchConfidence    = null;
+    let candidates         = null;
 
     if (rawText) {
       try {
         if (extractLabelFields) extracted = extractLabelFields(rawText);
         const hit = matchLabelPage(rawText, extracted, matchIndex);
-        if (hit) {
+        if (hit && hit.ambiguous) {
+          // The page names more than one order and nothing on it settles which.
+          matchStatus = 'ambiguous';
+          candidates  = hit.candidates;
+        } else if (hit) {
           matchedOrderNumber = hit.hit;
-          matchStatus  = matchedThisImport.has(hit.hit) ? 'duplicate' : 'matched';
-          matchMethod  = hit.method;
-          matchedThisImport.add(hit.hit);
+          matchConfidence    = hit.confidence;
+          matchMethod        = hit.method;
+          const held = matchedThisImport.get(hit.hit);
+          // A DUPLICATE IS DECIDED ON EVIDENCE, NOT ON PAGE ORDER. The old
+          // rule was first-come, so a page that claimed an order by a blind
+          // scan kept it and the order's REAL label — arriving later, matched
+          // exactly — was filed as a duplicate and never attached. One bad
+          // guess cost two orders. An exact match now displaces a scan match
+          // and sends the earlier page back to the pile.
+          if (!held) {
+            matchStatus = 'matched';
+            matchedThisImport.set(hit.hit, { pageIndex: i, confidence: hit.confidence });
+          } else if (held.confidence === 'scan' && hit.confidence === 'exact') {
+            const prev = pages[held.pageIndex];
+            if (prev) { prev.matchStatus = 'duplicate'; prev.displacedBy = i; }
+            matchStatus = 'matched';
+            matchedThisImport.set(hit.hit, { pageIndex: i, confidence: hit.confidence });
+          } else {
+            matchStatus = 'duplicate';
+          }
         }
       } catch (e) { matchStatus = 'error'; }
     }
@@ -7615,7 +7726,8 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
 
     // rawText kept (truncated) so later rematches can reverse-scan without
     // re-parsing the PDF from the volume
-    pages.push({ pageIndex: i, pageFile, extracted, rawText: rawText.slice(0, 4000), matchStatus, matchedOrderNumber, matchMethod });
+    pages.push({ pageIndex: i, pageFile, extracted, rawText: rawText.slice(0, 4000),
+                 matchStatus, matchedOrderNumber, matchMethod, matchConfidence, candidates });
   }
 
   // A LABEL WE ASKED FOR BY ORDER MUST NOT BE ORPHANED BY A MISREAD.
@@ -7657,7 +7769,8 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
   // staff upload does. It also used to sit in the route and reference `pages`,
   // which this extraction moved out of scope — leaving it there would have
   // thrown after the response was already sent, silently disabling OCR.
-  if (pages.some(p => p.matchStatus === 'unmatched' && !(p.rawText || '').trim())) {
+  if (pages.some(p => (p.matchStatus === 'unmatched' || p.matchStatus === 'ambiguous')
+                      && !(p.rawText || '').trim())) {
     setImmediate(() => rematchLabelImport(importId, false)
       .catch(e => console.error('[label-ocr-bg]', e.message)));
   }
@@ -7732,6 +7845,7 @@ app.get('/api/label-imports', requireAuth, (req, res) => {
     matched:     (imp.pages || []).filter(p => p.matchStatus === 'matched').length,
     unmatched:   (imp.pages || []).filter(p => p.matchStatus === 'unmatched').length,
     duplicate:   (imp.pages || []).filter(p => p.matchStatus === 'duplicate').length,
+    ambiguous:   (imp.pages || []).filter(p => p.matchStatus === 'ambiguous').length,
     error:       (imp.pages || []).filter(p => p.matchStatus === 'error').length,
   })));
 });
@@ -7759,11 +7873,11 @@ app.get('/api/label-imports/:id/export.csv', requireAuth, (req, res) => {
   const imp = (db.labelImports || []).find(i => i.id === req.params.id);
   if (!imp) return res.status(404).json({ error: 'Import not found' });
 
-  const headers = ['Page', 'Match Status', 'Match Method', 'Matched Order', 'Tracking Number', 'Order Number', 'GI Number', 'Recipient', 'Sender', 'Address', 'Postal Code', 'Read By OCR'];
+  const headers = ['Page', 'Match Status', 'Match Method', 'Confidence', 'Matched Order', 'Tracking Number', 'Order Number', 'GI Number', 'Recipient', 'Sender', 'Address', 'Postal Code', 'Read By OCR'];
   const rows = imp.pages.map(p => {
     const f = p.extracted || {};
     return [
-      p.pageIndex + 1, p.matchStatus || '', p.matchMethod || '', p.matchedOrderNumber || '',
+      p.pageIndex + 1, p.matchStatus || '', p.matchMethod || '', p.matchConfidence || '', p.matchedOrderNumber || '',
       f.trackingNumber || '', f.orderNumber || '', f.giNumber || '', f.recipientName || '', f.senderName || '',
       f.address || '', f.postalCode || '', p.ocr ? 'yes' : 'no',
     ];
@@ -7951,11 +8065,12 @@ async function rematchLabelImport(id, rematchAll) {
   const matchIndex = buildLabelMatchIndex();
 
   // Track which orders are already matched in THIS import (to detect duplicates)
-  const matchedInImport = new Set(
+  // order number → {pageIndex, confidence} — a Map, not a Set, so an exact
+  // match can displace an earlier scan guess (see the decision below).
+  const matchedInImport = new Map(
     imp.pages
-      .filter(p => p.matchStatus === 'matched' && !rematchAll)
-      .map(p => p.matchedOrderNumber)
-      .filter(Boolean)
+      .filter(p => p.matchStatus === 'matched' && p.matchedOrderNumber && !rematchAll)
+      .map(p => [p.matchedOrderNumber, { pageIndex: p.pageIndex, confidence: p.matchConfidence || 'exact' }])
   );
 
   let newMatches = 0;
@@ -8023,12 +8138,34 @@ async function rematchLabelImport(id, rematchAll) {
     const hit    = found?.hit    || null;
     const method = found?.method || null;
 
-    if (hit) {
-      if (matchedInImport.has(hit)) {
+    // The page names two orders and nothing on it settles which — the SAME
+    // refusal the import path makes. Attaching one of them here would put the
+    // guess back that the import pass declined to make.
+    if (found && found.ambiguous) {
+      if (page.matchedOrderNumber && db.orderLabels[page.matchedOrderNumber]?.importId === id
+          && db.orderLabels[page.matchedOrderNumber]?.pageIndex === page.pageIndex) {
+        delete db.orderLabels[page.matchedOrderNumber];
+      }
+      page.matchStatus        = 'ambiguous';
+      page.matchedOrderNumber = null;
+      page.matchMethod        = null;
+      page.matchConfidence    = null;
+      page.candidates         = found.candidates;
+    } else if (hit) {
+      page.candidates = null;
+      const held = matchedInImport.get(hit);
+      // Evidence displaces a guess here too, or a rematch would restore the
+      // first-come rule the import pass just gave up.
+      if (held && !(held.confidence === 'scan' && found.confidence === 'exact')) {
         page.matchStatus        = 'duplicate';
         page.matchedOrderNumber = hit;
         page.matchMethod        = method;
+        page.matchConfidence    = found.confidence;
       } else {
+        if (held) {
+          const prev = imp.pages.find(p => p.pageIndex === held.pageIndex);
+          if (prev) { prev.matchStatus = 'duplicate'; prev.displacedBy = page.pageIndex; }
+        }
         // Remove stale label reference from previous match if any
         if (page.matchedOrderNumber && page.matchedOrderNumber !== hit) {
           delete db.orderLabels[page.matchedOrderNumber];
@@ -8036,11 +8173,12 @@ async function rematchLabelImport(id, rematchAll) {
         page.matchedOrderNumber = hit;
         page.matchStatus        = 'matched';
         page.matchMethod        = method;
+        page.matchConfidence    = found.confidence;
         db.orderLabels[hit] = {
           importId: id, pageIndex: page.pageIndex, pageFile: page.pageFile,
           attachedAt: new Date().toISOString(), attachedBy: 'auto-match',
         };
-        matchedInImport.add(hit);
+        matchedInImport.set(hit, { pageIndex: page.pageIndex, confidence: found.confidence });
         newMatches++;
       }
     }
@@ -8081,7 +8219,10 @@ function scheduleLabelAutoRematch(trigger) {
       const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
       const due = (db.labelImports || [])
         .filter(i => (Date.parse(i.uploadedAt || '') || 0) > cutoff &&
-                     (i.pages || []).some(p => p.matchStatus === 'unmatched'))
+                     // AMBIGUOUS pages are swept as well as unmatched ones: the
+                     // page named two orders, and the order list is exactly what
+                     // decides that — a later upload or a deletion can settle it.
+                     (i.pages || []).some(p => p.matchStatus === 'unmatched' || p.matchStatus === 'ambiguous'))
         .map(i => i.id);
       for (const id of due) {
         try {

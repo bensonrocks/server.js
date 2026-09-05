@@ -938,11 +938,84 @@ by looking — which is how this became a support question rather than a glance.
   these labels) and its row meta, so a picking order can be found by the number
   actually printed on the paperwork.
 
-**NOT FIXED, and still open:** the label index has no leading-zero tolerance
-(`0012345678` vs `12345678` misses), unlike the scan-to-find-order bar and the
-manual-match picker, which both use `strip0`. And once a page falsely claims an
-order, the genuine page for it becomes `duplicate` and is never attached — one
-bad match still costs two orders.
+### A LABEL MUST NOT LAND ON THE WRONG ORDER — the blind scan, closed
+
+Per the user, on being told the above left holes: *"so mismatch of label against
+the order wont happen again? dont let this happen again"*. It would have. The
+two faults above were the ones reported; the whole-page text scan UNDER them
+could still file a page on the wrong order, and the previous pass recorded that
+as a known limit instead of closing it. Four changes, each proven against the
+build that shipped without it.
+
+- **A SCAN MATCH MAY NOT BE GLUED TOGETHER ACROSS A SPACE.** This was the last
+  way a label could silently go on the wrong box. `normStr` stripped whitespace
+  from the WHOLE page before `hay.includes(key)`, so a printed date
+  `2026-07-16 H` became the recycled order number `20260716-H` and claimed a
+  page belonging to somebody else. `_normIndexed` now collapses whitespace to a
+  break character the keys can never contain, so a match is confined to ONE
+  token; hyphens and underscores inside a token are still stripped, because
+  that is the printing variation the scan exists to absorb (`GI-25001234`,
+  `GI 25001234`, `GI_25001234`). **THE COST IS STATED, NOT HIDDEN**: a label
+  printing an identifier with spaces *inside* it no longer scan-matches. That
+  is a MISS — the page sits on the review screen with a Match to Order button —
+  and a miss is not in the same league as a parcel leaving under another
+  order's label.
+- **A KEY INSIDE A LONGER RUN IS NOT A MATCH.** `234567890123` no longer
+  matches inside `1234567890123`; both edges must sit on a token boundary.
+- **A PAGE THAT NAMES TWO ORDERS ATTACHES NOTHING** (`matchStatus:
+  'ambiguous'`). Nothing in the text says which of two candidates the page is
+  FOR, and picking the first records a coin flip as a fact. Both candidates are
+  named on the row, in the import history's count ("N need a decision"), in the
+  review header and in the OCR CSV, so the refusal is something a person acts
+  on rather than something they have to notice. Counted apart from `unmatched`:
+  there, nothing was found; here, too much was.
+- **CONFIDENCE IS PART OF THE ANSWER** (`matchConfidence`). An exact hit on a
+  field READ OFF the label is `exact`; the blind scan is `scan`. They used to be
+  reported identically, so no screen and no downstream rule could tell a
+  certainty from a guess. A surviving scan match is kept — it is what rescues an
+  OCR'd label — but says on the row that it is worth a look.
+- **THE DUPLICATE CASCADE IS DECIDED ON EVIDENCE, NOT PAGE ORDER.** First-come
+  meant a page that claimed an order by a guess KEPT it, and that order's real
+  label — arriving later, matched exactly — was filed `duplicate` and never
+  attached: one bad guess cost two orders. An exact match now displaces a scan
+  match and sends the earlier page back to the pile (`displacedBy` says which
+  took it). Applied in `processLabelPdf` AND `rematchLabelImport`, or a rematch
+  would quietly restore the old rule.
+- **LEADING ZEROS** (`looseOrderNo`): `12345678` on the label now finds an
+  `issue_no` stored as `0012345678`, the same tolerance the scan-to-find-order
+  bar and the manual-match picker have always had. Consulted only AFTER the
+  exact maps, so it can never displace a real match, and the method says
+  `_leading_zero` so the trail shows how it resolved.
+- An ambiguous page is swept by the late-orders rematch alongside unmatched
+  ones — a later upload, or a deletion, is exactly what can settle it.
+
+**THE ONE REMAINING JUDGEMENT CALL, stated rather than papered over:**
+`extractLabelFields` finds a tracking number by SHAPE, not by a caption, and
+takes the FIRST match in the page text. On a page carrying two tracking-shaped
+strings it reads the first as the label's own and that resolves EXACTLY, so it
+never reaches the ambiguity check. That is right on real carrier labels (the
+tracking number is printed large and repeatedly) and narrowing it would break
+the ordinary Lazada case, so it stands — but it is a shape heuristic, not
+evidence, and it is the next thing to look at if a wrong match is ever reported
+again.
+
+Verified 18 checks on the matcher (the date no longer claims a page, an embedded
+key does not match, two candidates refuse and are both named, one candidate
+still matches and is flagged a guess, an exact field outranks the scan, leading
+zeros resolve and say so, and all six earlier GI/Lazada/Shopee cases unchanged),
+17 e2e checks through the REAL upload and review endpoints on a genuine
+Chromium-printed 4-page PDF (the exact label displacing the guess, `displacedBy`
+recorded, neither ambiguous candidate getting a label ON DISK, the surviving
+guess kept and marked, the history count, the CSV's Confidence column), and 16
+browser checks on desktop and a Pixel 5 (the refusal red by computed style, both
+candidates on screen, the guess note only on the surviving guess, none on the
+exact match, the header count, no sideways scroll).
+
+TEST GOTCHA, cost two runs — and both were the test asserting the wrong
+mechanism, not the app misbehaving: `extractLabelFields` reads a bare
+`GI-88001234` ANYWHERE in the text (the literal pattern needs no caption), so a
+page meant to be a scan-only guess matched EXACTLY. To exercise the scan path
+use a key the extractor has no pattern for — a `po_number` is the clean one.
 
 Verified 20 checks on the matching itself (all five GI shapes, the two
 that used to be won by a foreign tracking number and by a stripped date, an

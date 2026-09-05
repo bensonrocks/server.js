@@ -17257,6 +17257,7 @@
               ${imp.matched    ? `<span class="lhi-badge lhi-matched">${imp.matched} matched</span>` : ''}
               ${imp.unmatched  ? `<span class="lhi-badge lhi-unmatched">${imp.unmatched} unmatched</span>` : ''}
               ${imp.duplicate  ? `<span class="lhi-badge lhi-duplicate">${imp.duplicate} duplicate</span>` : ''}
+              ${imp.ambiguous  ? `<span class="lhi-badge lri-ambig" title="These pages name more than one order, so no label was attached — open Review and match them by hand">${imp.ambiguous} need a decision</span>` : ''}
               ${imp.error      ? `<span class="lhi-badge lhi-error">${imp.error} error</span>` : ''}
               ${hasUnmatched   ? `<button class="btn-primary btn-sm lhi-automatch-btn" data-import-id="${esc(imp.id)}">&#9889; Auto Match</button>` : ''}
               <button class="btn-secondary btn-sm lhi-review-btn">Review ›</button>
@@ -17352,12 +17353,17 @@
       const unmatched = imp.pages.filter(p => p.matchStatus === 'unmatched').length;
       const dup       = imp.pages.filter(p => p.matchStatus === 'duplicate').length;
       const errCount  = imp.pages.filter(p => p.matchStatus === 'error').length;
+      // Pages that named more than one order and were deliberately left
+      // unattached. Counted separately from "unmatched": nothing was found
+      // there, whereas here too much was, and only a person can settle it.
+      const ambig     = imp.pages.filter(p => p.matchStatus === 'ambiguous').length;
       summEl.innerHTML = [
         matched   ? `<span class="lri-badge lri-matched">${matched} matched</span>` : '',
         unmatched ? `<span class="lri-badge lri-unmatched">${unmatched} unmatched</span>` : '',
+        ambig     ? `<span class="lri-badge lri-ambig">${ambig} need a decision</span>` : '',
         dup       ? `<span class="lri-badge lri-dup">${dup} duplicate</span>` : '',
         errCount  ? `<span class="lri-badge lri-err">${errCount} error</span>` : '',
-        unmatched ? `<button class="btn-primary btn-sm" id="lriAutoMatchBtn" style="margin-left:.5rem">&#9889; Auto Match Unmatched</button>` : '',
+        (unmatched || ambig) ? `<button class="btn-primary btn-sm" id="lriAutoMatchBtn" style="margin-left:.5rem">&#9889; Auto Match Unmatched</button>` : '',
         matched   ? `<button class="btn-secondary btn-sm" id="lriRematchAllBtn" style="margin-left:.5rem">&#8635; Rematch All</button>` : '',
         `<button class="btn-secondary btn-sm" id="lriExportCsvBtn" style="margin-left:.5rem">&#11015; Export CSV</button>`,
         `<button class="btn-secondary btn-sm" id="lriImportMatchesBtn" style="margin-left:.5rem">&#11014; Import Matches CSV</button>`,
@@ -17424,7 +17430,8 @@
       const token = localStorage.getItem('wms_token') || '';
       body.innerHTML = imp.pages.map((page, i) => {
         const pdfUrl = `/api/label-imports/${esc(importId)}/pages/${i}/pdf?token=${encodeURIComponent(token)}`;
-        const statusCls = { matched: 'lri-matched', unmatched: 'lri-unmatched', duplicate: 'lri-dup', error: 'lri-err' }[page.matchStatus] || 'lri-unmatched';
+        const statusCls = { matched: 'lri-matched', unmatched: 'lri-unmatched', duplicate: 'lri-dup',
+                            ambiguous: 'lri-ambig', error: 'lri-err' }[page.matchStatus] || 'lri-unmatched';
         const f = page.extracted || {};
         // WHAT WAS READ OFF THE LABEL IS NOT AUTOMATICALLY A FACT ABOUT THIS
         // ORDER. The server compares each one against the matched order's own
@@ -17479,9 +17486,21 @@
             <div class="lri-info-col">
               <div class="lri-status-row">
                 <span class="lri-badge ${statusCls}">${page.matchStatus}</span>
-                ${page.matchMethod ? `<span class="lri-method">via ${page.matchMethod.replace('_', ' ')}</span>` : ''}
+                ${page.matchMethod ? `<span class="lri-method">via ${page.matchMethod.replace(/_/g, ' ')}</span>` : ''}
                 ${page.ocr ? '<span class="lri-method">&#128269; read by OCR</span>' : ''}
               </div>
+              ${page.matchStatus === 'ambiguous' ? `
+                <div class="lri-ambig-note">
+                  <strong>This page names more than one order, so no label was attached.</strong>
+                  Nothing on it says which is its own —
+                  ${(page.candidates || []).map(c => `<span class="lri-cand">${esc(c.order)}</span>`).join(' or ')}.
+                  Open the label and use Match to Order.
+                </div>` : ''}
+              ${page.matchConfidence === 'scan' && page.matchStatus === 'matched' ? `
+                <div class="lri-guess-note">
+                  Matched by finding this order's number in the page text — no captioned
+                  field on the label resolved, so this one is worth a look.
+                </div>` : ''}
               <div class="lri-fields">${fields || `<span class="hint">${noFieldsHint}</span>`}</div>
               <div class="lri-match-action">${matchAction}</div>
             </div>

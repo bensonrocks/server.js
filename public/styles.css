@@ -2479,6 +2479,18 @@ body.ls-open { overflow: hidden; }
 .lri-matched   { background: var(--success-bg);  color: var(--success);  border: 1px solid var(--success-border); }
 .lri-unmatched { background: var(--warning-bg);  color: var(--warning);  border: 1px solid var(--warning-border); }
 .lri-dup       { background: #ede9fe; color: #7c3aed; border: 1px solid #ddd6fe; }
+/* The page named two orders and we refused to pick one. Red, not amber: this
+   is not "check this", it is "nothing was attached and a person must decide". */
+.lri-ambig     { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.lri-ambig-note { font-size: .74rem; line-height: 1.4; color: #b91c1c; background: #fef2f2;
+                  border-left: 3px solid #ef4444; padding: .4rem .5rem; border-radius: 0 4px 4px 0;
+                  margin: .3rem 0; }
+.lri-ambig-note strong { display: block; font-weight: 700; margin-bottom: .15rem; }
+.lri-cand      { font-weight: 700; font-family: ui-monospace, monospace; }
+/* Matched, but by the blind text scan rather than a field read off the label. */
+.lri-guess-note { font-size: .72rem; line-height: 1.35; color: #b45309; background: #fffbeb;
+                  border-left: 3px solid #f59e0b; padding: .35rem .5rem; border-radius: 0 4px 4px 0;
+                  margin: .3rem 0; }
 .lri-err       { background: var(--danger-bg);   color: var(--danger);   border: 1px solid var(--danger-border); }
 
 .label-review-body {
