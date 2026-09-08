@@ -571,6 +571,7 @@
 
     // Manage Waves (bulk cancel) — Admin only
     document.getElementById('manageWavesBtn')?.classList.toggle('hidden', isWarehouse);
+    document.getElementById('giBackfillRow')?.classList.toggle('hidden', isWarehouse);
 
     // If warehouse user lands on Upload tab, redirect to Orders
     if (isWarehouse && document.getElementById('tab-upload').classList.contains('active')) {
@@ -930,6 +931,47 @@
 
   document.getElementById('browseBtn').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
   document.getElementById('photoUploadBtn').addEventListener('click', e => { e.stopPropagation(); photoInput.click(); });
+
+  // ── Fix missing GI numbers on orders already uploaded ───────────────────
+  // The old parser dropped the GI when a Reference column won order_number;
+  // this re-supplies the same file and fills ONLY the blank issue_no. The
+  // input's value is cleared after each run so picking the same file again
+  // still fires `change` (a file input never re-fires on an identical pick).
+  (() => {
+    const btn = document.getElementById('giBackfillBtn');
+    const inp = document.getElementById('giBackfillFileInput');
+    const st  = document.getElementById('giBackfillStatus');
+    if (!btn || !inp || !st) return;
+    const show = (type, html) => { st.className = `status-bar ${type}`; st.innerHTML = html; st.classList.remove('hidden'); };
+    btn.addEventListener('click', e => { e.stopPropagation(); inp.click(); });
+    inp.addEventListener('change', async () => {
+      const file = inp.files?.[0];
+      inp.value = '';
+      if (!file) return;
+      btn.disabled = true;
+      show('loading', `Reading ${esc(file.name)} and matching it against the orders already uploaded…`);
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        const resp = await fetch('/api/orders/backfill-gi', { method: 'POST', headers: { 'x-session-id': SESSION_ID }, body: form });
+        const d = await resp.json();
+        if (!resp.ok) { show('error', esc(d.error || 'Backfill failed') + (d.hint ? `<br><small>${esc(d.hint)}</small>` : '')); return; }
+        const li = (arr, f) => arr.length ? `<ul class="gi-backfill-list">${arr.slice(0, 50).map(f).join('')}${arr.length > 50 ? `<li>…and ${arr.length - 50} more</li>` : ''}</ul>` : '';
+        show(d.filled.length ? 'success' : 'info',
+          `<strong>${esc(d.summary)}</strong>`
+          + li(d.filled,    x => `<li>✓ ${esc(x.order)} → <code>${esc(x.gi)}</code> <small>${esc(x.job)} · ${esc(x.status)}</small></li>`)
+          + (d.conflicts.length ? `<div class="gi-backfill-warn">⚠ Left alone — the stored GI differs from the file (check which is right):</div>` : '')
+          + li(d.conflicts, x => `<li>${esc(x.order)}: stored <code>${esc(x.stored)}</code>, file says <code>${esc(x.inFile)}</code></li>`)
+          + (d.notInSystem.length ? `<div class="gi-backfill-note">${d.notInSystem.length} order(s) in the file are not in IdealOne (nothing to fill).</div>` : '')
+          + (d.noGiInFile.length ? `<div class="gi-backfill-note">${d.noGiInFile.length} order(s) in the file carry no GI value — nothing could be read for them.</div>` : ''));
+        if (d.filled.length) { try { await refreshOrders(); renderOrdersDash(); } catch (_) {} }
+      } catch (err) {
+        show('error', esc(err.message));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  })();
   dropZone.addEventListener('click', () => fileInput.click());
   dropZone.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; dropZone.classList.add('dragover'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));

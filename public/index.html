@@ -2026,6 +2026,17 @@
           <div id="uploadDownloadWrap" class="upload-download-wrap hidden">
             <a id="uploadDownloadBtn" class="btn-download-wms" download>&#8681; Download WMS File</a>
           </div>
+
+          <!-- Admin only. Heals orders ALREADY uploaded whose GI was dropped by
+               the old parser (GI No + Reference column). Re-parses the same
+               file and fills ONLY a blank issue_no — no new batch, no state
+               touched. See server.js /api/orders/backfill-gi. -->
+          <div id="giBackfillRow" class="gi-backfill-row hidden">
+            <input type="file" id="giBackfillFileInput" accept=".xlsx,.xls,.csv" hidden />
+            <button class="btn-secondary btn-sm" id="giBackfillBtn" title="Orders uploaded before the parser fix may have no GI number, so their picking-list barcode cannot be scanned. Re-supply the same file: only the missing GI is filled in — nothing else on the orders changes.">&#128295; Fix missing GI numbers — re-supply the file</button>
+            <span class="hint-inline">fills only the GI on orders already uploaded · nothing else changes</span>
+            <div id="giBackfillStatus" class="status-bar hidden"></div>
+          </div>
         </div>
       </div>
 

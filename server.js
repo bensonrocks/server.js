@@ -16816,6 +16816,111 @@ app.post('/api/orders/bulk-cancel', express.json(), (req, res) => {
   res.json({ ok: true, cancelled, refused });
 });
 
+// ── BACKFILL GI NUMBERS ONTO ORDERS ALREADY UPLOADED ────────────────────────
+// lib/keyfields.js used to DROP the GI whenever a Reference column won
+// order_number (the GI aliases were missing from the issue_no chain), so every
+// Betime order uploaded under that shape is stored with issue_no blank — and
+// the GI-###### barcode on its picking list finds nothing. The parser is
+// fixed for new uploads; this heals the ones already on the floor.
+//
+// The uploaded file is NOT kept on disk (multer memoryStorage — only its
+// hash), so the source has to be re-supplied. Re-uploading it through
+// /api/upload would hit the 409 overwrite tier and DISCARD scan progress on
+// orders mid-pick, which is exactly wrong for orders being worked right now.
+// So this route re-parses the SAME file with the CORRECTED mapper and writes
+// ONE field: a blank issue_no on an order that already exists, matched by
+// order_number (which the fix never changed, so the match is stable).
+//   - never creates a batch or an order, never touches state, scan counts,
+//     status, cartons or claims — one field, one writeDb;
+//   - never OVERWRITES a stored GI: a stored value that differs from the
+//     file's is reported as a conflict for a human, not resolved by a guess;
+//   - XLSX/CSV only — the PDF picking-list path already turns the GI into
+//     order_number, so there is nothing for it to backfill.
+// Admin or master (requireInboundAdmin), audited `orders_gi_backfilled`, and
+// the label matcher is re-run afterwards: a label page that could only match
+// on the GI now has something to match against.
+app.post('/api/orders/backfill-gi', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!requireInboundAdmin(req, res, 'backfill GI numbers')) return;
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Re-supply the order file (XLSX or CSV) the orders were uploaded from.' });
+    const ext = path.extname(req.file.originalname || '').toLowerCase();
+    if (ext === '.pdf') {
+      return res.status(400).json({ error: 'A PDF picking list already carries the GI as its order number — there is nothing to backfill. This is for the XLSX/CSV export.' });
+    }
+    let rows;
+    try { rows = parseUploadedFile(req.file.buffer, req.file.originalname || 'orders.xlsx'); }
+    catch (e) { return res.status(400).json({ error: `Could not read the file: ${e.message}` }); }
+
+    // GI per order from the file, as the CORRECTED mapper now reads it.
+    const giByOrder = new Map();      // order_number → GI
+    const noGi      = new Set();      // orders in the file that STILL carry no GI
+    for (const r of rows) {
+      const on = String(r.order_number || '').trim();
+      if (!on || on === 'UNKNOWN') continue;
+      const gi = String(r.issue_no || '').trim();
+      if (gi) { if (!giByOrder.has(on)) giByOrder.set(on, gi); }
+      else if (!giByOrder.has(on)) noGi.add(on);
+    }
+    for (const on of giByOrder.keys()) noGi.delete(on);
+    if (!giByOrder.size) {
+      return res.status(422).json({
+        error: 'No GI numbers could be read from this file. Nothing was changed.',
+        hint: 'The GI column needs to be named GI No / GINo / GI Number / Issue No / iWMS GINo.',
+        ordersInFile: giByOrder.size + noGi.size,
+      });
+    }
+
+    const strip0 = s => String(s || '').trim().toUpperCase().replace(/^0+/, '');
+    const db = readDb();
+    const filled = [], alreadyHad = [], conflicts = [];
+    const seen = new Set();
+    for (const b of db.batches || []) {
+      for (const o of b.orders || []) {
+        const on = String(o.order_number || '').trim();
+        let gi = giByOrder.get(on);
+        if (!gi) {                      // leading-zero-tolerant fallback, same rule as scanning
+          for (const [k, v] of giByOrder) { if (strip0(k) === strip0(on)) { gi = v; break; } }
+        }
+        if (!gi) continue;
+        seen.add(on);
+        const stored = String(o.issue_no || '').trim();
+        if (!stored) {
+          o.issue_no = gi;
+          filled.push({ order: on, gi, job: b.idealscan_code || '', client: b.client_name || '',
+                        status: b.orderStates?.[on]?.status || 'pending' });
+        } else if (stored.toUpperCase() === gi.toUpperCase()) {
+          alreadyHad.push({ order: on, gi });
+        } else {
+          conflicts.push({ order: on, stored, inFile: gi });   // reported, never overwritten
+        }
+      }
+    }
+    const notInSystem = [...giByOrder.keys()].filter(on => !seen.has(on));
+
+    if (filled.length) {
+      writeDb(db);
+      logAudit('orders_gi_backfilled', {
+        filled: filled.length, orders: filled.slice(0, 100).map(f => `${f.order}→${f.gi}`),
+        alreadyHad: alreadyHad.length, conflicts: conflicts.length, notInSystem: notInSystem.length,
+        filename: req.file.originalname || '', by: req.userId || _tokenUserId(req) || 'master',
+      });
+      // A label page that only carries the GI can match now.
+      try { scheduleLabelAutoRematch('gi-backfill'); } catch (_) {}
+    }
+    res.json({
+      ok: true,
+      filled, alreadyHad, conflicts,
+      notInSystem: notInSystem.slice(0, 200), noGiInFile: [...noGi].slice(0, 200),
+      summary: `${filled.length} order(s) given their GI · ${alreadyHad.length} already had it · `
+             + `${conflicts.length} conflict(s) left alone · ${notInSystem.length} in the file but not in IdealOne · `
+             + `${noGi.size} in the file with no GI column value`,
+    });
+  } catch (e) {
+    console.error('[backfill-gi]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── RECLASSIFY COMPLETED ORDERS — back to Pending, or to Cancelled ──────────
 // Per the user: "orders could be done, but I need to be able to reclassify
 // them to pending (put back inventory), or cancel order" — mass selection,

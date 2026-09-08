@@ -191,9 +191,49 @@ an order number.** The same printed picking list carries
 It is functional but unscannable, and two GIs sharing a bundling reference
 would collide under the duplicate rules. Raise it before touching it.
 
-ORDERS ALREADY UPLOADED DO NOT HEAL. The GI was never written, so there is
-nothing to derive it from — only a re-upload of the source file recovers it
-(pending orders take the 409 overwrite-confirm path).
+**ORDERS ALREADY UPLOADED ARE HEALED BY RE-SUPPLYING THE FILE** —
+`POST /api/orders/backfill-gi` (multipart `file`, admin or master), the
+**🔧 Fix missing GI numbers** control under the upload card (admin only).
+The GI was never written and the uploaded file is not kept on disk (multer
+`memoryStorage` — only its hash), so the source has to be supplied again.
+NOT through `/api/upload`: that hits the 409 overwrite tier and DISCARDS scan
+progress on orders mid-pick, which is exactly the orders this is for. This
+route re-parses the same file with the corrected mapper and writes ONE field:
+- fills a BLANK `issue_no` on an order that already exists, matched by
+  `order_number` (unchanged by the fix, so the match is stable; leading-zero
+  tolerant, same rule as scanning) — never creates a batch or an order,
+  never touches state, scan counts, status, cartons or claims; one `writeDb`;
+- a stored GI that DIFFERS from the file's is a **conflict, reported with
+  both values and never overwritten** — which is right is a human's call;
+- `alreadyHad`, `notInSystem` (in the file, not in IdealOne) and `noGiInFile`
+  are all named, so a count that does not match expectations is explicable;
+- a PDF is refused (its parser already makes the GI the order number), a file
+  with no readable GI column is a 422 that changes nothing, warehouse is a
+  real 403; audited `orders_gi_backfilled` with who and what; and
+  `scheduleLabelAutoRematch('gi-backfill')` runs afterwards, because a label
+  page that only prints the GI now has something to match against.
+- A second run is a no-op that writes no second audit entry.
+- The file input's value is cleared after each run, or picking the same file
+  again fires no `change` (the standing file-input trap).
+MAPPER QUIRK, NOTED NOT FIXED: an EMPTY-STRING Reference cell (as opposed to
+a genuinely blank one) is taken by the `??` chain as a value, so that row's
+order number comes out blank. Such a row was refused at upload, so there is
+no order for the backfill to heal; the GI still lands in `issue_no` either
+way. Pre-existing `order_number` behaviour, out of scope.
+
+Verified 34 API checks through the real server on the exact stored shape
+(warehouse/PDF/GI-less file each refused with the blanks still blank; the
+mid-pick order and the pending order filled; the GI-only order filled with
+its own number; the conflict reported with both values and the stored one
+kept; another client's blank untouched; scan status and counts unchanged;
+same order count, no new batch; `/api/waybill-lookup` opening the order by
+the filled GI, case-insensitively, and NOT by the conflicting one; on disk
+and on the trail; a re-run filling nothing and logging nothing) plus 29
+browser checks on desktop and a Pixel 5 (the row visible to admin and absent
+for warehouse, the button fully on screen with no sideways scroll, the green
+result naming the GIs and the conflict, the button re-enabled, and the Orders
+list then showing the `GI:` pill on the healed row, no echoing pill on the
+GI-only row, and the stored GI still on the conflict row).
 
 Verified 18 checks on the real shapes — the reported `GI No` + `Reference`
 combination now keeps the GI and scans, the `GINo`/`GI Number` spellings too,
