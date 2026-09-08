@@ -2791,6 +2791,100 @@ still in it. And `page.waitForSelector('#x.hidden')` waits for the element to
 be VISIBLE, which a hidden overlay never is — use `waitForFunction` on the
 class.
 
+### REFERENCE MODE — the synced order is a LEDGER ENTRY, not an order (default)
+
+Per the user, once Betime Online was live: *"I don't want it to be in the order
+counter and I don't want it to be treated as an order. ie: order number 123 in
+Betime Online may be uploaded again as order 123, because of the workflow. It
+should not throw out as a duplicate. Maybe just a prompt to say that order
+exists in Betime Online, do we still carry on."* Their real work order still
+arrives as the GI Analysis upload under `BETIME`; the OneCart record is the
+channel's own copy — worth having for the tracking number, the label and the
+status relay, and nothing else.
+
+`store.mode` = **`reference`** (default, and what an existing store with no
+mode reads as) | `work` (the original behaviour, a normal batch). Saving a
+store re-stamps that store's batches (`stampOnecartReferenceBatches`), and the
+same pass runs at BOOT so batches synced before this existed are filed
+(`onecart_reference_batches_stamped`). The batch carries `reference_only:
+true` + `onecart_store_id`; `isReferenceBatch(b)` is the ONE test.
+
+- **NOT IN ANY COUNTER.** `/api/stats` skips reference batches entirely —
+  totalOrders, pendingBacklog (the sidebar badge), todayPending, the client
+  tiles, the fulfilment KPI — and reports them apart as `referenceOrders`.
+  Client-side, `renderOrdersList` lifts `reference_only` rows out before the
+  Active/Completed/Cancelled split into their own **📒 Reference** sub-tab,
+  and `renderSidebarClients` keeps them out of "All clients" (a client holding
+  only references shows a dimmed `📒 N`).
+- **NEVER SCANNED.** `/api/scan/increment` and `/api/scan/complete` refuse a
+  reference batch (409 `referenceOnly`, naming the client and saying to upload
+  the picking list); the row has no Scan button; the scan-to-find bar prefers a
+  work order and, when the number exists ONLY as a reference, says so in words
+  and opens no scan screen. No poke is raised at pull and nothing is reserved.
+- **THE WORK ORDER WINS EVERY LOOKUP, whichever arrived later.**
+  `findBatchForOrder` returns a non-reference batch first and the reference
+  only when nothing else holds the number; `globalOrdersWithState` walks work
+  batches before reference batches so `seen` keeps the real order. Consequence:
+  a reference whose number HAS a work order is not listed on the Reference
+  sub-tab — its work-order row carries the **📒 also in Betime Online** pill
+  (`reference_twin`) instead. The reference record itself stays on disk.
+- **NOT A DUPLICATE — A FOURTH TIER.** `/api/upload`'s `existingIn` map skips
+  reference batches, so the three standing tiers (locked / overwrite /
+  confirmable) never see them; a number held only by a reference answers 409
+  `{needsReferenceConfirm, duplicates[{order, client, waybill, platform}],
+  message}` and goes through on `confirm_reference=yes` (audited
+  `upload_reference_confirmed`), the reference **left standing — never removed
+  or overwritten**. `/api/preview` says so on the Confirm screen with an ℹ line,
+  not a ⛔ or ⚠. The client prompt reads "ALREADY IN THE CHANNEL LEDGER … OK =
+  carry on".
+- **COMPLETION IS RELAYED THROUGH THE TWIN.** `pushOnecartCompletion` on a
+  work order with no `onecart_id` looks up `findReferenceTwin` and pushes with
+  the reference's channel id (`completeAction: 'ship'`); the stamps land on the
+  WORK order's state (`findBatchForOrder` prefers it), audited `viaReference:
+  true`. So the office scans BETIME's upload and OneCart still hears "shipped".
+- **THE PULL STILL MAINTAINS ITS OWN COPY** beside the work order: its
+  `existing` map prefers the order carrying THIS store's id, so the sweep fills
+  tracking and notices cancellations on the reference, never on BETIME's order
+  (asserted: the channel's tracking is NOT written onto the hand-keyed one).
+  In reference mode a number already held by another client's batch is
+  imported anyway (the ledger is meant to be complete) and still reported
+  `heldElsewhere`; in `work` mode the double-import gate is unchanged.
+
+Verified 50 API checks against the mock (reference is the default; a pull
+adds nothing to totalOrders/backlog/todayPending/KPI and 3 to
+`referenceOrders`; no poke, nothing reserved; scan and complete refused 409
+with nothing counted; the same number uploaded under BETIME gets the ℹ preview
+line and the 409 `needsReferenceConfirm` naming Betime Online, writes nothing
+until confirmed, then counts +1 while the reference stays apart and on disk;
+one row on the list, BETIME's, with `reference_twin`; scan-to-find resolves to
+it; scans land on its state and not the reference's; completion PUTs
+`/orders/9001` via the twin with `viaReference` on the trail and the stamp on
+the work order; a re-pull finds our copies as ours and fills late tracking on
+the references; upload-first-then-channel imports the reference, names BETIME
+and a scan still lands on BETIME's NEWER-than-reference-batch order; switching
+to work mode counts the 4 and switching back files them apart; stripping the
+flag and restarting stamps it back with the store id recovered). The original
+79-check work-mode suite passes unchanged with `mode: 'work'`. Plus 31 browser
+checks on desktop and a Pixel 5 (`br-onecart-ref.js`): Active 1 / 📒 Reference
+2, the TOTAL/PENDING tiles and the fulfilment KPI tiles (both computed
+client-side from `loadedOrders` — a second place to forget, and the first
+screenshot caught them reading 3 and "1 on time") counting only the work
+order, the sidebar "All clients 1" with Betime Online's dimmed `📒 2`, the
+reference row's pill (slate by computed style) with no Scan button, the
+work-order row's "also in Betime Online" pill, the scan bar refusing a
+reference-only number in words with no scan screen, the REAL upload flow
+(file → Confirm screen carrying the ℹ line → Approve → the "ALREADY IN THE
+CHANNEL LEDGER … carry on?" dialog → accepted → BETIME's work order beside the
+untouched reference), the Connections row reading "Reference ledger" and the
+form defaulting to it, and no sideways scroll on the phone.
+
+TEST GOTCHAS: the client cell is `text-transform: uppercase`, so `innerText`
+reads `BETIME ONLINE`; a scripted `.value =` on `#confirmClientNameField` never
+fires the input event the field listens for, so Approve stops on a red field —
+use `page.fill`; tabs hide rather than unmount, so the Orders DOM is the render
+from before the upload until it refetches — reload; and the desktop pass's real
+upload changes every count the Pixel 5 pass reads, so the phone goes first.
+
 ## Client Portal — read-only self-service for 3PL clients (/portal)
 
 `public/portal.html` + `portal.js`, served at `GET /portal`. Same architecture

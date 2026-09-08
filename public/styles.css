@@ -3821,6 +3821,13 @@ tr.pa-split-row td { border-top: 0; }
    red: the red ✕ chip beside it already says the order is cancelled; this one
    only says who did it. */
 .chip-client-withdrew { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-weight: 700; }
+/* A channel's REFERENCE record — not an order, not counted, never scanned.
+   Slate, deliberately neither the green of work nor the red of a problem. */
+.chip-reference { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; font-weight: 700; }
+.chip-ref-twin  { background: #f8fafc; color: #64748b; border: 1px dashed #cbd5e1; }
+.sb-client-ref  { opacity: .75; }
+.subtab-ref     { opacity: .85; }
+.orders-tr.status-pending:has(.chip-reference) .status-badge { background: #f1f5f9; color: #475569; }
 
 /* The Inbound card's one-line summary is a PHONE affordance — on desktop every
    column it repeats is on screen, so showing it there would just be noise. */

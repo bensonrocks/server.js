@@ -1484,6 +1484,26 @@
         data = await resp.json();
       }
 
+      // Held only as a channel REFERENCE record (OneCart → Betime Online):
+      // not a duplicate, per the user — a prompt, then carry on. The reference
+      // stays; this upload becomes the work order for the same number.
+      if (resp.status === 409 && data.needsReferenceConfirm) {
+        const lines = (data.duplicates || []).slice(0, 10).map(d =>
+          `• ${d.order} — in ${d.client}${d.platform ? ' (' + d.platform + ')' : ''}${d.waybill ? ', waybill ' + d.waybill : ''}`).join('\n');
+        const more = (data.duplicates || []).length > 10 ? `\n…and ${data.duplicates.length - 10} more` : '';
+        const ok = confirm(
+          `ℹ ALREADY IN THE CHANNEL LEDGER\n\n${data.message}\n\n${lines}${more}` +
+          `\n\nOK = carry on (upload as the work order)\nCancel = abort upload`);
+        if (!ok) {
+          document.getElementById('uploadConfirmOverlay').classList.add('hidden');
+          setUploadStatus('error', 'Upload cancelled — nothing was saved.');
+          return;
+        }
+        form.append('confirm_reference', 'yes');
+        resp = await sendUpload();
+        data = await resp.json();
+      }
+
       // ── STOCK GATE ────────────────────────────────────────────────────
       // Some orders in this file cannot be covered by the client's stock (too
       // little, or the SKU is not in their item master). Per the user, the
@@ -1759,13 +1779,16 @@
     const lbl     = document.getElementById('sidebarClientsLabel');
     const list    = document.getElementById('sidebarClientList');
     if (!list) return;
-    const groups = new Map();                       // lowercase key -> {counts by spelling, total}
+    const groups = new Map();                       // lowercase key -> {counts by spelling, total, ref}
+    // Reference records (a channel's own copy — not orders) are NOT in any
+    // count. A client that holds only references still gets a row, marked, so
+    // its ledger can be filtered to; its count is the reference count, dimmed.
     orders.forEach(o => {
       const raw = (o.client_name || '').trim();
       if (!raw) return;
       const k = raw.toLowerCase();
-      const g = groups.get(k) || { total: 0, spellings: new Map() };
-      g.total++;
+      const g = groups.get(k) || { total: 0, ref: 0, spellings: new Map() };
+      if (o.reference_only) g.ref++; else g.total++;
       g.spellings.set(raw, (g.spellings.get(raw) || 0) + 1);
       groups.set(k, g);
     });
@@ -1774,15 +1797,18 @@
     // Display the most common spelling of each client.
     const clients = [];
     const counts = {};
+    const refs = {};
     for (const [, g] of groups) {
       const best = [...g.spellings.entries()].sort((a, b) => b[1] - a[1])[0][0];
       clients.push(best);
       counts[best] = g.total;
+      refs[best] = g.ref;
     }
     clients.sort((a, b) => a.localeCompare(b));
+    const realTotal = orders.filter(o => !o.reference_only).length;
     list.innerHTML = `
-      <button class="sb-client-btn ${activeClientFilter === 'all' ? 'active' : ''}" data-sb-client="all">All clients <span class="sb-client-count">${orders.length}</span></button>
-      ${clients.map(c => `<button class="sb-client-btn ${activeClientFilter === c ? 'active' : ''}" data-sb-client="${esc(c)}">${esc(c)} <span class="sb-client-count">${counts[c]||0}</span></button>`).join('')}`;
+      <button class="sb-client-btn ${activeClientFilter === 'all' ? 'active' : ''}" data-sb-client="all">All clients <span class="sb-client-count">${realTotal}</span></button>
+      ${clients.map(c => `<button class="sb-client-btn ${activeClientFilter === c ? 'active' : ''}" data-sb-client="${esc(c)}">${esc(c)} ${counts[c] ? `<span class="sb-client-count">${counts[c]}</span>` : ''}${refs[c] ? `<span class="sb-client-count sb-client-ref" title="${refs[c]} channel reference record(s) — not orders, not counted">&#128210; ${refs[c]}</span>` : ''}</button>`).join('')}`;
     list.querySelectorAll('.sb-client-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         activeClientFilter = btn.dataset.sbClient;
@@ -1809,11 +1835,14 @@
     document.getElementById('ordersEmpty').classList.add('hidden');
     document.getElementById('ordersDashboard').classList.remove('hidden');
 
+    // A channel REFERENCE record is not an order and is in no tile (per the
+    // user) — same rule as /api/stats, which skips reference batches.
+    const _work = loadedOrders.filter(o => !o.reference_only);
     const c = { pending: 0, processing: 0, done: 0, unprocessed: 0 };
-    loadedOrders.forEach(o => { c[o.scan_status] = (c[o.scan_status] || 0) + 1; });
+    _work.forEach(o => { c[o.scan_status] = (c[o.scan_status] || 0) + 1; });
 
     document.getElementById('statsBar').innerHTML = `
-      <div class="stat-box"><div class="val">${loadedOrders.length}</div><div class="lbl">Total</div></div>
+      <div class="stat-box"><div class="val">${_work.length}</div><div class="lbl">Total</div></div>
       <div class="stat-box pending"><div class="val">${c.pending||0}</div><div class="lbl">Pending</div></div>
       <div class="stat-box processing"><div class="val">${c.processing||0}</div><div class="lbl">In Progress</div></div>
       <div class="stat-box done"><div class="val">${c.done||0}</div><div class="lbl">Done</div></div>
@@ -1865,6 +1894,7 @@
   function kpiCounts(list) {
     const k = { overdue: 0, critical: 0, dueSoon: 0, onTime: 0, met: 0, missed: 0 };
     for (const o of list) {
+      if (o.reference_only) continue;   // a channel reference record carries no promise of ours
       const s = o.fulfilment?.status;
       if (s === 'overdue') k.overdue++;
       else if (s === 'critical') k.critical++;
@@ -1880,7 +1910,7 @@
     if (!bar) return;
     // Nothing carries a promise (KPI switched off, or no arrival times) → the
     // bar is not rendered at all rather than showing a row of zeroes.
-    if (!loadedOrders.some(o => o.fulfilment)) { bar.innerHTML = ''; bar.classList.add('hidden'); return; }
+    if (!loadedOrders.some(o => o.fulfilment && !o.reference_only)) { bar.innerHTML = ''; bar.classList.add('hidden'); return; }
     bar.classList.remove('hidden');
     const k = kpiCounts(loadedOrders);
     const handoverAt = loadedOrders.find(o => o.fulfilment?.dueAtLabel)?.fulfilment.dueAtLabel || '';
@@ -2078,7 +2108,7 @@
     // its barcode never resolves here.
     const valLower = val.toLowerCase();
     const strip0 = s => s.replace(/^0+(?=.)/, '');
-    const directMatch = loadedOrders.find(o => {
+    const _matches = loadedOrders.filter(o => {
       const on = o.order_number.trim().toLowerCase();
       const pt = (o.pick_ticket || '').trim().toLowerCase();
       const gi = (o.issue_no    || '').trim().toLowerCase();
@@ -2086,6 +2116,15 @@
              (pt && (pt === valLower || strip0(pt) === strip0(valLower))) ||
              (gi && (gi === valLower || strip0(gi) === strip0(valLower)));
     });
+    // The WORK order wins; a channel reference record is not something to
+    // scan. If the number exists ONLY as a reference, say so rather than open
+    // a scan screen on a record that refuses every scan.
+    const directMatch = _matches.find(o => !o.reference_only) || _matches[0];
+    if (directMatch && directMatch.reference_only) {
+      ordersView = 'reference'; renderOrdersList();
+      setWaybillMsg(`${directMatch.order_number} exists only as a channel reference record under ${directMatch.client_name || 'the client'} — not a work order. Upload the picking list to process it.`, true);
+      return;
+    }
     if (directMatch) {
       if (directMatch.scan_status === 'done') {
         // Completed order — show it in the Completed tab for reference/reprint
@@ -2115,6 +2154,11 @@
       }
       let ord = loadedOrders.find(o => o.order_number === data.order_number);
       if (!ord) { ord = data; loadedOrders.push(data); } // outside the loaded date window
+      if (ord.reference_only) {
+        ordersView = 'reference'; renderOrdersList();
+        setWaybillMsg(`${ord.order_number} exists only as a channel reference record under ${ord.client_name || 'the client'} — not a work order. Upload the picking list to process it.`, true);
+        return;
+      }
       if (ord.scan_status === 'done') {
         ordersView = 'completed'; completedSearch = ord.order_number; ordersDateFilter = 'all';
         refreshOrders().then(renderOrdersList);
@@ -2401,6 +2445,13 @@
     };
     orders = orders.filter(inDateFilter);
 
+    // REFERENCE RECORDS ARE NOT ORDERS (per the user). A channel's own copy
+    // (OneCart → Betime Online) is kept for its tracking number, label and
+    // status, but is not work: it leaves the Active list and every count and
+    // lives in its own view where it can still be looked at.
+    const referenceOrders = orders.filter(o => o.reference_only);
+    orders = orders.filter(o => !o.reference_only);
+
     // Active / Completed sub-tabs — completed orders leave the main list and
     // live in their own searchable view for reference and label reprinting
     const doneOrders   = orders.filter(o => o.scan_status === 'done');
@@ -2449,10 +2500,14 @@
         <button class="subtab-btn ${ordersView === 'active' ? 'active' : ''}" data-oview="active">Active <span class="subtab-count">${activeOrders.length}</span></button>
         <button class="subtab-btn ${ordersView === 'completed' ? 'active' : ''}" data-oview="completed">&#10003; Completed <span class="subtab-count">${doneOrders.length}</span></button>
         <button class="subtab-btn ${ordersView === 'cancelled' ? 'active' : ''}" data-oview="cancelled" title="Orders we are not fulfilling — cancelled by the no-stock rule, taken off the floor, or withdrawn. Not counted as work.">&#9003; Cancelled <span class="subtab-count">${cancelledOrders.length}</span></button>
+        ${(referenceOrders.length || ordersView === 'reference') ? `<button class="subtab-btn subtab-ref ${ordersView === 'reference' ? 'active' : ''}" data-oview="reference" title="The sales channel's own record of each order (synced from OneCart). Kept for the tracking number, label and status — NOT work, not counted, never scanned. The client's own upload of the same order number is the work order.">&#128210; Reference <span class="subtab-count">${referenceOrders.length}</span></button>` : ''}
         ${ordersView === 'completed' ? `<input type="search" id="completedSearchInput" class="completed-search" placeholder="Search waybill, GI / order no, pick ticket, customer&hellip;" value="${esc(completedSearch)}" autocomplete="off" />` : ''}
       </div>`;
 
-    if (ordersView === 'cancelled') {
+    if (ordersView === 'reference') {
+      // Newest from the channel first.
+      orders = [...referenceOrders].sort((a, b) => String(b.placed_at || b.uploadedAt || '').localeCompare(String(a.placed_at || a.uploadedAt || '')));
+    } else if (ordersView === 'cancelled') {
       // Most recently cancelled first — the ones someone is most likely to be
       // asked about.
       orders = [...cancelledOrders].sort((a, b) =>
@@ -2535,7 +2590,9 @@
     if (!orders.length) {
       document.getElementById('ordersDashList').innerHTML = subTabsHTML +
         `<p class="empty-state" style="padding:2rem">${
-          ordersView === 'cancelled'
+          ordersView === 'reference'
+            ? 'No channel reference records in this window.'
+            : ordersView === 'cancelled'
             ? 'No cancelled orders. Nothing has been taken off the floor.'
             : ordersView === 'completed'
               ? (completedSearch ? 'No completed orders match the search.' : 'No completed orders yet.')
@@ -2547,7 +2604,8 @@
 
     const rows = orders.map(ord => {
       const scannedTotal = Object.values(ord.scanned || {}).reduce((s, v) => s + v, 0);
-      const canScan  = ord.scan_status !== 'done' && !ord.pending_deletion;
+      // A reference record is never scanned — it is not work.
+      const canScan  = ord.scan_status !== 'done' && !ord.pending_deletion && !ord.reference_only;
       const isDone   = ord.scan_status === 'done';
       const elapsed  = fmtElapsed(ord.startTime, ord.endTime);
       const slipUrl  = ord.batchId
@@ -2591,6 +2649,10 @@
         : '';
       const chips = [
         activeWaveChip,
+        // NOT AN ORDER: the channel's own record. Said on the row, because a
+        // reference and a work order can share a number and look alike.
+        ord.reference_only ? `<span class="chip chip-reference" title="Synced from OneCart as the channel's reference record — kept for the tracking number, label and status. Not counted as an order and never scanned; the client's own upload of this number is the work order.">&#128210; Reference — not an order</span>` : '',
+        ord.reference_twin ? `<span class="chip chip-ref-twin" title="The sales channel also holds this order number as a reference record under ${esc(ord.reference_twin)} (synced from OneCart). This row is the work order; the reference is not counted.">&#128210; also in ${esc(ord.reference_twin)}</span>` : '',
         ord.pending_deletion ? `<span class="chip chip-pending-delete" title="Deletion requested by ${esc(ord.pending_deletion.requestedBy)}: ${esc(ord.pending_deletion.reason)}">&#128465; Pending Deletion</span>` : '',
         (ord.wave_id && ord.scan_status !== 'done') ? `<span class="chip chip-wave-needs-closing" title="This order's stock was floor-picked in wave ${esc(ord.wave_code || ord.wave_id)} — open it and scan its items from the picked pile to pack it, like a normal order" style="cursor:pointer" onclick="event.stopPropagation();requestWaveCancellation('${esc(ord.wave_id)}')">&#127754; ${esc(ord.wave_code || ord.wave_id)} — Scan to Pack</span>` : '',
         ord.claimed_by       ? `<span class="chip chip-claimed" title="Currently open at ${esc(ord.claimed_by)}'s station">&#128100; ${esc(ord.claimed_by)}</span>` : '',
@@ -12872,6 +12934,7 @@
           return `<tr>
             <td style="font-weight:700">${esc(s.clientName)}${s.enabled ? '' : ' <span style="color:#94a3b8">(off)</span>'}</td>
             <td style="font-family:monospace">${esc(s.apiKey || '—')}</td>
+            <td style="font-size:.85rem">${s.mode === 'work' ? 'Work orders' : '<span title="The channel\'s own record of each order — not counted, never scanned. The client\'s own upload of the same number is the work order.">&#128210; Reference ledger</span>'}</td>
             <td>${s.autoPullMinutes > 0 ? s.autoPullMinutes + 'm' : 'manual'}</td>
             <td>${s.completeAction === 'ship' ? 'Mark shipped + read back' : 'nothing'}</td>
             <td style="font-size:.85rem">${labels}</td>
@@ -12924,6 +12987,7 @@
           $id('ocId').value = s.id; $id('ocClient').value = s.clientName; $id('ocKey').value = '';
           $id('ocAutoPull').value = s.autoPullMinutes; $id('ocCompleteAction').value = s.completeAction || 'none';
           $id('ocLabelSync').value = s.labelSync || 'off';
+          $id('ocMode').value = s.mode === 'work' ? 'work' : 'reference';
           $id('onecartStoreForm').classList.remove('hidden');
         }));
         tb.querySelectorAll('[data-oc-del]').forEach(b => b.addEventListener('click', async () => {
@@ -12936,7 +13000,7 @@
     function wire() {
       $id('onecartAddStoreBtn')?.addEventListener('click', () => {
         ['ocId', 'ocClient', 'ocKey'].forEach(x => { const el = $id(x); if (el) el.value = ''; });
-        $id('ocAutoPull').value = 5; $id('ocCompleteAction').value = 'none'; $id('ocLabelSync').value = 'off';
+        $id('ocAutoPull').value = 5; $id('ocCompleteAction').value = 'none'; $id('ocLabelSync').value = 'off'; $id('ocMode').value = 'reference';
         $id('onecartStoreForm').classList.remove('hidden');
       });
       $id('onecartCancelStoreBtn')?.addEventListener('click', () => $id('onecartStoreForm').classList.add('hidden'));
@@ -12952,6 +13016,7 @@
           autoPullMinutes: Number($id('ocAutoPull').value) || 0,
           completeAction: $id('ocCompleteAction').value,
           labelSync,
+          mode: $id('ocMode').value === 'work' ? 'work' : 'reference',
           enabled: true,
         };
         const r = await fetch('/api/master/onecart/stores', { method: 'POST', headers: H(), body: JSON.stringify(body) });

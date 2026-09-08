@@ -2121,6 +2121,13 @@ try {
   const _cnn = normaliseClientNameCasing(_cndb);
   if (_cnn) { writeDb(_cndb); console.log(`[IdealOne] Client names: folded ${_cnn} record(s) onto a single spelling`); }
 } catch (e) { console.error('[IdealOne] client name normalise failed:', e.message); }
+// OneCart batches synced before reference mode existed carry no flag — stamp
+// them now (function declaration, hoisted; idempotent once stamped).
+try {
+  const _rfdb = readDb();
+  const _rfn = stampOnecartReferenceBatches(_rfdb);
+  if (_rfn) { writeDb(_rfdb); logAudit('onecart_reference_batches_stamped', { count: _rfn }); console.log(`[IdealOne] OneCart: ${_rfn} synced batch(es) filed as reference ledger`); }
+} catch (e) { console.error('[IdealOne] OneCart reference stamp failed:', e.message); }
 
 // ── Clean up dates that were stored as raw JavaScript date strings ──────────
 // Lines uploaded before textVal() existed hold e.g.
@@ -2981,9 +2988,17 @@ function globalOrdersWithState(keep) {
   // a green "Stock OK" on an order the rule is about to cancel is exactly the
   // disagreement that made this reportable.
   const _goBo = _makeBackorderIndex(db);
-  for (const batch of db.batches) {
+  // WORK ORDERS FIRST, reference copies after. A reference batch (a channel's
+  // own record — OneCart → Betime Online) may hold the same number as the
+  // real upload; the real order must win `seen` whichever arrived later, and
+  // it carries `reference_twin` so the row can say the channel has it too.
+  const _refTwin = new Map();
+  for (const b of db.batches) if (isReferenceBatch(b)) for (const o of b.orders || []) if (!_refTwin.has(o.order_number)) _refTwin.set(o.order_number, b.client_name || '');
+  const _batchOrder = [...db.batches.filter(b => !isReferenceBatch(b)), ...db.batches.filter(isReferenceBatch)];
+  for (const batch of _batchOrder) {
     const states = batch.orderStates || {};
     const wbSet  = batchWaybillSet(batch.id);
+    const _isRef = isReferenceBatch(batch);
     for (const ord of (batch.orders || [])) {
       if (seen.has(ord.order_number)) continue; // newest batch wins
       seen.add(ord.order_number);
@@ -3064,6 +3079,11 @@ function globalOrdersWithState(keep) {
         alert_email_error: state.alert_email_error || null,
         batchId:           batch.id,
         client_name:       batch.client_name       || '',
+        // NOT AN ORDER — a channel's reference record (OneCart → Betime
+        // Online). Excluded from every counter and from the Active list; the
+        // work order for the same number, if uploaded, is the one that wins.
+        reference_only:    _isRef,
+        reference_twin:    (!_isRef && _refTwin.get(ord.order_number)) || '',
         // Synced from a marketplace via the store sync — the Orders list shows
         // an API pill so the team knows BEFORE completion that this order's
         // collection status is scan-close-only and relays to the platform.
@@ -3519,11 +3539,60 @@ function nextStagingCode(db) {
 })();
 
 // Find which batch holds a given order number (newest batch first).
+// A REFERENCE batch is a channel's own record of an order (OneCart → Betime
+// Online), kept for tracking numbers, labels and status relay — NOT work.
+// Per the user: it must not count as an order, and the SAME order number
+// arriving again as a real upload is not a duplicate. So wherever an order
+// number is resolved, the WORK order wins and the reference copy is only
+// found when nothing else holds the number.
+function isReferenceBatch(b) { return !!(b && b.reference_only); }
 function findBatchForOrder(db, orderNumber) {
+  let ref = null;
   for (const batch of db.batches) {
-    if ((batch.orders || []).some(o => o.order_number === orderNumber)) return batch;
+    if (!(batch.orders || []).some(o => o.order_number === orderNumber)) continue;
+    if (isReferenceBatch(batch)) { if (!ref) ref = batch; continue; }
+    return batch;
+  }
+  return ref;
+}
+// The reference copy of an order number, if a channel holds one — used to
+// relay a completion made on the WORK order back to the channel that holds
+// the reference, and to tell the uploader "this exists in Betime Online".
+// A reference record is never scanned or completed — it is not work. The
+// refusal names the client so the floor knows to upload the picking list.
+function refuseReferenceOrder(batch, res) {
+  if (!isReferenceBatch(batch)) return false;
+  res.status(409).json({
+    referenceOnly: true,
+    error: `This is a channel reference record for ${batch.client_name || 'the client'} (synced from OneCart), not a work order. Upload the picking list to process it — the upload will ask to carry on and then become the order to scan.`,
+  });
+  return true;
+}
+function findReferenceTwin(db, orderNumber) {
+  for (const batch of db.batches || []) {
+    if (!isReferenceBatch(batch)) continue;
+    const order = (batch.orders || []).find(o => o.order_number === orderNumber);
+    if (order) return { batch, order };
   }
   return null;
+}
+// Stamp `reference_only` on every OneCart-sync batch whose store is in
+// reference mode (the default). Run at boot — the batches synced before this
+// existed carry no flag — and whenever a store's mode is saved, so flipping
+// a store between "reference ledger" and "work orders" re-files its history.
+function stampOnecartReferenceBatches(db, onlyStoreId) {
+  const stores = db.onecartStores || [];
+  const modeOf = id => { const s = stores.find(x => x.id === id); return s ? (s.mode === 'work' ? 'work' : 'reference') : 'reference'; };
+  let changed = 0;
+  for (const b of db.batches || []) {
+    if (b.uploaded_by !== 'onecart-sync') continue;
+    const sid = b.onecart_store_id || (b.orders || []).find(o => o.onecart_store_id)?.onecart_store_id || '';
+    if (onlyStoreId && sid !== onlyStoreId) continue;
+    if (!b.onecart_store_id && sid) b.onecart_store_id = sid;
+    const want = modeOf(sid) === 'reference';
+    if (!!b.reference_only !== want) { b.reference_only = want; changed++; }
+  }
+  return changed;
 }
 
 // ── Auto-archive ─────────────────────────────────────────────────────────────
@@ -9521,7 +9590,9 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
     // = upload-as-new prompt.
     {
       const existing = new Map(); // order_number → {status, issueNo}
+      const refHeld  = new Map(); // order_number → client holding it as a REFERENCE record only
       for (const b of readDb().batches || []) for (const o of b.orders || []) {
+        if (isReferenceBatch(b)) { if (!refHeld.has(o.order_number)) refHeld.set(o.order_number, b.client_name || ''); continue; }
         if (!existing.has(o.order_number)) {
           existing.set(o.order_number, {
             status: b.orderStates?.[o.order_number]?.status || 'pending',
@@ -9529,8 +9600,9 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
           });
         }
       }
-      const locked = [], overwritable = [], asNew = [];
+      const locked = [], overwritable = [], asNew = [], asRef = [];
       for (const o of orders) {
+        if (!existing.has(o.order_number) && refHeld.has(o.order_number)) asRef.push(`${o.order_number} (${refHeld.get(o.order_number)})`);
         const src = existing.get(o.order_number);
         if (!src) continue;
         const newGi = String(o.issue_no || '').trim();
@@ -9543,6 +9615,9 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
       if (locked.length)       errors.push(`⛔ ${locked.length} order(s) already uploaded AND completed: ${list(locked)} — upload will be blocked`);
       if (overwritable.length) errors.push(`⚠ ${overwritable.length} order(s) already uploaded earlier (not yet completed): ${list(overwritable)} — you'll be asked to Overwrite or Abort when you approve`);
       if (asNew.length)        errors.push(`⚠ ${asNew.length} completed order(s) share a number with this file but have a different GI: ${list(asNew)} — you'll be asked to confirm uploading them as new orders`);
+      // A channel's REFERENCE record is not a duplicate — the work order is
+      // this upload. Said here so the prompt at approve is no surprise.
+      if (asRef.length)        errors.push(`ℹ ${asRef.length} order(s) already exist as a channel reference record (not work): ${list(asRef)} — you'll be asked whether to carry on; the reference stays and this upload becomes the work order`);
     }
     const clientName = allRows.find(r => r.client_name)?.client_name || String(req.body?.client_name || '').trim();
     const customerNames = [...new Set(allRows.map(r => r.customer_name).filter(Boolean))];
@@ -9937,8 +10012,21 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     // and can approve the upload (resent with confirm_duplicates=yes).
     {
       const existingIn = new Map(); // order_number → {code, filename, at, status, issueNo}
+      // A REFERENCE batch (a channel's own record — OneCart → Betime Online)
+      // is not work, so it is never a duplicate: per the user, the same order
+      // number arriving as a real upload gets a "this exists in Betime Online,
+      // carry on?" prompt and then goes through, the reference left standing.
+      const referenceIn = new Map(); // order_number → {client, code, at}
       for (const b of readDb().batches || []) {
         for (const o of b.orders || []) {
+          if (isReferenceBatch(b)) {
+            if (!referenceIn.has(o.order_number)) referenceIn.set(o.order_number, {
+              client: b.client_name || '', code: b.idealscan_code || '',
+              at: (b.uploaded_at || '').slice(0, 16).replace('T', ' '),
+              waybill: String(o.waybill_number || '').trim(), platform: o.platform || '',
+            });
+            continue;
+          }
           if (!existingIn.has(o.order_number)) {
             existingIn.set(o.order_number, {
               code: b.idealscan_code || '', filename: b.filename || '',
@@ -10032,6 +10120,27 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
         logAudit('upload_duplicate_confirmed', {
           orders: softDups.map(d => `${d.order} (${d.existingGi} → ${d.newGi})`).slice(0, 20),
           count: softDups.length, by: req.userId || '',
+        });
+      }
+
+      // FOURTH TIER — held only as a channel REFERENCE record. Not a
+      // duplicate, not overwritten, not blocked: a prompt, then carry on.
+      const referenceDups = orders
+        .filter(o => !existingIn.has(o.order_number) && referenceIn.has(o.order_number))
+        .map(o => ({ order: o.order_number, ...referenceIn.get(o.order_number) }));
+      if (referenceDups.length && req.body?.confirm_reference !== 'yes') {
+        const clients = [...new Set(referenceDups.map(d => d.client).filter(Boolean))];
+        return res.status(409).json({
+          needsReferenceConfirm: true,
+          duplicates: referenceDups.slice(0, 200),
+          count: referenceDups.length,
+          message: `${referenceDups.length} order(s) in this file already exist in ${clients.join(' / ') || 'a channel reference ledger'} — synced from the sales channel as a REFERENCE record, not as work. That record stays as it is; this upload becomes the work order for the same number. Carry on?`,
+        });
+      }
+      if (referenceDups.length) {
+        logAudit('upload_reference_confirmed', {
+          orders: referenceDups.map(d => `${d.order} (${d.client})`).slice(0, 20),
+          count: referenceDups.length, by: req.userId || '',
         });
       }
     }
@@ -10339,7 +10448,11 @@ app.get('/api/stats', (_req, res) => {
   const kpi = { enabled: _fpol.enabled, overdue: 0, critical: 0, dueSoon: 0, onTime: 0,
                 todayMet: 0, todayMissed: 0, handoverAt: _ppol.cutoff };
 
+  let referenceOrders = 0;
   for (const batch of db.batches) {
+    // A REFERENCE batch is not work (per the user: "I don't want it in the
+    // order counter"). Counted apart, never in any tile, badge or KPI.
+    if (isReferenceBatch(batch)) { referenceOrders += (batch.orders || []).length; continue; }
     const batchDate   = sgDateStr(new Date(batch.uploaded_at));
     const states      = batch.orderStates || {};
     const batchOrders = batch.orders      || [];
@@ -10410,7 +10523,7 @@ app.get('/api/stats', (_req, res) => {
     .map(([name, v]) => ({ name, ...v }));
 
   res.json({ todayPending, todayDone, yesterdayDone, totalOrders, totalLines,
-    pendingBacklog, totalDone, totalCancelled,
+    pendingBacklog, totalDone, totalCancelled, referenceOrders,
     avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats, kpi });
 });
 
@@ -10752,6 +10865,7 @@ app.post('/api/scan/increment', (req, res) => {
   const db    = readDb();
   const batch = findBatchForOrder(db, orderNumber);
   if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (refuseReferenceOrder(batch, res)) return;
   const ord  = batch.orders.find(o => o.order_number === orderNumber);
   const lines = uniqueSkuLines(ord);
   const item = matchScannedSku(
@@ -16673,6 +16787,7 @@ app.post('/api/scan/complete', (req, res) => {
   const db    = readDb();
   const batch = findBatchForOrder(db, orderNumber);
   if (!batch) return res.status(404).json({ error: 'Order not found' });
+  if (refuseReferenceOrder(batch, res)) return;
   const ord   = batch.orders.find(o => o.order_number === orderNumber);
   if (!batch.orderStates) batch.orderStates = {};
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
@@ -24870,6 +24985,7 @@ function onecartStorePublic(s) {
     enabled: !!s.enabled, autoPullMinutes: Number(s.autoPullMinutes) || 0,
     completeAction: s.completeAction || 'none',
     labelSync: s.labelSync === 'intake' ? 'intake' : 'off',
+    mode: s.mode === 'work' ? 'work' : 'reference',
     apiKey: s.apiKey ? '••••' + String(s.apiKey).slice(-4) : '',
     endpoint: s.endpoint || '',
     lastPullAt: s.lastPullAt || null, lastResult: s.lastResult || null,
@@ -24901,11 +25017,17 @@ app.post('/api/master/onecart/stores', express.json(), (req, res) => {
   if (b.autoPullMinutes !== undefined) s.autoPullMinutes = Math.max(0, Number(b.autoPullMinutes) || 0);
   if (b.completeAction !== undefined) s.completeAction = b.completeAction === 'ship' ? 'ship' : 'none';
   if (b.labelSync !== undefined) s.labelSync = b.labelSync === 'intake' ? 'intake' : 'off';
+  // 'reference' (default): the channel's record, not counted, not work.
+  // 'work': a normal batch — the original behaviour.
+  if (b.mode !== undefined) s.mode = b.mode === 'work' ? 'work' : 'reference';
   if (!s.clientName) return res.status(400).json({ error: 'Name the client this OneCart company belongs to.' });
   if (!s.apiKey) return res.status(400).json({ error: 'The OneCart API key is required (Settings → API Keys in their dashboard).' });
   if (existingRec) Object.assign(existingRec, s); else list.push(s);
+  // Re-file this store's history under the mode just saved, so the counters
+  // and the duplicate rule agree with the switch at once.
+  const restamped = stampOnecartReferenceBatches(db, s.id);
   writeDb(db);
-  logAudit('onecart_store_saved', { id: s.id, client: s.clientName, enabled: !!s.enabled, completeAction: s.completeAction || 'none', labelSync: s.labelSync || 'off', by: req.userId || _tokenUserId(req) || 'master' });
+  logAudit('onecart_store_saved', { id: s.id, client: s.clientName, enabled: !!s.enabled, completeAction: s.completeAction || 'none', labelSync: s.labelSync || 'off', mode: s.mode || 'reference', restampedBatches: restamped, by: req.userId || _tokenUserId(req) || 'master' });
   res.json(onecartStorePublic(s));
 });
 app.delete('/api/master/onecart/stores/:id', (req, res) => {
@@ -24975,8 +25097,22 @@ app.post('/api/master/onecart/stores/:id/labels', async (req, res) => {
 //      completion push the channel took its time over.
 // Same batch shape as pullShopifyStore, single-client.
 async function pullOnecartStore(db, store) {
+  // REFERENCE MODE (default, per the user): what this connection imports is
+  // the channel's own record of each order — kept for the tracking number,
+  // the label and status relay — and is NOT work. It is not counted, never
+  // scanned, and the same number arriving as the client's own upload is not
+  // a duplicate. 'work' mode is the original behaviour: a normal batch.
+  const referenceMode = store.mode !== 'work';
   const existing = new Map();   // order_number -> {batch, order}
-  for (const b of db.batches || []) for (const o of b.orders || []) existing.set(String(o.order_number), { batch: b, order: o });
+  // OUR OWN COPY WINS the lookup. In reference mode the client's upload of the
+  // same number sits beside our reference record; the sweep must still find
+  // and update OURS (tracking, cancellation) rather than report the number
+  // as held elsewhere and leave the reference stale.
+  for (const b of db.batches || []) for (const o of b.orders || []) {
+    const no = String(o.order_number);
+    const cur = existing.get(no);
+    if (!cur || (o.onecart_store_id === store.id && cur.order.onecart_store_id !== store.id)) existing.set(no, { batch: b, order: o });
+  }
   const now = new Date().toISOString();
   const sinceMs = store.lastPullAt ? new Date(store.lastPullAt).getTime() - 86400000 : Date.now() - 7 * 86400000;
 
@@ -25013,12 +25149,17 @@ async function pullOnecartStore(db, store) {
     if (held) {
       if (!isOurs(held, m.meta.onecart_id)) {
         if (!heldElsewhere.some(h => h.order === m.order_number)) heldElsewhere.push({ order: m.order_number, client: held.batch.client_name || '', job: held.batch.idealscan_code || '' });
-        continue;                                                // not ours — hands off
+        // In WORK mode a number held elsewhere is hands-off (the double-
+        // import gate). In REFERENCE mode the ledger is meant to hold the
+        // channel's record whatever else holds the number — the work order
+        // still wins every lookup, so nothing outside this lane is touched.
+        if (!referenceMode) continue;                            // not ours — hands off
+      } else {
+        skippedExisting++;
+        ensureState(held);
+        fillTracking(held, m.meta.tracking, 'onecart');         // a blank is filled, never overwritten
+        continue;
       }
-      skippedExisting++;
-      ensureState(held);
-      fillTracking(held, m.meta.tracking, 'onecart');           // a blank is filled, never overwritten
-      continue;
     }
     if (onecartApi.isCancelledStatus(m.meta.status)) { skippedByStatus.cancelled = (skippedByStatus.cancelled || 0) + 1; continue; }
     if (onecartApi.isShippedStatus(m.meta.status))   { skippedByStatus.shipped   = (skippedByStatus.shipped   || 0) + 1; continue; }
@@ -25090,7 +25231,9 @@ async function pullOnecartStore(db, store) {
       o.placed_at = m2.placed_at || null;
     }
     let tracked = false;
-    if (inventory.available() && clientStockTracked(cid)) {
+    // A REFERENCE record reserves nothing — it is not work, and the client's
+    // own upload of the same order is what will reserve (if they are tracked).
+    if (!referenceMode && inventory.available() && clientStockTracked(cid)) {
       for (const sku of new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
         if (!inventory.get(sku, cid)) { try { inventory.upsert({ sku, name: sku, clientId: cid }); } catch (_) {} }
       }
@@ -25103,6 +25246,8 @@ async function pullOnecartStore(db, store) {
       idealscan_code: nextIdealscanCode(db),
       uploaded_at: now,
       uploaded_by: 'onecart-sync',
+      onecart_store_id: store.id,
+      reference_only: referenceMode,
       client_name: clientName,
       order_count: orders.length,
       row_count: orders.reduce((n, o) => n + o.lines.length, 0),
@@ -25115,7 +25260,9 @@ async function pullOnecartStore(db, store) {
     batchId = batch.id;
     imported = orders.length;
     for (const o of orders) newOrders.push({ order_number: o.order_number, onecart_id: o.onecart_id });
-    addOutboundPoke(db, batch, 'store-sync');
+    // A reference record is not new work — no poke, or the office would be
+    // told to pick something it is not meant to pick.
+    if (!referenceMode) addOutboundPoke(db, batch, 'store-sync');
     // DELIBERATELY NO harvestCatalogueFromOrders HERE (isolation, per the
     // user). Teaching the catalogue from these orders creates zero-quantity
     // inventory rows for the client — which is precisely what puts a red
@@ -25237,6 +25384,17 @@ async function fetchOnecartLabels(store, targets) {
 const _onecartShipInflight = new Set();
 function pushOnecartCompletion(db, ord, state) {
   try {
+    // THE WORK ORDER MAY NOT BE THE ONECART ONE. In reference mode the channel
+    // record sits in Betime Online and the order that was actually picked is
+    // the client's own upload of the same number — so the completion is
+    // relayed through the reference twin's channel id. The stamps still land
+    // on the WORK order's state (findBatchForOrder prefers it), so a
+    // completion is never pushed twice.
+    if (ord && !ord.onecart_id) {
+      const twin = findReferenceTwin(db, ord.order_number);
+      if (!twin || !twin.order.onecart_id) return;
+      ord = { ...ord, onecart_id: twin.order.onecart_id, onecart_store_id: twin.order.onecart_store_id, _viaReference: true };
+    }
     if (!ord?.onecart_id || !ord?.onecart_store_id) return;
     if (state?.onecart_shipped_at || state?.onecart_ship_requested_at) return;   // never twice
     if (_onecartShipInflight.has(ord.order_number)) return;
@@ -25271,7 +25429,7 @@ function pushOnecartCompletion(db, ord, state) {
         }
         writeDb(db2);
         logAudit(moved ? 'onecart_completion_pushed' : 'onecart_completion_unconfirmed',
-          { order: ord.order_number, storeId: store.id, hubStatus: word, tracking: tracking || String(ord.waybill_number || '') });
+          { order: ord.order_number, storeId: store.id, hubStatus: word, tracking: tracking || String(ord.waybill_number || ''), viaReference: !!ord._viaReference });
       } catch (e) {
         logAudit('onecart_completion_push_failed', { order: ord.order_number, storeId: store.id, error: String(e.message).slice(0, 300), requestId: e.requestId || '' });
       } finally { _onecartShipInflight.delete(ord.order_number); }

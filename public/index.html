@@ -2461,8 +2461,8 @@
         <div id="onecartStoreStatus" class="status-bar hidden"></div>
         <div class="dcs-wrap">
           <table class="dcs-table">
-            <thead><tr><th>Client</th><th>Key</th><th>Auto-pull</th><th>On complete</th><th>Labels</th><th>Last pull</th><th>Actions</th></tr></thead>
-            <tbody id="onecartStoresTbody"><tr><td colspan="7" style="color:#94a3b8;padding:.8rem">No OneCart companies connected.</td></tr></tbody>
+            <thead><tr><th>Client</th><th>Key</th><th>Mode</th><th>Auto-pull</th><th>On complete</th><th>Labels</th><th>Last pull</th><th>Actions</th></tr></thead>
+            <tbody id="onecartStoresTbody"><tr><td colspan="8" style="color:#94a3b8;padding:.8rem">No OneCart companies connected.</td></tr></tbody>
           </table>
         </div>
         <button class="btn-primary btn-sm" id="onecartAddStoreBtn" style="margin-top:.5rem">+ Connect OneCart company</button>
@@ -2471,6 +2471,16 @@
           <input type="hidden" id="ocId" />
           <div class="form-group"><label>Client (whose orders these are)</label><input type="text" id="ocClient" placeholder="e.g. Betime Online" autocomplete="off" /></div>
           <div class="form-group"><label>OneCart API key</label><input type="text" id="ocKey" placeholder="from Settings → API Keys (leave blank to keep current)" autocomplete="off" /></div>
+          <div class="form-group"><label>What the synced orders are</label>
+            <select id="ocMode">
+              <option value="reference">&#128210; Reference ledger — the channel's record, NOT an order (default)</option>
+              <option value="work">Work orders — counted and picked like any upload</option>
+            </select>
+            <div style="font-size:.78rem;color:#64748b;margin-top:.3rem">
+              <b>Reference ledger:</b> the orders land under the client for their tracking number, label and status, but are <b>not counted</b> in any order tile or badge and are <b>never scanned</b>.
+              The client's own upload of the same order number is <b>not a duplicate</b> — the upload asks &ldquo;this exists in the ledger, carry on?&rdquo; and becomes the work order; a completion on it is relayed to the channel through the ledger record.
+            </div>
+          </div>
           <div class="form-group"><label>Auto-pull every (minutes, 0 = manual only)</label><input type="number" id="ocAutoPull" min="0" max="1440" value="5" /></div>
           <div class="form-group"><label>When scan completes</label>
             <select id="ocCompleteAction">
