@@ -2597,6 +2597,200 @@ fulfillment naming the open fulfillment order, and a later pull fills the blank
 waybill on the done order while flagging its marketplace cancellation without
 regressing the work.
 
+## OneCart DIRECT — a client's OneCart company connected straight in (lib/onecart.js)
+
+Per the user: **Betime is on OneCart** (Shopee, Lazada, TikTok and Shopify all
+behind it) and NOT on ZORT, and every order is to flow into the client
+**"Betime Online"** — a DIFFERENT account from the file-upload `BETIME` (a
+suffix does not fold like case does; that separation is deliberate, per the
+user). Built on the `lib/shopify.js` model, not the ZORT one: **one company =
+ONE client**, so there is no hub attribution to guess at and no refile tool.
+The same intake pipeline as every other door — canonical spelling, catalogue
+enrichment, the stock gate + reservations, pokes, IS- job codes.
+
+Spec source: the OneCart API v2 Swagger the user supplied (51 endpoints, base
+`https://app.getonecart.com/api/v2`, `Authorization: <key>` bare, envelope
+`{data, meta, links, errors, warnings}` / `{error:{code,message,request_id}}`,
+300 req/min with `X-RateLimit-*` + 429/`Retry-After`). **Read in full before
+a line was written** — the `Order/PackOrder` lesson. Two things it settles:
+**HTTP status codes ARE status codes** (no resCode-inside-a-200), and **there
+are NO WEBHOOKS in v2** — the word appears nowhere — so this is pull-only on
+a per-store cadence. The marketing site advertises webhooks; the spec has
+none. Ask them if it matters.
+
+- `db.onecartStores[]` {id, clientName, apiKey (masked on read, blank keeps
+  the stored one), enabled, autoPullMinutes, completeAction none|`ship`,
+  labelSync `off`|`intake`, endpoint?, lastPullAt, lastResult, lastLabels}.
+  Routes (checkMaster): `/api/master/onecart/stores` GET/POST/DELETE,
+  `/:id/test`, `/:id/pull`, `/:id/labels`. UI: Connections → 🛒 OneCart
+  (Direct). Warehouse gets a real 403 and has no Connections tab at all.
+  **VALIDATE BEFORE THE LIST IS TOUCHED**: `readDb()` hands back the live
+  in-memory object, so a record pushed and then refused would sit in the list
+  unsaved until the next `writeDb` from ANY route persisted it — a phantom
+  store with no key. Caught by the e2e ("no stores left" failed). The Shopify
+  route above carries the same latent shape; left as is, noted here.
+- **THE PULL IS TWO READS** (`pullOnecartStore`), both cheap: `GET
+  /delivery_orders` is a purpose-built picking queue — unshipped, paid,
+  customer + address + line items **with bundle components already expanded**
+  — but it carries NO tracking number; that lives on `GET /orders`
+  (`tracking_no`, null until shipped). So the pull also sweeps `/orders?
+  updated_start=<lastPullAt−1d, Unix seconds>` with `_fields` narrowed, and
+  that sweep is what fills tracking on queue rows AND on orders we already
+  hold, notices cancellations on orders we hold, and confirms a completion
+  push the channel took its time over. One queue read + one sweep read per
+  pull (asserted).
+  - **BUNDLES**: components carry `is_bundle_component` + `bundle_sku`. If the
+    parent is ALSO listed as its own row, picking it would double-count the
+    pieces its components already are — a row whose sku is named as some
+    component's `bundle_sku` is dropped in favour of its components. Asserted:
+    `KOLI-BOX 9` and `KOLI-BOX 5` are pick lines, `KOLI-BUNDLE` is not.
+  - **AN ORDER WITH NO PRODUCT LINES IS SKIPPED BY NAME** (`skippedNoLines`,
+    on the store row and in the pull result) — the one gate in `pullZortStore`
+    that has no counter, closed here from day one.
+  - **THE SAME ATTRIBUTES AS A HAND-UPLOADED ORDER** — per the user, mid-
+    build: *"match with the current order attributes in IdealOne so that I
+    can process seamlessly."* `mapDeliveryOrder` fills every field
+    `summarizeOrders` keeps that OneCart can supply: `order_number` (the
+    marketplace `order_no` — what the label prints and the crew scans),
+    `customer_name`, `tel`, `delivery_address` (+ postal), `carrier`
+    (`shipping_provider_name`), `waybill_number` (`tracking_no`, from the
+    sweep), `platform`, `shop_name`, and `date` — the order's OWN placed day
+    in SGT, which the portal's day table, the export's Date column and the
+    KPI band all read. Lines carry `sku`/`description`/`qty` with the standard
+    `uom`/`location`/`batch_number`/`expiry_date` shape. Fields OneCart's
+    Order entity does not carry — `issue_no` (the GI is a WMS concept),
+    `pick_ticket`, `po_number`, batch/expiry, location — are honestly blank,
+    never invented. **Asserted structurally**: every attribute key on a hand-
+    keyed order is on the synced one, at order AND line level.
+    `onecart_id`/`onecart_store_id`/`onecart_shop` stamped after
+    `summarizeOrders`, batch `uploaded_by: 'onecart-sync'`.
+  - **CANCELLATION AND SHIP-CONFIRMATION ARE API-ONLY, STRUCTURALLY**: the held
+    order must carry the SAME `onecart_id`, or it is a hand-keyed order that
+    merely shares the marketplace number (the ZORT `zort_id` rule). A blank
+    waybill is still filled on ANY held order sharing the number — filling a
+    blank is harmless-good; regressing work is not.
+  - Cancellations follow the `handleMarketplaceCancel` asymmetry exactly:
+    UNTOUCHED pending → `unprocessed` with the channel's word and the day
+    stamped, reservation released; TOUCHED (scanned/done/picked up) → never
+    regressed, `state.platform_cancelled {via:'onecart'}` for the red "do not
+    ship" chip. Never re-stamps the same word (re-pulls are no-ops).
+  - Status words are matched LOOSELY (`isCancelledStatus` = /cancel/i,
+    `isShippedStatus` = shipped/completed/delivered **but never
+    `ready_to_ship`**) because the spec says "the exact values vary by sales
+    channel"; the WORD SEEN is recorded.
+- **COMPLETION → `PUT /orders/{id}` `mark_as_shipped`, AND A 200 IS NOT A
+  SHIP.** The spec itself warns fulfilment "runs in the background, so the
+  returned status may not reflect the change straight away" — the exact shape
+  that produced `sync_rts_not_taking` on ZORT. `pushOnecartCompletion` (fire-
+  and-forget beside `pushShopifyCompletion` in `/api/scan/complete`) reads the
+  order back up to four times over ~10s: moved → `onecart_shipped_at` +
+  `onecart_completion_pushed` with the hub's status; not moved → recorded as
+  `onecart_completion_unconfirmed` (NOT done, NOT a failure), and the next
+  pull's sweep stamps it `onecart_completion_confirmed_later` when the channel
+  gets there. Never twice (`onecart_ship_requested_at` + an in-flight set). A
+  tracking number minted at ship time fills a blank waybill.
+- **LABELS — `POST /orders/print_awbs`**, the endpoint ZORT never had. The
+  spec: Lazada returns a download URL, Shopee base64 PDF bytes, TikTok a URL
+  per PACKAGE with its tracking number; `print_jobs` is typed only as
+  `object`, "one entry per shop". So `extractLabelCandidates` WALKS the whole
+  reply for anything label-shaped (an http(s) URL, a long base64 string, a
+  data: URI), carrying the nearest `order_id`/`order_no`/`tracking` down as
+  context so a label can be attached to THAT order via `processLabelPdf(…,
+  {forOrder})` — the ONE label pipeline — and text-matched only when nothing
+  named it. **THE DEPTH BOUND IS GENEROUS ON PURPOSE**: TikTok's per-package
+  URL already sits at depth 7 and a bound of 6 silently lost it — caught by
+  the e2e (2 of 3 attached, 0 unusable, no error anywhere), not by reading.
+  A URL is fetched only from the store's own API host or a public https host
+  that is not an IP literal (the ordinary SSRF shape, closed). `%PDF` is
+  checked with junk-before tolerance; identical bytes offered twice import
+  once. **NEVER A URL ON THE AUDIT TRAIL** — a label link carries the
+  customer's address.
+  - **TWO WAYS TO ASK, and the operator holds the risky one.** 🏷 Get Labels
+    (`/:id/labels`) fetches for every open, unlabelled synced order NOW;
+    `labelSync: 'intake'` fetches automatically as orders arrive. Intake is
+    OFF by default and turning it on is a confirm that says why: generating a
+    marketplace AWB may declare the order READY TO SHIP on the channel before
+    anything is picked (that is how Shopee and Lazada mint one), and
+    **whether OneCart's print step does that is NOT confirmed** from here.
+    Backing out of the confirm reverts the choice (asserted).
+- **ISOLATION — per the user, mid-build: *"those from OneCart to be isolated
+  and nothing to do with the rest of the current processes."*** Most of that
+  is structural already (own client, own batches, own module and switches,
+  `onecart_id`-gated, none of the ZORT/Shopify machinery or the auto-cancel
+  sweep reaches them). Two places still reached OUT, both closed:
+  - **NO `harvestCatalogueFromOrders`.** Teaching the catalogue from these
+    orders creates zero-quantity inventory rows for the client, and that is
+    the one way this feed touched inventory at all. Pick-line names come from
+    the order's own `line_items.name`. (It is ALSO the explanation for the red
+    "✗ No stock" on every BETIME row: `orderStockStateSrv` sets `tracked` the
+    moment ANY catalogue row exists for the SKU and never consults
+    `stock_tracking`, so rows harvested from file uploads at zero make the
+    pill fire on a client whose stock is not held here. Found, not fixed —
+    separate change.)
+  - **AN ORDER NUMBER HELD BY ANYTHING OUTSIDE THIS CONNECTION IS NEVER
+    TOUCHED** — not a blank waybill, not a status — and is reported BY NAME
+    with the client and job holding it (`heldElsewhere`, on the store row and
+    in the pull result). `isOurs(held, id)` = same `onecart_id` AND same
+    store. Order numbers stay unique system-wide (scanning, labels and
+    `findBatchForOrder` all key on it), so it is not imported a second time
+    either — the collision is made visible, never resolved by a guess.
+- **429 IS REPORTED, NEVER RETRIED INTO** — the pull fails with "OneCart rate
+  limit (300/min)" on the store row, and the next pull is fine. `rate.remaining`
+  rides on the test result and the pull result.
+- Audit: `onecart_store_saved/deleted`, `onecart_pull`, `sync_waybill_
+  backfilled {via:'onecart'|'onecart-sweep'|'onecart-ship'}`,
+  `sync_marketplace_cancelled` / `_cancel_conflict {via:'onecart'}`,
+  `onecart_completion_pushed/_unconfirmed/_confirmed_later/_push_failed`,
+  `onecart_labels_fetched` (counts only), `onecart_labels_failed`.
+- **HONEST CAVEATS.** The sandbox cannot reach app.getonecart.com, so this is
+  verified against a mock built to the spec (scratchpad `onecart-mock.js`;
+  `ONECART_BASE` / `store.endpoint` override the host) — the first production
+  Test + Pull is the live verification, exactly as ZORT and Shopify were. Two
+  things to prove on Betime's real account before trusting them: that
+  `print_awbs` hands back a usable PDF (all the value is there), and whether
+  it RTS's the order. NOT wired, deliberately: the no-stock auto-cancel sweep
+  and the `API` pill are still ZORT-only (Shopify is not in them either) —
+  extending a 30-minute auto-cancel to a new channel on day one is the user's
+  call, not a side effect.
+
+Verified 79 API checks through the real server against the mock (a wrong key
+refused in OneCart's words; the key masked on read; Test naming the company;
+the first pull importing 3 of 4 with the line-less order skipped by name, the
+cancelled and already-shipped ones never imported, bundle components as pick
+lines and the parent not, customer/address/postal/phone carried, the tracking
+number read from the sweep since the queue has none; ISOLATION — a BETIME
+order keyed in by hand through the partner intake and sharing a marketplace
+number the channel then lists is not imported again, is named on the pull
+with its client and job, keeps its BLANK waybill when the channel has a
+tracking number for it, and is untouched by a cancellation on the channel;
+no item master learned for Betime Online and no stock verdict on the synced
+order; ATTRIBUTE PARITY — every order-level and line-level key on the
+hand-keyed order is on the synced one, `date` is the order's own SGT day,
+shop/carrier/platform filled, GI/PO/pick-ticket honestly blank; a second
+pull importing nothing; late tracking filled and an existing waybill never
+overwritten;
+completion sending `mark_as_shipped`, READING BACK, and recording shipped
+only once the status moved, with `ready_to_ship` never read as shipped; Get
+Labels attaching a URL label, a base64 label and a per-package TikTok label
+with no URL on the trail and nothing left to ask for afterwards; an untouched
+cancellation closing the order with the channel's word and a touched one
+flagged not regressed, once, with re-pulls re-stamping nothing; auto-label at
+intake asking for the NEW order only; a 429 reported and recovered from;
+warehouse 403 on read and pull; disconnecting keeping the pulled orders) plus
+38 browser checks on desktop and a Pixel 5 through the real Administrator
+gate (the section, the form, declining the auto-label confirm reverting it
+with nothing saved, the row with only the key tail, Test / Pull / Get Labels
+driven from the buttons with their results in words, the synced order on the
+Orders tab under Betime Online with its label chip, Edit leaving the key
+blank and a blank keeping it, no sideways scroll, and warehouse having no
+Connections tab).
+
+TEST GOTCHAS: the mock's first cut excluded `ready_to_ship` from the queue
+because /ship/ matched it — the queue is "paid, not yet shipped" and RTS'd is
+still in it. And `page.waitForSelector('#x.hidden')` waits for the element to
+be VISIBLE, which a hidden overlay never is — use `waitForFunction` on the
+class.
+
 ## Client Portal — read-only self-service for 3PL clients (/portal)
 
 `public/portal.html` + `portal.js`, served at `GET /portal`. Same architecture

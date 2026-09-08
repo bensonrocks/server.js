@@ -16387,6 +16387,9 @@ function completeOrderCore(db, batch, ord, state, { startTime, endTime, operator
   pushZortCompletion(db, ord, state);
   // Direct-Shopify order? Mark it FULFILLED on the shop with our tracking.
   pushShopifyCompletion(db, ord, state);
+  // OneCart order? Mark it SHIPPED on the channel — and read it back, since
+  // their fulfilment runs in the background and a 200 is not a ship.
+  pushOnecartCompletion(db, ord, state);
   // …and tell any partner system subscribed to completions. Same discipline as
   // the two pushes above: fire-and-forget, never in the way of finishing work.
   emitOutboundStandalone('order.completed', {
@@ -24850,6 +24853,448 @@ setInterval(async () => {
     }
   } catch (e) { console.error('[shopify] scheduler error:', e.message); }
   finally { _shopifyPulling = false; }
+}, 60000);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONECART (DIRECT) — a client's OneCart company connected straight in.
+// Per the user: Betime is on OneCart (all of their channels behind it) and
+// NOT on ZORT, so this is the second direct connector after Shopify and is
+// built on the same model — ONE company = ONE client, the SAME intake
+// pipeline, no hub attribution. Pull only: OneCart v2 has no webhooks.
+// ═══════════════════════════════════════════════════════════════════════════
+const onecartApi = require('./lib/onecart');
+function onecartStores(db) { db.onecartStores = db.onecartStores || []; return db.onecartStores; }
+function onecartStorePublic(s) {
+  return {
+    id: s.id, clientName: s.clientName || '',
+    enabled: !!s.enabled, autoPullMinutes: Number(s.autoPullMinutes) || 0,
+    completeAction: s.completeAction || 'none',
+    labelSync: s.labelSync === 'intake' ? 'intake' : 'off',
+    apiKey: s.apiKey ? '••••' + String(s.apiKey).slice(-4) : '',
+    endpoint: s.endpoint || '',
+    lastPullAt: s.lastPullAt || null, lastResult: s.lastResult || null,
+    lastLabels: s.lastLabels || null,
+  };
+}
+
+app.get('/api/master/onecart/stores', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  res.json(onecartStores(readDb()).map(onecartStorePublic));
+});
+app.post('/api/master/onecart/stores', express.json(), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const b = req.body || {};
+  const list = onecartStores(db);
+  const existingRec = b.id ? list.find(x => x.id === b.id) : null;
+  // VALIDATE BEFORE THE LIST IS TOUCHED. readDb() hands back the live in-
+  // memory object, so a record pushed and then refused would sit in the list
+  // unsaved until the next writeDb from ANY route persisted it — a phantom
+  // store with no key. (The Shopify route above carries the same latent
+  // shape; left as is, noted.) Edits land on a copy and replace on success.
+  const s = existingRec ? { ...existingRec } : { id: uuidv4() };
+  if (b.clientName !== undefined) s.clientName = canonicalClientName(db, String(b.clientName).trim());
+  // Blank keeps the stored key — the same rule as the ZORT and Shopify fields.
+  if (String(b.apiKey || '').trim()) s.apiKey = String(b.apiKey).trim();
+  if (b.endpoint !== undefined) s.endpoint = String(b.endpoint || '').trim();
+  if (b.enabled !== undefined) s.enabled = !!b.enabled;
+  if (b.autoPullMinutes !== undefined) s.autoPullMinutes = Math.max(0, Number(b.autoPullMinutes) || 0);
+  if (b.completeAction !== undefined) s.completeAction = b.completeAction === 'ship' ? 'ship' : 'none';
+  if (b.labelSync !== undefined) s.labelSync = b.labelSync === 'intake' ? 'intake' : 'off';
+  if (!s.clientName) return res.status(400).json({ error: 'Name the client this OneCart company belongs to.' });
+  if (!s.apiKey) return res.status(400).json({ error: 'The OneCart API key is required (Settings → API Keys in their dashboard).' });
+  if (existingRec) Object.assign(existingRec, s); else list.push(s);
+  writeDb(db);
+  logAudit('onecart_store_saved', { id: s.id, client: s.clientName, enabled: !!s.enabled, completeAction: s.completeAction || 'none', labelSync: s.labelSync || 'off', by: req.userId || _tokenUserId(req) || 'master' });
+  res.json(onecartStorePublic(s));
+});
+app.delete('/api/master/onecart/stores/:id', (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const list = onecartStores(db);
+  const i = list.findIndex(x => x.id === req.params.id);
+  if (i < 0) return res.status(404).json({ error: 'Store not found' });
+  const [gone] = list.splice(i, 1);
+  writeDb(db);
+  logAudit('onecart_store_deleted', { id: gone.id, client: gone.clientName || '', by: req.userId || _tokenUserId(req) || 'master' });
+  res.json({ ok: true });
+});
+app.post('/api/master/onecart/stores/:id/test', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const s = onecartStores(readDb()).find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Store not found' });
+  try { res.json({ ok: true, ...(await onecartApi.testConnection(s)) }); }
+  catch (e) { res.status(502).json({ ok: false, error: e.message, requestId: e.requestId || '' }); }
+});
+app.post('/api/master/onecart/stores/:id/pull', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const s = onecartStores(db).find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Store not found' });
+  try { res.json(await pullOnecartStore(db, s)); }
+  catch (e) {
+    s.lastResult = { at: new Date().toISOString(), error: String(e.message).slice(0, 300), requestId: e.requestId || '' };
+    writeDb(db);
+    res.status(502).json({ error: e.message, requestId: e.requestId || '' });
+  }
+});
+// 🏷 Get Labels — fetch shipping labels for this company's open, unlabelled
+// orders NOW. The manual counterpart of labelSync:'intake'; admin-driven so
+// the operator controls WHEN the channel is asked to generate an AWB.
+app.post('/api/master/onecart/stores/:id/labels', async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const db = readDb();
+  const s = onecartStores(db).find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Store not found' });
+  const targets = [];
+  for (const b of db.batches || []) {
+    for (const o of b.orders || []) {
+      if (o.onecart_store_id !== s.id || !o.onecart_id) continue;
+      const st = b.orderStates?.[o.order_number] || {};
+      if (st.status === 'unprocessed') continue;
+      if ((db.orderLabels || {})[o.order_number]) continue;
+      targets.push({ order_number: o.order_number, onecart_id: o.onecart_id });
+    }
+  }
+  if (!targets.length) return res.json({ ok: true, requested: 0, attached: [], noLabel: [], unusable: [], note: 'Every open OneCart order already has a label.' });
+  try {
+    const r = await fetchOnecartLabels(s, targets.slice(0, 100));
+    const db2 = readDb();
+    const s2 = onecartStores(db2).find(x => x.id === s.id);
+    if (s2) { s2.lastLabels = { at: new Date().toISOString(), requested: r.requested, attached: r.attached.length, noLabel: r.noLabel.length, unusable: r.unusable.length }; writeDb(db2); }
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(502).json({ error: e.message, requestId: e.requestId || '' }); }
+});
+
+// The pull. Two reads, both cheap:
+//   1. /delivery_orders — the picking queue (unshipped, paid, lines + address).
+//      It carries NO tracking number.
+//   2. /orders?updated_start — everything that changed on the channel since
+//      the last pull: the tracking number for the queue rows AND for orders we
+//      already hold, cancellations on orders we hold, and the read-back for a
+//      completion push the channel took its time over.
+// Same batch shape as pullShopifyStore, single-client.
+async function pullOnecartStore(db, store) {
+  const existing = new Map();   // order_number -> {batch, order}
+  for (const b of db.batches || []) for (const o of b.orders || []) existing.set(String(o.order_number), { batch: b, order: o });
+  const now = new Date().toISOString();
+  const sinceMs = store.lastPullAt ? new Date(store.lastPullAt).getTime() - 86400000 : Date.now() - 7 * 86400000;
+
+  const sweep = await onecartApi.getOrdersUpdatedSince(store, Math.floor(sinceMs / 1000), { maxPages: 10 });
+  const sweepByNo = new Map();
+  for (const r of sweep.rows) { const no = String(r.order_no || '').trim(); if (no && !sweepByNo.has(no)) sweepByNo.set(no, r); }
+  const queue = await onecartApi.getDeliveryOrders(store, { maxPages: 20 });
+
+  const rows = []; const meta = {};
+  let fetched = 0, skippedExisting = 0, trackingFilled = 0, cancelled = 0, confirmedLater = 0;
+  const skippedByStatus = {}; const skippedNoLines = []; const cancelConflicts = []; const filled = new Set();
+  // ISOLATION, per the user: OneCart orders have nothing to do with the rest
+  // of the current processes. An order number already held by something
+  // OTHER than this connection (a hand-keyed upload under BETIME, say) is
+  // never touched — not a waybill, not a status — and is REPORTED BY NAME
+  // with the client holding it, so the collision is visible instead of
+  // silent. Order numbers stay unique system-wide (the standing invariant:
+  // scanning, labels and findBatchForOrder all key on it), so it is not
+  // imported a second time either.
+  const heldElsewhere = [];
+  const isOurs = (held, onecartId) => String(held.order.onecart_id || '') === String(onecartId || '') && held.order.onecart_store_id === store.id;
+  const ensureState = (held) => (held.batch.orderStates = held.batch.orderStates || {})[held.order.order_number]
+    || (held.batch.orderStates[held.order.order_number] = { status: 'pending', scanned: {}, updated_at: now });
+  const fillTracking = (held, tracking, via) => {
+    if (!tracking || String(held.order.waybill_number || '').trim() || filled.has(held.order.order_number)) return;
+    held.order.waybill_number = tracking; filled.add(held.order.order_number); trackingFilled++;
+    logAudit('sync_waybill_backfilled', { order: held.order.order_number, via, tracking });
+  };
+
+  for (const d of queue.rows) {
+    fetched++;
+    const m = onecartApi.mapDeliveryOrder(d, sweepByNo.get(String(d.order_no || '').trim()));
+    const held = existing.get(String(m.order_number));
+    if (held) {
+      if (!isOurs(held, m.meta.onecart_id)) {
+        if (!heldElsewhere.some(h => h.order === m.order_number)) heldElsewhere.push({ order: m.order_number, client: held.batch.client_name || '', job: held.batch.idealscan_code || '' });
+        continue;                                                // not ours — hands off
+      }
+      skippedExisting++;
+      ensureState(held);
+      fillTracking(held, m.meta.tracking, 'onecart');           // a blank is filled, never overwritten
+      continue;
+    }
+    if (onecartApi.isCancelledStatus(m.meta.status)) { skippedByStatus.cancelled = (skippedByStatus.cancelled || 0) + 1; continue; }
+    if (onecartApi.isShippedStatus(m.meta.status))   { skippedByStatus.shipped   = (skippedByStatus.shipped   || 0) + 1; continue; }
+    // AN ORDER WITH NO PRODUCT LINES IS REPORTED, never silently dropped —
+    // the one gate in pullZortStore that has no counter, closed here.
+    if (!m.rows.length) { skippedNoLines.push(m.order_number); continue; }
+    for (const r of m.rows) { r.client_name = store.clientName; rows.push(r); }
+    meta[m.order_number] = m.meta;
+  }
+
+  // What changed on orders we already hold.
+  for (const r of sweep.rows) {
+    const no = String(r.order_no || '').trim();
+    const held = no && existing.get(no);
+    if (!held) continue;
+    // ONLY OUR OWN ORDERS, structurally: the held order must carry the SAME
+    // onecart_id from THIS connection, or it is somebody else's order that
+    // merely shares the marketplace number (the ZORT zort_id rule, and the
+    // isolation rule above). Nothing on it is touched — not even a blank
+    // waybill.
+    if (!isOurs(held, r.id)) {
+      if (!heldElsewhere.some(h => h.order === no)) heldElsewhere.push({ order: no, client: held.batch.client_name || '', job: held.batch.idealscan_code || '' });
+      continue;
+    }
+    const st = ensureState(held);
+    fillTracking(held, String(r.tracking_no || '').trim(), 'onecart-sweep');
+    const word = String(r.status || '');
+    if (onecartApi.isCancelledStatus(word) && st.status !== 'unprocessed' && !(st.platform_cancelled && st.platform_cancelled.status === word)) {
+      // The handleMarketplaceCancel asymmetry: UNTOUCHED pending work is
+      // closed like any hub void; TOUCHED work is never regressed — flagged
+      // "do not ship" for a human.
+      const scannedTotal = Object.values(st.scanned || {}).reduce((n, v) => n + v, 0);
+      const touched = st.status === 'done' || st.status === 'processing' || scannedTotal > 0 || st.pickup;
+      if (!touched) {
+        st.status = 'unprocessed';
+        st.unprocessed_reason = `Cancelled on ${r.platform || 'the channel'} via OneCart (status "${word}"${r.cancel_reason_text ? ' — ' + String(r.cancel_reason_text).slice(0, 120) : ''})`;
+        st.unprocessed_at = now; st.updated_at = now;
+        cancelled++;
+        logAudit('sync_marketplace_cancelled', { order: no, via: 'onecart', platform: r.platform || '', status: word });
+      } else {
+        st.platform_cancelled = { at: now, status: word, via: 'onecart', local_status: st.status, scanned: scannedTotal };
+        st.updated_at = now;
+        cancelConflicts.push(no);
+        logAudit('sync_marketplace_cancel_conflict', { order: no, via: 'onecart', platform: r.platform || '', status: word, localStatus: st.status });
+      }
+    }
+    // A completion push the channel confirmed AFTER our read-back gave up.
+    if (st.onecart_ship_requested_at && !st.onecart_shipped_at && onecartApi.isShippedStatus(word)) {
+      st.onecart_shipped_at = now; st.onecart_ship_status = word; st.updated_at = now;
+      confirmedLater++;
+      logAudit('onecart_completion_confirmed_later', { order: no, storeId: store.id, hubStatus: word });
+    }
+  }
+
+  let imported = 0; let batchId = null; const newOrders = [];
+  if (rows.length) {
+    const clientName = canonicalClientName(db, store.clientName);
+    const cid = invClientId(clientName);
+    const normRows = normalizeOrderRowsToInhouseSku(rows, () => cid);
+    const explodedRows = explodeBundleRows(normRows, () => cid);
+    const orders = summarizeOrders(explodedRows.filter(r => r.sku && r.qty > 0));
+    for (const o of orders) {
+      const m2 = meta[o.order_number] || {};
+      o.onecart_id = m2.onecart_id;
+      o.onecart_store_id = store.id;
+      o.onecart_shop = m2.shop_name || '';
+      if (!o.platform) o.platform = m2.platform || '';
+      if (!o.carrier)  o.carrier  = m2.carrier  || '';
+      o.placed_at = m2.placed_at || null;
+    }
+    let tracked = false;
+    if (inventory.available() && clientStockTracked(cid)) {
+      for (const sku of new Set(orders.flatMap(o => (o.lines || []).map(l => l.sku)).filter(Boolean))) {
+        if (!inventory.get(sku, cid)) { try { inventory.upsert({ sku, name: sku, clientId: cid }); } catch (_) {} }
+      }
+      tracked = reserveIntakeOrders(db, cid, clientName, orders, null, 'fefo', 'wait').tracked;
+    }
+    const stamp = now.slice(0, 16).replace(/[T:]/g, '');
+    const batch = {
+      id: uuidv4(),
+      filename: `onecart-${clientName.replace(/[^A-Za-z0-9_-]+/g, '_')}-${stamp}`,
+      idealscan_code: nextIdealscanCode(db),
+      uploaded_at: now,
+      uploaded_by: 'onecart-sync',
+      client_name: clientName,
+      order_count: orders.length,
+      row_count: orders.reduce((n, o) => n + o.lines.length, 0),
+      orderStates: {},
+      orders,
+      inventory_tracked: tracked,
+      inventory_client: tracked ? cid : undefined,
+    };
+    db.batches.unshift(batch);
+    batchId = batch.id;
+    imported = orders.length;
+    for (const o of orders) newOrders.push({ order_number: o.order_number, onecart_id: o.onecart_id });
+    addOutboundPoke(db, batch, 'store-sync');
+    // DELIBERATELY NO harvestCatalogueFromOrders HERE (isolation, per the
+    // user). Teaching the catalogue from these orders creates zero-quantity
+    // inventory rows for the client — which is precisely what puts a red
+    // "No stock" pill on every row of a client whose stock we do not hold,
+    // and it is the one way this feed would reach into inventory at all.
+    // Names for the pick lines come from the order itself (line_items.name).
+  }
+  if (cancelled) { try { releaseOrphanReservations(db); } catch (_) {} }
+
+  store.lastPullAt = now;
+  store.lastResult = {
+    at: now, fetched, imported, skippedExisting, skippedByStatus,
+    skippedNoLines: skippedNoLines.slice(0, 20),
+    heldElsewhere: heldElsewhere.slice(0, 20), heldElsewhereCount: heldElsewhere.length,
+    trackingFilled, cancelled, cancelConflicts: cancelConflicts.slice(0, 20), confirmedLater, batchId,
+    sweepRows: sweep.rows.length, queueTruncated: queue.truncated || undefined,
+    rateRemaining: (queue.rate && queue.rate.remaining != null) ? queue.rate.remaining : undefined,
+  };
+  writeDb(db);
+  logAudit('onecart_pull', { storeId: store.id, client: store.clientName, fetched, imported, skippedExisting, skippedNoLines: skippedNoLines.length, heldElsewhere: heldElsewhere.length, trackingFilled, cancelled, cancelConflicts: cancelConflicts.length });
+
+  // Labels at intake — only when the operator turned it on, and never able
+  // to fail the pull: the orders are already on the floor either way.
+  if (store.labelSync === 'intake' && newOrders.length) {
+    try {
+      const r = await fetchOnecartLabels(store, newOrders);
+      const db2 = readDb();
+      const s2 = onecartStores(db2).find(x => x.id === store.id);
+      if (s2) { s2.lastLabels = { at: new Date().toISOString(), requested: r.requested, attached: r.attached.length, noLabel: r.noLabel.length, unusable: r.unusable.length, via: 'intake' }; writeDb(db2); }
+      store.lastResult.labels = { requested: r.requested, attached: r.attached.length, noLabel: r.noLabel.length, unusable: r.unusable.length };
+    } catch (e) {
+      store.lastResult.labels = { error: String(e.message).slice(0, 200) };
+      logAudit('onecart_labels_failed', { storeId: store.id, error: String(e.message).slice(0, 200), requestId: e.requestId || '' });
+    }
+  }
+  return { ok: true, ...store.lastResult };
+}
+
+// A label URL handed back by the channel is fetched — but only somewhere a
+// label could legitimately live: the store's own API host, or a public https
+// host that is not an IP literal. Never localhost/metadata by way of a
+// response body (the ordinary SSRF shape).
+function _onecartLabelUrlAllowed(url, store) {
+  let u; try { u = new URL(url); } catch (_) { return false; }
+  try { if (new URL(onecartApi.DEFAULT_BASE).origin === u.origin) return true; } catch (_) {}
+  try { if (store.endpoint && new URL(store.endpoint).origin === u.origin) return true; } catch (_) {}
+  try { if (process.env.ONECART_BASE && new URL(process.env.ONECART_BASE).origin === u.origin) return true; } catch (_) {}
+  if (u.protocol !== 'https:') return false;
+  const h = u.hostname.toLowerCase();
+  if (h === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(h) || h.includes(':') || h.endsWith('.local')) return false;
+  return true;
+}
+
+// Ask the channel for labels, attach what comes back through the ONE label
+// pipeline (processLabelPdf), and say per order what happened. Never a URL on
+// the audit trail — a label link carries the customer's address.
+async function fetchOnecartLabels(store, targets) {
+  const requested = targets.length;
+  const byId = new Map(targets.map(t => [String(t.onecart_id), t.order_number]));
+  const byNo = new Map(targets.map(t => [String(t.order_number), t.order_number]));
+  const byTracking = new Map();
+  {
+    const db = readDb();
+    for (const b of db.batches || []) for (const o of b.orders || []) {
+      if (byNo.has(String(o.order_number)) && String(o.waybill_number || '').trim()) byTracking.set(String(o.waybill_number).trim().toUpperCase(), o.order_number);
+    }
+  }
+  const jobs = await onecartApi.printAwbs(store, targets.map(t => t.onecart_id));
+  const cands = onecartApi.extractLabelCandidates(jobs);
+  const attached = [], unusable = [], seenBytes = new Set();
+  for (const c of cands) {
+    const orderNo = (c.orderId && byId.get(String(c.orderId)))
+      || (c.orderNo && byNo.get(String(c.orderNo)))
+      || (c.tracking && byTracking.get(String(c.tracking).toUpperCase()))
+      || '';
+    let bytes = null, why = '';
+    try {
+      if (c.kind === 'base64') {
+        bytes = Buffer.from(c.value, 'base64');
+      } else if (_onecartLabelUrlAllowed(c.value, store)) {
+        const r = await fetch(c.value, { redirect: 'follow' });
+        if (!r.ok) why = `label link answered ${r.status}`;
+        else bytes = Buffer.from(await r.arrayBuffer());
+      } else {
+        why = 'label link host not allowed';
+      }
+    } catch (e) { why = 'label fetch failed: ' + String(e.message).slice(0, 80); }
+    if (bytes && bytes.length) {
+      const head = bytes.subarray(0, 1024).toString('latin1');
+      const at = head.indexOf('%PDF');
+      if (at < 0) { why = why || 'the channel handed back something that is not a PDF'; bytes = null; }
+      else if (at > 0) bytes = bytes.subarray(at);
+    }
+    if (!bytes) { unusable.push({ order: orderNo || '', shop: c.shop || '', platform: c.platform || '', why }); continue; }
+    const fp = crypto.createHash('sha256').update(bytes).digest('hex');
+    if (seenBytes.has(fp)) continue;                    // the same PDF offered twice
+    seenBytes.add(fp);
+    try {
+      const name = `onecart-${(orderNo || 'labels').replace(/[^A-Za-z0-9_-]+/g, '_')}-${Date.now()}.pdf`;
+      await processLabelPdf(bytes, name, 'onecart-sync', orderNo ? { forOrder: orderNo } : {});
+      attached.push({ order: orderNo || '(matched by text)', shop: c.shop || '', platform: c.platform || '' });
+    } catch (e) {
+      unusable.push({ order: orderNo || '', shop: c.shop || '', why: 'import failed: ' + String(e.message).slice(0, 80) });
+    }
+  }
+  const after = readDb();
+  const got = new Set(targets.filter(t => (after.orderLabels || {})[t.order_number]).map(t => t.order_number));
+  const noLabel = targets.filter(t => !got.has(t.order_number)).map(t => t.order_number);
+  logAudit('onecart_labels_fetched', { storeId: store.id, requested, attached: got.size, noLabel: noLabel.length, unusable: unusable.length, candidates: cands.length });
+  return { requested, attached: [...got].map(o => ({ order: o })), noLabel, unusable, candidates: cands.length };
+}
+
+// Completion push-back: mark the order SHIPPED on the channel. Fire-and-
+// forget — NEVER blocks completion. A 200 IS NOT A SHIP: the spec says their
+// fulfilment runs in the background, so the order is read back until its
+// status has moved; if it has not moved within ~10s the request is recorded
+// as UNCONFIRMED (not as done, and not as a failure) and the next pull's
+// sweep confirms it when the channel gets there.
+const _onecartShipInflight = new Set();
+function pushOnecartCompletion(db, ord, state) {
+  try {
+    if (!ord?.onecart_id || !ord?.onecart_store_id) return;
+    if (state?.onecart_shipped_at || state?.onecart_ship_requested_at) return;   // never twice
+    if (_onecartShipInflight.has(ord.order_number)) return;
+    const store = onecartStores(db).find(s => s.id === ord.onecart_store_id);
+    if (!store || !store.enabled || (store.completeAction || 'none') !== 'ship') return;
+    _onecartShipInflight.add(ord.order_number);
+    (async () => {
+      try {
+        await onecartApi.markShipped(store, ord.onecart_id);
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+        let word = '', moved = false, tracking = '';
+        for (let i = 0; i < 4 && !moved; i++) {
+          await sleep(i === 0 ? 1500 : 3000);
+          try {
+            const o = await onecartApi.getOrder(store, ord.onecart_id, 'id,status,tracking_no');
+            word = String(o.status || ''); tracking = String(o.tracking_no || '').trim();
+            moved = onecartApi.isShippedStatus(word);
+          } catch (e) { word = word || ('read-back failed: ' + String(e.message).slice(0, 80)); }
+        }
+        const db2 = readDb();
+        const b2 = findBatchForOrder(db2, ord.order_number);
+        const st2 = b2 && b2.orderStates ? b2.orderStates[ord.order_number] : null;
+        const o2 = b2 ? (b2.orders || []).find(x => x.order_number === ord.order_number) : null;
+        if (st2) {
+          st2.onecart_ship_requested_at = new Date().toISOString();
+          st2.onecart_ship_status = word;
+          if (moved) st2.onecart_shipped_at = st2.onecart_ship_requested_at;
+        }
+        if (o2 && tracking && !String(o2.waybill_number || '').trim()) {
+          o2.waybill_number = tracking;
+          logAudit('sync_waybill_backfilled', { order: ord.order_number, via: 'onecart-ship', tracking });
+        }
+        writeDb(db2);
+        logAudit(moved ? 'onecart_completion_pushed' : 'onecart_completion_unconfirmed',
+          { order: ord.order_number, storeId: store.id, hubStatus: word, tracking: tracking || String(ord.waybill_number || '') });
+      } catch (e) {
+        logAudit('onecart_completion_push_failed', { order: ord.order_number, storeId: store.id, error: String(e.message).slice(0, 300), requestId: e.requestId || '' });
+      } finally { _onecartShipInflight.delete(ord.order_number); }
+    })();
+  } catch (_) { /* completion must never be taken down by a push */ }
+}
+
+// Auto-pull — same cadence rules as the Shopify scheduler, its own guard.
+let _onecartPulling = false;
+setInterval(async () => {
+  if (_onecartPulling) return;
+  _onecartPulling = true;
+  try {
+    const db = readDb();
+    for (const store of onecartStores(db)) {
+      if (!store.enabled || !(store.autoPullMinutes > 0)) continue;
+      const last = store.lastPullAt ? new Date(store.lastPullAt).getTime() : 0;
+      if (Date.now() - last < store.autoPullMinutes * 60000) continue;
+      try { await pullOnecartStore(db, store); }
+      catch (e) { store.lastResult = { at: new Date().toISOString(), error: String(e.message).slice(0, 300), requestId: e.requestId || '' }; writeDb(db); }
+    }
+  } catch (e) { console.error('[onecart] scheduler error:', e.message); }
+  finally { _onecartPulling = false; }
 }, 60000);
 
 app.put('/api/master/users/:id/features', (req, res) => {

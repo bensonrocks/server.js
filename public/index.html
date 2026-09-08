@@ -2447,6 +2447,53 @@
           </div>
         </div>
       </details>
+
+      <details class="conn-sec" id="secOnecart">
+        <summary><span class="cs-t">&#128722; OneCart (Direct)</span><span class="cs-h">A client's OneCart company connected straight to IdealOne — every channel they sell on, one feed</span></summary>
+        <div class="admin-section-sub" style="margin:.4rem 0 .6rem">
+          The client creates an API key in their OneCart dashboard (<b>Settings &rarr; API Keys</b>, <b>Full access</b> — a read-only key cannot mark orders shipped or print labels) and hands it over.
+          Every unshipped order across their Shopee / Lazada / TikTok / Shopify shops pulls in as a normal batch under the client, with the channel on each order;
+          completing the scan can mark the order <b>shipped</b> on the channel. OneCart has no webhooks — this polls on the cadence you set.<br/>
+          <b>Kept in its own lane:</b> these orders file under the client named here and nothing else — no stock is reserved or learned from them, no other connection acts on them,
+          and an order number already held by anything outside this connection (a hand-keyed upload, say) is never touched and is named on the row instead.<br/>
+          <b style="color:#b45309">&#9888; Never connect a company here whose shops are ALSO linked into ZORT</b> — the same orders would arrive twice. One intake per shop.
+        </div>
+        <div id="onecartStoreStatus" class="status-bar hidden"></div>
+        <div class="dcs-wrap">
+          <table class="dcs-table">
+            <thead><tr><th>Client</th><th>Key</th><th>Auto-pull</th><th>On complete</th><th>Labels</th><th>Last pull</th><th>Actions</th></tr></thead>
+            <tbody id="onecartStoresTbody"><tr><td colspan="7" style="color:#94a3b8;padding:.8rem">No OneCart companies connected.</td></tr></tbody>
+          </table>
+        </div>
+        <button class="btn-primary btn-sm" id="onecartAddStoreBtn" style="margin-top:.5rem">+ Connect OneCart company</button>
+        <div id="onecartStoreForm" class="hidden" style="margin-top:1rem;max-width:520px">
+          <div class="admin-section-title" style="font-size:.95rem">Connect a client's OneCart</div>
+          <input type="hidden" id="ocId" />
+          <div class="form-group"><label>Client (whose orders these are)</label><input type="text" id="ocClient" placeholder="e.g. Betime Online" autocomplete="off" /></div>
+          <div class="form-group"><label>OneCart API key</label><input type="text" id="ocKey" placeholder="from Settings → API Keys (leave blank to keep current)" autocomplete="off" /></div>
+          <div class="form-group"><label>Auto-pull every (minutes, 0 = manual only)</label><input type="number" id="ocAutoPull" min="0" max="1440" value="5" /></div>
+          <div class="form-group"><label>When scan completes</label>
+            <select id="ocCompleteAction">
+              <option value="none">Do nothing (pull only)</option>
+              <option value="ship">Mark SHIPPED on the channel (read back to confirm)</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Shipping labels</label>
+            <select id="ocLabelSync">
+              <option value="off">Fetch on request only — the &#127991; Get Labels button</option>
+              <option value="intake">Fetch automatically as orders arrive</option>
+            </select>
+            <div style="font-size:.78rem;color:#b45309;margin-top:.3rem">
+              &#9888; Generating a marketplace AWB may declare the order <b>ready to ship</b> on the channel before anything is picked (that is how Shopee and Lazada mint one).
+              Whether OneCart's print step does that is <b>not confirmed</b> — leave this on request-only until a real order proves otherwise.
+            </div>
+          </div>
+          <div style="display:flex;gap:.5rem;margin-top:.6rem">
+            <button class="btn-primary btn-sm" id="onecartSaveStoreBtn">Save &amp; enable</button>
+            <button class="btn-secondary btn-sm" id="onecartCancelStoreBtn">Cancel</button>
+          </div>
+        </div>
+      </details>
       <!-- ANOTHER SYSTEM, BOTH WAYS. A partner used to have to borrow a staff
            login (one seat, every permission, and a trail naming a person who
            was asleep) and could only learn an order had shipped by asking

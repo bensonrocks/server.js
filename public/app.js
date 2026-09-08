@@ -811,7 +811,7 @@
     }
     if (name === 'labels') { renderLabelsTab(); }
     if (name === 'reports') { window.fillTxnClientPicker?.(); }
-    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); loadLazadaDirect(); loadAutoCancelPanel(); window.shopifyUI?.load(); window.integrationUI?.load(); }
+    if (name === 'connections') { loadZortStores(); loadShopeeDirect(); loadLazadaDirect(); loadAutoCancelPanel(); window.shopifyUI?.load(); window.onecartUI?.load(); window.integrationUI?.load(); }
   }
 
   function lockTabsForDownload() {
@@ -12830,6 +12830,135 @@
         if (!r.ok) { say('error', '✗ ' + (d.error || 'Save failed')); return; }
         $id('shopifyStoreForm').classList.add('hidden');
         say('success', `✓ Saved — press Test to confirm the token, then Pull for the first import.`);
+        load();
+      });
+    }
+    document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', wire) : wire();
+    return { load };
+  })();
+
+  // ── ONECART (DIRECT) — one company, one client, every channel ────────────
+  window.onecartUI = (() => {
+    const $id = x => document.getElementById(x);
+    const H = () => ({ 'Content-Type': 'application/json', 'x-master-key': LOG_PASSWORD, 'x-auth-token': localStorage.getItem('wms_token') || '' });
+    const say = (cls, msg) => { const el = $id('onecartStoreStatus'); if (!el) return; el.className = 'status-bar ' + cls; el.innerHTML = msg; el.classList.remove('hidden'); };
+    const fmt = t => t ? new Date(t).toLocaleString(undefined, { timeZone: 'Asia/Singapore' }) : '—';
+    async function load() {
+      const tb = $id('onecartStoresTbody'); if (!tb) return;
+      try {
+        const stores = await fetch('/api/master/onecart/stores', { headers: H() }).then(r => r.json());
+        if (!Array.isArray(stores) || !stores.length) {
+          tb.innerHTML = '<tr><td colspan="7" style="color:#94a3b8;padding:.8rem">No OneCart companies connected.</td></tr>';
+          return;
+        }
+        tb.innerHTML = stores.map(s => {
+          const lr = s.lastResult || {};
+          let last = '—';
+          if (s.lastPullAt || lr.error) {
+            last = fmt(s.lastPullAt || lr.at);
+            if (lr.error) last += ` · <span style="color:#dc2626">⚠ ${esc(String(lr.error).slice(0, 80))}</span>`;
+            else {
+              last += ` · ${lr.imported ?? 0} in, ${lr.skippedExisting ?? 0} held`;
+              if (lr.trackingFilled) last += `, ${lr.trackingFilled} waybill(s) filled`;
+              if (lr.cancelled) last += `, <span style="color:#b45309">${lr.cancelled} cancelled</span>`;
+              if (lr.cancelConflicts && lr.cancelConflicts.length) last += `, <span style="color:#dc2626">${lr.cancelConflicts.length} cancelled after work started</span>`;
+              if (lr.skippedNoLines && lr.skippedNoLines.length) last += `, <span style="color:#b45309">${lr.skippedNoLines.length} with no product lines (${esc(lr.skippedNoLines.slice(0, 3).join(', '))})</span>`;
+              if (lr.heldElsewhereCount) last += `, <span style="color:#6d28d9">${lr.heldElsewhereCount} already held outside this connection — left alone (${esc(lr.heldElsewhere.slice(0, 3).map(h => h.order + ' under ' + h.client).join('; '))})</span>`;
+              if (lr.labels) last += lr.labels.error ? ` · <span style="color:#dc2626">labels: ${esc(lr.labels.error)}</span>` : ` · labels ${lr.labels.attached}/${lr.labels.requested}`;
+            }
+          }
+          const ll = s.lastLabels;
+          const labels = (s.labelSync === 'intake' ? 'auto at intake' : 'on request') + (ll ? `<br><span style="font-size:.75rem;color:#64748b">${ll.attached}/${ll.requested} · ${esc(fmt(ll.at))}</span>` : '');
+          return `<tr>
+            <td style="font-weight:700">${esc(s.clientName)}${s.enabled ? '' : ' <span style="color:#94a3b8">(off)</span>'}</td>
+            <td style="font-family:monospace">${esc(s.apiKey || '—')}</td>
+            <td>${s.autoPullMinutes > 0 ? s.autoPullMinutes + 'm' : 'manual'}</td>
+            <td>${s.completeAction === 'ship' ? 'Mark shipped + read back' : 'nothing'}</td>
+            <td style="font-size:.85rem">${labels}</td>
+            <td style="font-size:.78rem">${last}</td>
+            <td style="white-space:nowrap">
+              <button class="btn-secondary btn-sm" data-oc-test="${esc(s.id)}">Test</button>
+              <button class="btn-secondary btn-sm" data-oc-pull="${esc(s.id)}">Pull</button>
+              <button class="btn-secondary btn-sm" data-oc-labels="${esc(s.id)}" title="Ask the channel for shipping labels for every open order that has none">&#127991; Get Labels</button>
+              <button class="btn-secondary btn-sm" data-oc-edit="${esc(s.id)}">Edit</button>
+              <button class="btn-secondary btn-sm" data-oc-del="${esc(s.id)}" title="Disconnect this company">🗑</button>
+            </td>
+          </tr>`;
+        }).join('');
+        tb.querySelectorAll('[data-oc-test]').forEach(b => b.addEventListener('click', async () => {
+          say('progress', 'Testing…');
+          const d = await fetch(`/api/master/onecart/stores/${b.dataset.ocTest}/test`, { method: 'POST', headers: H() }).then(r => r.json());
+          say(d.ok ? 'success' : 'error', d.ok
+            ? `✓ Connected to “${esc(d.company)}” using key “${esc(d.key)}”${d.createdBy ? ' (' + esc(d.createdBy) + ')' : ''}${d.rate && d.rate.remaining != null ? ` · ${d.rate.remaining} calls left this minute` : ''}`
+            : ('✗ ' + esc(d.error || 'failed') + (d.requestId ? ` <small>(request ${esc(d.requestId)})</small>` : '')));
+        }));
+        tb.querySelectorAll('[data-oc-pull]').forEach(b => b.addEventListener('click', async () => {
+          say('progress', 'Pulling orders…');
+          const d = await fetch(`/api/master/onecart/stores/${b.dataset.ocPull}/pull`, { method: 'POST', headers: H() }).then(r => r.json());
+          if (d.error) say('error', '✗ ' + esc(d.error) + (d.requestId ? ` <small>(request ${esc(d.requestId)})</small>` : ''));
+          else {
+            let msg = `✓ ${d.fetched} order(s) waiting on the channel — ${d.imported} imported, ${d.skippedExisting} already here`
+              + (d.trackingFilled ? `, ${d.trackingFilled} waybill(s) filled` : '')
+              + (d.cancelled ? `, ${d.cancelled} cancelled` : '')
+              + (d.cancelConflicts && d.cancelConflicts.length ? `, <b style="color:#dc2626">${d.cancelConflicts.length} cancelled after work started — do not ship</b>` : '')
+              + (d.skippedNoLines && d.skippedNoLines.length ? `, <b style="color:#b45309">${d.skippedNoLines.length} skipped with no product lines: ${esc(d.skippedNoLines.join(', '))}</b>` : '')
+              + (d.heldElsewhereCount ? `, <b style="color:#6d28d9">${d.heldElsewhereCount} already held outside this connection and left untouched: ${esc(d.heldElsewhere.map(h => `${h.order} (${h.client}${h.job ? ', ' + h.job : ''})`).join(', '))}</b>` : '');
+            if (d.labels) msg += d.labels.error ? ` — ⚠ labels: ${esc(d.labels.error)}` : ` — labels ${d.labels.attached}/${d.labels.requested} attached`;
+            say(d.cancelConflicts && d.cancelConflicts.length ? 'error' : 'success', msg);
+          }
+          load(); refreshOrders?.();
+        }));
+        tb.querySelectorAll('[data-oc-labels]').forEach(b => b.addEventListener('click', async () => {
+          say('progress', 'Asking the channel for labels…');
+          const d = await fetch(`/api/master/onecart/stores/${b.dataset.ocLabels}/labels`, { method: 'POST', headers: H() }).then(r => r.json());
+          if (d.error) { say('error', '✗ ' + esc(d.error)); return; }
+          if (!d.requested) { say('info', esc(d.note || 'Nothing to fetch.')); return; }
+          let msg = `✓ ${d.attached.length} of ${d.requested} label(s) attached`;
+          if (d.noLabel.length) msg += ` · <span style="color:#b45309">${d.noLabel.length} still without one: ${esc(d.noLabel.slice(0, 8).join(', '))}${d.noLabel.length > 8 ? '…' : ''}</span>`;
+          if (d.unusable.length) msg += ` · <span style="color:#dc2626">${d.unusable.length} the channel offered but could not be imported (${esc([...new Set(d.unusable.map(u => u.why))].join('; '))})</span>`;
+          say(d.attached.length ? 'success' : 'error', msg);
+          load();
+        }));
+        tb.querySelectorAll('[data-oc-edit]').forEach(b => b.addEventListener('click', () => {
+          const s = stores.find(x => x.id === b.dataset.ocEdit); if (!s) return;
+          $id('ocId').value = s.id; $id('ocClient').value = s.clientName; $id('ocKey').value = '';
+          $id('ocAutoPull').value = s.autoPullMinutes; $id('ocCompleteAction').value = s.completeAction || 'none';
+          $id('ocLabelSync').value = s.labelSync || 'off';
+          $id('onecartStoreForm').classList.remove('hidden');
+        }));
+        tb.querySelectorAll('[data-oc-del]').forEach(b => b.addEventListener('click', async () => {
+          if (!confirm('Disconnect this OneCart company? Pulled orders stay; nothing new arrives from it.')) return;
+          await fetch(`/api/master/onecart/stores/${b.dataset.ocDel}`, { method: 'DELETE', headers: H() });
+          load();
+        }));
+      } catch (e) { say('error', 'Could not load OneCart companies: ' + esc(e.message)); }
+    }
+    function wire() {
+      $id('onecartAddStoreBtn')?.addEventListener('click', () => {
+        ['ocId', 'ocClient', 'ocKey'].forEach(x => { const el = $id(x); if (el) el.value = ''; });
+        $id('ocAutoPull').value = 5; $id('ocCompleteAction').value = 'none'; $id('ocLabelSync').value = 'off';
+        $id('onecartStoreForm').classList.remove('hidden');
+      });
+      $id('onecartCancelStoreBtn')?.addEventListener('click', () => $id('onecartStoreForm').classList.add('hidden'));
+      $id('onecartSaveStoreBtn')?.addEventListener('click', async () => {
+        const labelSync = $id('ocLabelSync').value;
+        if (labelSync === 'intake' && !confirm('Fetch labels automatically as orders arrive?\n\nGenerating a marketplace AWB may declare the order READY TO SHIP on the channel before anything has been picked. Whether OneCart\'s print step does that is not confirmed.\n\nOK = turn it on anyway · Cancel = keep it on request only')) {
+          $id('ocLabelSync').value = 'off'; return;
+        }
+        const body = {
+          id: $id('ocId').value || undefined,
+          clientName: $id('ocClient').value.trim(),
+          apiKey: $id('ocKey').value.trim(),
+          autoPullMinutes: Number($id('ocAutoPull').value) || 0,
+          completeAction: $id('ocCompleteAction').value,
+          labelSync,
+          enabled: true,
+        };
+        const r = await fetch('/api/master/onecart/stores', { method: 'POST', headers: H(), body: JSON.stringify(body) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { say('error', '✗ ' + esc(d.error || 'Save failed')); return; }
+        $id('onecartStoreForm').classList.add('hidden');
+        say('success', `✓ Saved — press Test to confirm the key, then Pull for the first import.`);
         load();
       });
     }
