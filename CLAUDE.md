@@ -233,7 +233,20 @@ browser checks on desktop and a Pixel 5 (the row visible to admin and absent
 for warehouse, the button fully on screen with no sideways scroll, the green
 result naming the GIs and the conflict, the button re-enabled, and the Orders
 list then showing the `GI:` pill on the healed row, no echoing pill on the
-GI-only row, and the stored GI still on the conflict row).
+GI-only row, and the stored GI still on the conflict row). Plus 18 Chromium
+checks driving THE ACTUAL COMPLAINT — the Orders-tab scan bar
+(`#waybillScanInput`, typed gun-fast + Enter) — on desktop and a Pixel 5:
+BEFORE the backfill, scanning `GI-141037` opens nothing and the bar reads
+"No order found for that number."; AFTER it, the same scan opens the scan
+overlay on `585836014589150279` with `GI: GI-141037` in its header, and a
+lowercase `gi-141038` opens the second order. Screenshots of each step were
+sent to the user.
+
+TEST GOTCHA, two of them: the sidebar tab buttons sit behind the phone
+drawer, so a Playwright viewport click on `.tab-btn` times out "outside of
+the viewport" on a Pixel 5 — use a DOM `.click()`. And db.json is written on
+a DEFERRED write, so stopping a freshly booted scratch server the instant
+`/api/version` answers can leave no db.json to seed — wait ~2s first.
 
 Verified 18 checks on the real shapes — the reported `GI No` + `Reference`
 combination now keeps the GI and scans, the `GINo`/`GI Number` spellings too,
