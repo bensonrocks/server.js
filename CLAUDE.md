@@ -149,6 +149,60 @@ scannable: shown as a `GI: <value>` pill on the Orders-list row (next to the
 `meta-pill-gi` pill in the scan overlay header (`enterItemsPhase`). Already
 included in the Completed-tab free-text search (`ordersView === 'completed'`
 filter) alongside order_number/waybill_number/pick_ticket/po_number.
+The pill is drawn through `giPillText(o)`, which returns `''` when the GI
+merely ECHOES `order_number` — on a GI-only file both fields hold it, and
+printing `GI-141032` with `GI: GI-141032` beneath is the same noise the Lot
+badge is suppressed for. ONE helper, used by both call sites.
+
+### THE GI HAD ONLY ONE PLACE TO LAND, AND `Reference` TOOK IT (lib/keyfields.js)
+
+Reported from the floor as **"cannot scan picklist"**, with a screen showing
+BETIME orders split between `GI-141032`…`GI-141038` and 18-digit TikTok order
+ids, no GI anywhere on the numeric ones. The GI was not hidden — it was never
+stored.
+
+`mapRow` has TWO chains, and the GI aliases were in only one of them:
+- `order_number` consults `gino`/`gi_no`/`gi_number` — but **ELEVENTH**, behind
+  `ref`, `order_number`, `order_no`, `order_ref`, `so_ref`, `so_no`,
+  `so_number`, `sales_order`, `sales_order_no`, `job_no`, `reference`,
+  `d_exref2`.
+- `issue_no` consulted `issue_no`/`issue_number`/`issueno`/`issue_ref`/`issue`/
+  `iwms_gino` — and **NOT** `gi_no`, `gino` or `gi_number`.
+
+So on a GI Analysis export spelling the column `GI No` (not `iWMS GINo`) AND
+carrying a populated **`Reference`** column, `reference` won `order_number` and
+the GI landed NOWHERE. The `GI-######` barcode printed on every Betime picking
+list then matched no stored field at all, so the scan-to-find bar — which
+checks order_number / issue_no / pick_ticket / waybill_number / po_number —
+could not find the order by the number on the paper. Not a scanner fault and
+not a display fault.
+
+**FIXED BY GIVING THE GI A SECOND PLACE TO LAND**, not by reordering the
+order_number chain: `order_number` is the primary key for the duplicate tiers,
+scanning, label matching and every report, so moving it is a far larger change
+than closing this hole. `gino`/`gi_no`/`gi_number` are appended to the
+`issue_no` chain, which was empty in exactly these cases — so nothing that
+already worked moves.
+
+STILL OPEN, NOT FIXED, because it changes a primary key: **free text can become
+an order number.** The same printed picking list carries
+`Reference: 260828 Bundling request: AO-000328 to AO-000329 - Koli`, and
+`reference` outranks the GI — so that whole sentence becomes `order_number`.
+It is functional but unscannable, and two GIs sharing a bundling reference
+would collide under the duplicate rules. Raise it before touching it.
+
+ORDERS ALREADY UPLOADED DO NOT HEAL. The GI was never written, so there is
+nothing to derive it from — only a re-upload of the source file recovers it
+(pending orders take the 409 overwrite-confirm path).
+
+Verified 18 checks on the real shapes — the reported `GI No` + `Reference`
+combination now keeps the GI and scans, the `GINo`/`GI Number` spellings too,
+the printed GI-138891 list scans on BOTH its barcodes (GI and pick ticket
+550983), the pill is suppressed when it echoes and shown when it does not, and
+five regressions (iWMS GINo, plain SKU/Quantity, Keyfields `d-`, SO Ref /
+Waybill Ref) are untouched. **The pre-fix code fails exactly the 4 checks
+covering the reported shape and passes every regression**, so the suite
+reproduces the report rather than agreeing with itself.
 
 THE SAME GAP EXISTED IN LABEL MATCHING — `buildLabelMatchIndex()` only
 indexed `order_number`/`waybill_number`/`po_number` when matching an

@@ -222,6 +222,17 @@
   function esc(s) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
+  // THE GI PILL EARNS ITS SPACE ONLY WHEN IT SAYS SOMETHING THE ROW DOES NOT.
+  // Since the GI is now always captured into issue_no (see lib/keyfields.js),
+  // a classic Betime file with no Reference column yields order_number AND
+  // issue_no both holding the GI — and printing "GI-141032" with "GI: GI-141032"
+  // underneath is the same noise the Lot badge was suppressed for. Returns ''
+  // when it merely echoes the order number, so both call sites render nothing.
+  function giPillText(o) {
+    const gi = String(o?.issue_no || '').trim();
+    if (!gi) return '';
+    return gi.toUpperCase() === String(o?.order_number || '').trim().toUpperCase() ? '' : gi;
+  }
   // Carrier strings off marketplace files arrive as the whole arrangement —
   // "Pickup: SpeedPost, Delivery: SpeedPost" — which wrapped into a four-line
   // green badge on EVERY phone row. Same courier both legs → just its name;
@@ -2609,7 +2620,7 @@
         <td class="col-order">
           <span class="ord-no-link">${esc(ord.order_number)}</span>${ord.api_source ? ' <span class="api-pill" title="Synced from the marketplace — orders and completion status flow via the hub. Collection can be closed by waybill scan, by tick on the Collection screen (internal record, nothing relayed to the platform), or automatically when the hub reports the courier took it.">API</span>' : ''}
           ${isAdminView && ord.idealscan_code ? `<div class="ord-jobcode"><code class="job-code">${esc(ord.idealscan_code)}</code></div>` : ''}
-          ${ord.issue_no ? `<div class="ord-jobcode" title="GI number"><code class="job-code">GI: ${esc(ord.issue_no)}</code></div>` : ''}
+          ${(() => { const g = giPillText(ord); return g ? `<div class="ord-jobcode" title="GI number"><code class="job-code">GI: ${esc(g)}</code></div>` : ''; })()}
           ${ord.transport_id ? `<div class="ord-jobcode" title="Linked Transport delivery job"><code class="job-code job-code-tr">🚚 ${esc(ord.transport_id)}</code></div>` : ''}
           ${chips ? `<div class="ord-chips">${chips}</div>` : ''}
           ${isDone && elapsed ? `<div class="done-meta done-elapsed">&#8987; ${esc(elapsed)}</div>` : ''}
@@ -9190,7 +9201,7 @@
         <span class="meta-pill meta-pill-carrier" title="${esc(order.carrier || '')}">${esc(carrierLabel(order.carrier) || '—')}</span>
         ${(() => { const v = orderStockVerdict(order); return v ? `<span class="meta-pill meta-pill-stock-${v.kind}" title="${esc(v.title)}">${v.label}</span>` : ''; })()}
         <span id="scanWaybillPill">${waybillPillHtml(order)}</span>
-        ${order.issue_no ? `<span class="meta-pill meta-pill-gi" title="GI number">GI: ${esc(order.issue_no)}</span>` : ''}
+        ${(() => { const g = giPillText(order); return g ? `<span class="meta-pill meta-pill-gi" title="GI number">GI: ${esc(g)}</span>` : ''; })()}
         ${details ? `<button class="meta-details-btn" id="scanMetaDetailsBtn">&#9432; Details</button>` : ''}
       </div>
       ${details ? `<div class="scan-meta-details hidden" id="scanMetaDetails">${details}</div>` : ''}`;
