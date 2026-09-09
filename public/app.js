@@ -17720,6 +17720,11 @@
             note = `<span class="lri-field-note">read off the label — this order's ${esc(v.field)} is `
                  + `<strong>${esc(v.orderValue)}</strong>, ${v.chars} character${v.chars > 1 ? 's' : ''} different, `
                  + `so this is almost certainly a misread rather than the wrong order</span>`;
+          } else if (v && v.verdict === 'reference') {
+            // Not foreign: the marketplace's own number for this shipment,
+            // held by the channel's reference copy that shares the waybill.
+            note = `<span class="lri-field-note lri-field-note-ref">the marketplace number of this shipment — `
+                 + `${esc(v.client || 'the channel')}'s reference copy of the same waybill. Not a mismatch.</span>`;
           } else if (v && v.verdict === 'foreign') {
             cls = ' lri-val-off';
             note = `<span class="lri-field-note">read off the label — it matches no identifier on this order. `
@@ -17772,6 +17777,19 @@
                 <div class="lri-guess-note">
                   Matched by finding this order's number in the page text — no captioned
                   field on the label resolved, so this one is worth a look.
+                </div>` : ''}
+              ${/_of_reference_copy$/.test(page.matchMethod || '') ? `
+                <div class="lri-ref-note">
+                  The label prints the marketplace number${page.referenceHint?.order ? ` (${esc(page.referenceHint.order)})` : ''}, which is
+                  ${esc(page.referenceHint?.client || 'the channel')}'s reference copy — not a work order. It is attached to the
+                  picking-list order that carries the same waybill, which is the one that gets scanned.
+                </div>` : ''}
+              ${page.referenceHint && !page.referenceHint.via && page.matchStatus !== 'matched' ? `
+                <div class="lri-ref-note">
+                  <strong>No label attached — the only record holding ${esc(page.referenceHint.value)} is
+                  ${esc(page.referenceHint.client || 'the channel')}'s reference copy, which is never scanned.</strong>
+                  Upload the picking list for this order; the label attaches to it on its own once an order carries
+                  this waybill${page.matchedOrderNumber ? '' : ' — or use Match to Order on the picking-list order.'}
                 </div>` : ''}
               <div class="lri-fields">${fields || `<span class="hint">${noFieldsHint}</span>`}</div>
               <div class="lri-match-action">${matchAction}</div>
@@ -17861,7 +17879,9 @@
 
     function renderList(filter) {
       const q = filter.trim().toLowerCase();
-      const filtered = loadedOrders.filter(o =>
+      // A channel's reference copy is never offered: a label on it would never
+      // come out at scanning (the server refuses it too).
+      const filtered = loadedOrders.filter(o => !o.reference_only).filter(o =>
         !q ||
         o.order_number.toLowerCase().includes(q) ||
         (o.waybill_number || '').toLowerCase().includes(q) ||

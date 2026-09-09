@@ -2992,8 +2992,14 @@ function globalOrdersWithState(keep) {
   // own record — OneCart → Betime Online) may hold the same number as the
   // real upload; the real order must win `seen` whichever arrived later, and
   // it carries `reference_twin` so the row can say the channel has it too.
-  const _refTwin = new Map();
-  for (const b of db.batches) if (isReferenceBatch(b)) for (const o of b.orders || []) if (!_refTwin.has(o.order_number)) _refTwin.set(o.order_number, b.client_name || '');
+  // Keyed by number AND by waybill — a GI-numbered upload and the channel's
+  // marketplace-numbered copy of the same shipment share only the waybill.
+  const _refTwin = new Map(), _refTwinWb = new Map();
+  for (const b of db.batches) if (isReferenceBatch(b)) for (const o of b.orders || []) {
+    if (!_refTwin.has(o.order_number)) _refTwin.set(o.order_number, b.client_name || '');
+    const wb = normStr(o.waybill_number);
+    if (wb && !_refTwinWb.has(wb)) _refTwinWb.set(wb, b.client_name || '');
+  }
   const _batchOrder = [...db.batches.filter(b => !isReferenceBatch(b)), ...db.batches.filter(isReferenceBatch)];
   for (const batch of _batchOrder) {
     const states = batch.orderStates || {};
@@ -3083,7 +3089,7 @@ function globalOrdersWithState(keep) {
         // Online). Excluded from every counter and from the Active list; the
         // work order for the same number, if uploaded, is the one that wins.
         reference_only:    _isRef,
-        reference_twin:    (!_isRef && _refTwin.get(ord.order_number)) || '',
+        reference_twin:    (!_isRef && (_refTwin.get(ord.order_number) || _refTwinWb.get(normStr(ord.waybill_number)))) || '',
         // Synced from a marketplace via the store sync — the Orders list shows
         // an API pill so the team knows BEFORE completion that this order's
         // collection status is scan-close-only and relays to the platform.
@@ -3582,13 +3588,23 @@ function refuseReferenceOrder(batch, res) {
   });
   return true;
 }
-function findReferenceTwin(db, orderNumber) {
+// Takes the work ORDER (or just its number). The twin is the reference holding
+// the SAME NUMBER — or, failing that, the SAME WAYBILL: a GI Analysis upload
+// files the order under its GI number while the channel's copy carries the
+// marketplace id, and the tracking number is the one thing both print. Without
+// this the completion of a GI-numbered order never reached OneCart at all.
+function findReferenceTwin(db, orderOrNumber) {
+  const orderNumber = typeof orderOrNumber === 'string' ? orderOrNumber : orderOrNumber?.order_number;
+  const wb = typeof orderOrNumber === 'object' && orderOrNumber ? normStr(orderOrNumber.waybill_number) : '';
+  let byWaybill = null;
   for (const batch of db.batches || []) {
     if (!isReferenceBatch(batch)) continue;
-    const order = (batch.orders || []).find(o => o.order_number === orderNumber);
-    if (order) return { batch, order };
+    for (const o of batch.orders || []) {
+      if (o.order_number === orderNumber) return { batch, order: o, via: 'order_number' };
+      if (wb && !byWaybill && normStr(o.waybill_number) === wb) byWaybill = { batch, order: o, via: 'waybill' };
+    }
   }
-  return null;
+  return byWaybill;
 }
 // Stamp `reference_only` on every OneCart-sync batch whose store is in
 // reference mode (the default). Run at boot — the batches synced before this
@@ -7559,7 +7575,23 @@ function buildLabelMatchIndexFor(allOrders) {
   const byWaybill = new Map();
   const looseOrderNo = new Map();   // leading zeros stripped — consulted last
   const scanKeys  = new Map();   // normalised key → {orderNumber, method}
+  // A REFERENCE RECORD IS NEVER A LABEL'S HOME. A channel's reference copy
+  // (OneCart → Betime Online) carries the MARKETPLACE order number, which is
+  // exactly what a marketplace carrier label prints — so with the reference
+  // in the index the label matched it "exactly", was attached to a record
+  // nobody ever scans, and the BETIME work order (uploaded under its GI
+  // number, same waybill) opened with no label. Reported from the floor as
+  // "waybill is matched, but the waybill not come out while scanning".
+  //   viaReference — the reference's identifiers pointing at the WORK order
+  //     that shares its waybill, so a label printing only the marketplace
+  //     number still lands on the order that is actually picked;
+  //   referenceOnly — identifiers held by NOTHING but a reference copy, so
+  //     the review screen can say why the page attached to nothing.
+  const viaReference  = new Map();  // normalised key → {work, reference, client}
+  const referenceOnly = new Map();  // normalised key → {order, client}
+  const refs = [];
   for (const o of allOrders) {
+    if (o && o.reference_only) { refs.push(o); continue; }
     // issue_no carries the GI number for XLSX/CSV uploads that store it
     // separately from order_number (see the Scan-to-find-order section in
     // CLAUDE.md) — a label PDF printing the GI number must resolve here the
@@ -7603,7 +7635,34 @@ function buildLabelMatchIndexFor(allOrders) {
       }
     }
   }
-  return { byOrderNo, byWaybill, looseOrderNo, scanKeys };
+  // Second pass, references only, AFTER every work order is indexed: the
+  // waybill is what ties a channel's copy to the picking-list upload of the
+  // same shipment (the numbers differ — marketplace id vs GI), so a reference
+  // whose waybill a work order carries lends its identifiers to that order.
+  for (const o of refs) {
+    const wb = normStr(o.waybill_number);
+    const work = wb && byWaybill.get(wb);
+    for (const v of [normStr(o.order_number), normStr(o.issue_no), wb]) {
+      if (!v || byOrderNo.has(v) || byWaybill.has(v)) continue;   // a work order already owns this key
+      if (work) { if (!viaReference.has(v)) viaReference.set(v, { work, reference: o.order_number, client: o.client_name || '' }); }
+      else if (!referenceOnly.has(v)) referenceOnly.set(v, { order: o.order_number, client: o.client_name || '' });
+    }
+  }
+  return { byOrderNo, byWaybill, looseOrderNo, scanKeys, viaReference, referenceOnly };
+}
+
+// The reference-copy explanation for a page that matched nothing: which of
+// the identifiers read off the label is held ONLY by a channel's reference
+// record. Null when none is.
+function referenceOnlyHint(extracted, index) {
+  const f = extracted || {};
+  if (!index || !index.referenceOnly || !index.referenceOnly.size) return null;
+  for (const [field, val] of [['giNumber', f.giNumber], ['orderNumber', f.orderNumber], ['trackingNumber', f.trackingNumber]]) {
+    const v = normStr(val);
+    const r = v && index.referenceOnly.get(v);
+    if (r) return { field, value: String(val), order: r.order, client: r.client };
+  }
+  return null;
 }
 
 const _strip0 = s => String(s || '').replace(/^0+(?=.)/, '');
@@ -7685,6 +7744,10 @@ function matchLabelPage(rawText, extracted, index) {
     if (hit) return { hit, method, confidence: 'exact' };
     const loose = index.looseOrderNo && index.looseOrderNo.get(_strip0(v));
     if (loose) return { hit: loose.order, method: method + '_leading_zero', confidence: 'exact' };
+    // The number belongs to a channel's REFERENCE copy whose waybill a work
+    // order carries — the label goes on the work order (see the index).
+    const ref = index.viaReference && index.viaReference.get(v);
+    if (ref) return { hit: ref.work, method: method + '_of_reference_copy', confidence: 'exact', reference: ref.reference, referenceClient: ref.client };
     return null;
   };
   return exact(f.giNumber, index.byOrderNo, 'gi_number')
@@ -7777,7 +7840,23 @@ function withLabelIdentityChecks(db, imp) {
   const pages = imp.pages || [];
   if (!pages.some(p => p.matchedOrderNumber)) return imp;   // nothing to compare
   const byNo = new Map();
-  for (const o of globalOrdersWithState()) byNo.set(o.order_number, o);
+  const all = globalOrdersWithState();
+  for (const o of all) byNo.set(o.order_number, o);
+  // A marketplace label prints the number of the order's CHANNEL COPY (the
+  // reference record sharing its waybill) — that is not foreign to the order,
+  // it is the same shipment under the channel's own number. Without this the
+  // right match carried the "matches no identifier" warning on every
+  // TraxLogics label, which is the wrong-order alarm going off on the right
+  // order.
+  const refByWaybill = new Map();
+  for (const o of all) if (o.reference_only) { const wb = normStr(o.waybill_number); if (wb && !refByWaybill.has(wb)) refByWaybill.set(wb, o); }
+  const referenceVerdict = (raw, order) => {
+    const v = normStr(raw); if (!v) return null;
+    const ref = refByWaybill.get(normStr(order.waybill_number));
+    if (!ref) return null;
+    if (v === normStr(ref.order_number) || v === normStr(ref.issue_no)) return { verdict: 'reference', field: 'channel copy', orderValue: ref.order_number, client: ref.client_name || '' };
+    return null;
+  };
 
   return { ...imp, pages: pages.map(p => {
     const order = p.matchedOrderNumber ? byNo.get(p.matchedOrderNumber) : null;
@@ -7785,7 +7864,8 @@ function withLabelIdentityChecks(db, imp) {
     const f = p.extracted || {};
     const fields = {};
     for (const k of ['trackingNumber', 'orderNumber', 'giNumber']) {
-      const v = _labelFieldVerdict(f[k], order);
+      let v = _labelFieldVerdict(f[k], order);
+      if (v && v.verdict === 'foreign') v = referenceVerdict(f[k], order) || v;
       if (v) fields[k] = v;
     }
     return { ...p, identity: {
@@ -7866,11 +7946,13 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
     let matchConfidence    = null;
     let candidates         = null;
     let parcel             = false;   // an additional box of an order already labelled in this import
+    let referenceHint      = null;    // the page named a channel's reference copy and nothing else
 
     if (rawText) {
       try {
         if (extractLabelFields) extracted = extractLabelFields(rawText);
         const hit = matchLabelPage(rawText, extracted, matchIndex);
+        if (!hit) referenceHint = referenceOnlyHint(extracted, matchIndex);
         if (hit && hit.ambiguous) {
           // The page names more than one order and nothing on it settles which.
           matchStatus = 'ambiguous';
@@ -7879,6 +7961,7 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
           matchedOrderNumber = hit.hit;
           matchConfidence    = hit.confidence;
           matchMethod        = hit.method;
+          if (hit.reference) referenceHint = { via: true, order: hit.reference, client: hit.referenceClient || '' };
           const held = matchedThisImport.get(hit.hit);
           const tracking = labelTrackingOf({ extracted });
           // A DUPLICATE IS DECIDED ON EVIDENCE, NOT ON PAGE ORDER. The old
@@ -7918,7 +8001,8 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
     // rawText kept (truncated) so later rematches can reverse-scan without
     // re-parsing the PDF from the volume
     pages.push({ pageIndex: i, pageFile, extracted, rawText: rawText.slice(0, 4000),
-                 matchStatus, matchedOrderNumber, matchMethod, matchConfidence, candidates, parcel: parcel || undefined });
+                 matchStatus, matchedOrderNumber, matchMethod, matchConfidence, candidates, parcel: parcel || undefined,
+                 referenceHint: referenceHint || undefined });
   }
 
   // A LABEL WE ASKED FOR BY ORDER MUST NOT BE ORPHANED BY A MISREAD.
@@ -8143,6 +8227,9 @@ app.post('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) => {
 
   const order = globalOrdersWithState().find(o => o.order_number === orderNumber);
   if (!order) return res.status(404).json({ error: 'Order not found' });
+  // A channel's reference copy is never scanned, so a label on it is a label
+  // nobody will ever print — the same refusal the scan screen makes.
+  if (order.reference_only) return res.status(409).json({ referenceOnly: true, error: `${orderNumber} is ${order.client_name || 'the channel'}'s reference record (synced from OneCart), not a work order — a label attached to it would never come out at scanning. Match this page to the picking-list order instead (same waybill).` });
 
   if (!db.orderLabels) db.orderLabels = {};
   // Remove previous mapping for this page if any
@@ -8207,6 +8294,7 @@ app.post('/api/label-imports/:id/import-matches', requireAuth, labelImportUpload
     if (usedInThisImport.has(orderNumber) && !isAnotherParcel(db.orderLabels[orderNumber], labelTrackingOf(page))) { errors.push({ row: excelRow, reason: `Order ${orderNumber} already assigned to another row in this file (same or no tracking number — not a second parcel)` }); continue; }
     const order = orders.find(o => o.order_number === orderNumber);
     if (!order) { errors.push({ row: excelRow, reason: `Order ${orderNumber} not found` }); continue; }
+    if (order.reference_only) { errors.push({ row: excelRow, reason: `Order ${orderNumber} is ${order.client_name || 'the channel'}'s reference record (OneCart), not a work order — match the picking-list order instead` }); continue; }
 
     if (page.matchedOrderNumber) detachLabelPage(db, page.matchedOrderNumber, imp.id, pageIdx);
     page.matchedOrderNumber = orderNumber;
@@ -8341,6 +8429,10 @@ async function rematchLabelImport(id, rematchAll) {
     const found  = matchLabelPage(rawText, page.extracted, matchIndex);
     const hit    = found?.hit    || null;
     const method = found?.method || null;
+    // Say why a page attached to nothing when the only record holding its
+    // number is a channel's reference copy; cleared the moment it matches.
+    page.referenceHint = (!found ? referenceOnlyHint(page.extracted, matchIndex)
+                        : found.reference ? { via: true, order: found.reference, client: found.referenceClient || '' } : null) || undefined;
 
     // The page names two orders and nothing on it settles which — the SAME
     // refusal the import path makes. Attaching one of them here would put the
@@ -8417,6 +8509,65 @@ async function rematchLabelImport(id, rematchAll) {
 // pages are skipped by rematchLabelImport itself, so the sweep stays cheap.
 // Imports older than 30 days stay manual — their unmatched pages are labels
 // for orders that never came, and re-scanning them every pull buys nothing.
+// ── Labels that landed on a channel's REFERENCE copy are moved to the work order
+// Before the index learned to keep reference records out (see
+// buildLabelMatchIndexFor), a marketplace label matched the reference copy
+// "exactly" by its marketplace order number and was attached there — a record
+// nobody scans, so the label never came out on the floor. Those attachments
+// are already on disk; the index rule only stops NEW ones. So at boot (and
+// whenever a store's mode is re-stamped) every page filed on a reference-only
+// number is re-matched under the current rules: onto the work order sharing
+// the waybill when there is one, otherwise back to unmatched WITH the reason,
+// where the late-orders sweep picks it up the moment the picking list arrives.
+function rehomeReferenceLabels(db, trigger) {
+  const orders = globalOrdersWithState();
+  const refs   = new Map(orders.filter(o => o.reference_only).map(o => [o.order_number, o.client_name || '']));
+  if (!refs.size || !(db.labelImports || []).length) return { moved: 0, freed: 0, imports: [] };
+  const index = buildLabelMatchIndexFor(orders);
+  let moved = 0, freed = 0;
+  const touched = new Set();
+  for (const imp of db.labelImports) {
+    for (const page of imp.pages || []) {
+      const from = page.matchedOrderNumber;
+      if (!from || !refs.has(from)) continue;
+      if (page.matchStatus !== 'matched' && page.matchStatus !== 'duplicate') continue;
+      touched.add(imp.id);
+      detachLabelPage(db, from, imp.id, page.pageIndex);
+      const found = page.matchStatus === 'matched' ? matchLabelPage(page.rawText || '', page.extracted, index) : null;
+      if (found && found.hit && !found.ambiguous) {
+        const role = attachLabelPage(db, found.hit, {
+          importId: imp.id, pageIndex: page.pageIndex, pageFile: page.pageFile, tracking: labelTrackingOf(page) || undefined,
+          attachedAt: new Date().toISOString(), attachedBy: 'reference-rehome',
+        });
+        if (role !== 'refused') {
+          page.matchedOrderNumber = found.hit; page.matchStatus = 'matched';
+          page.matchMethod = found.method; page.matchConfidence = found.confidence;
+          page.parcel = role === 'parcel' || undefined; page.candidates = null;
+          page.referenceHint = found.reference ? { via: true, order: found.reference, client: found.referenceClient || '' } : undefined;
+          page.rehomedFrom = from;
+          moved++;
+          continue;
+        }
+      }
+      page.matchedOrderNumber = null;
+      page.matchStatus     = found && found.ambiguous ? 'ambiguous' : 'unmatched';
+      page.candidates      = (found && found.candidates) || null;
+      page.matchMethod     = null; page.matchConfidence = null; page.parcel = undefined;
+      page.referenceHint   = referenceOnlyHint(page.extracted, index) || { field: 'orderNumber', value: from, order: from, client: refs.get(from) };
+      freed++;
+    }
+  }
+  // A label record keyed on a reference number with no page behind it (a
+  // deleted import's leftover) is a label nobody can print — off it comes.
+  for (const k of Object.keys(db.orderLabels || {})) if (refs.has(k)) { delete db.orderLabels[k]; freed++; }
+  if (moved || freed) {
+    writeDb(db);
+    logAudit('labels_rehomed_from_reference', { moved, freed, imports: [...touched], trigger: trigger || 'boot' });
+    console.log(`[labels] ${trigger || 'boot'}: ${moved} label page(s) moved off a channel reference copy onto the work order, ${freed} put back to unmatched`);
+  }
+  return { moved, freed, imports: [...touched] };
+}
+
 let _labelAutoRematchTimer = null;
 let _labelAutoRematching   = false;
 function scheduleLabelAutoRematch(trigger) {
@@ -25190,6 +25341,9 @@ app.post('/api/master/onecart/stores', express.json(), (req, res) => {
   // and the duplicate rule agree with the switch at once.
   const restamped = stampOnecartReferenceBatches(db, s.id);
   writeDb(db);
+  // Batches just filed as references may hold labels that belong on the work
+  // order sharing the waybill — move them now rather than at the next boot.
+  if (restamped) { try { rehomeReferenceLabels(db, 'store-mode'); } catch (e) { console.error('[labels] reference re-home:', e.message); } }
   logAudit('onecart_store_saved', { id: s.id, client: s.clientName, enabled: !!s.enabled, completeAction: s.completeAction || 'none', labelSync: s.labelSync || 'off', mode: s.mode || 'reference', restampedBatches: restamped, by: req.userId || _tokenUserId(req) || 'master' });
   res.json(onecartStorePublic(s));
 });
@@ -25446,6 +25600,10 @@ async function pullOnecartStore(db, store) {
   };
   writeDb(db);
   logAudit('onecart_pull', { storeId: store.id, client: store.clientName, fetched, imported, skippedExisting, skippedNoLines: skippedNoLines.length, heldElsewhere: heldElsewhere.length, trackingFilled, cancelled, cancelConflicts: cancelConflicts.length });
+  // A tracking number just filled on a reference copy is what ties it to the
+  // picking-list order sharing that waybill — a label page that named only
+  // the marketplace number may now have a work order to land on.
+  if (imported || trackingFilled) scheduleLabelAutoRematch('onecart-sync');
 
   // Labels at intake — only when the operator turned it on, and never able
   // to fail the pull: the orders are already on the floor either way.
@@ -25554,9 +25712,9 @@ function pushOnecartCompletion(db, ord, state) {
     // on the WORK order's state (findBatchForOrder prefers it), so a
     // completion is never pushed twice.
     if (ord && !ord.onecart_id) {
-      const twin = findReferenceTwin(db, ord.order_number);
+      const twin = findReferenceTwin(db, ord);
       if (!twin || !twin.order.onecart_id) return;
-      ord = { ...ord, onecart_id: twin.order.onecart_id, onecart_store_id: twin.order.onecart_store_id, _viaReference: true };
+      ord = { ...ord, onecart_id: twin.order.onecart_id, onecart_store_id: twin.order.onecart_store_id, _viaReference: true, _twinVia: twin.via, _twinNumber: twin.order.order_number };
     }
     if (!ord?.onecart_id || !ord?.onecart_store_id) return;
     if (state?.onecart_shipped_at || state?.onecart_ship_requested_at) return;   // never twice
@@ -25592,7 +25750,10 @@ function pushOnecartCompletion(db, ord, state) {
         }
         writeDb(db2);
         logAudit(moved ? 'onecart_completion_pushed' : 'onecart_completion_unconfirmed',
-          { order: ord.order_number, storeId: store.id, hubStatus: word, tracking: tracking || String(ord.waybill_number || ''), viaReference: !!ord._viaReference });
+          { order: ord.order_number, storeId: store.id, hubStatus: word, tracking: tracking || String(ord.waybill_number || ''), viaReference: !!ord._viaReference,
+            // HOW the channel's copy was found — by the same number, or by the
+            // waybill when the upload files the order under its GI number.
+            twinVia: ord._twinVia || undefined, channelOrder: ord._twinNumber || undefined });
       } catch (e) {
         logAudit('onecart_completion_push_failed', { order: ord.order_number, storeId: store.id, error: String(e.message).slice(0, 300), requestId: e.requestId || '' });
       } finally { _onecartShipInflight.delete(ord.order_number); }
@@ -26918,6 +27079,10 @@ inventory.init();
 assertInventoryPath();          // must run here — see the note next to its definition
 mergeInventoryClientCasing();   // likewise: needs `inventory` to exist first
 backfillCataloguesFromOrders(); // the catalogue learns from the orders already on the books — same zone, same reason
+// Carrier labels filed on a channel's REFERENCE copy (never scanned) go onto
+// the work order sharing the waybill. Same zone: globalOrdersWithState reads
+// the item master. Idempotent — a clean boot moves nothing and logs nothing.
+try { rehomeReferenceLabels(readDb(), 'boot'); } catch (e) { console.error('[labels] reference re-home failed:', e.message); }
 // Reservations held by orders that no longer exist. THIS MUST RUN HERE, not
 // with the db.json reconcile pass at the top of the file: `const inventory` is
 // still in its temporal dead zone up there, so the call throws into a catch and

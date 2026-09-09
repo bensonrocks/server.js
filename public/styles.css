@@ -2491,6 +2491,14 @@ body.ls-open { overflow: hidden; }
 .lri-guess-note { font-size: .72rem; line-height: 1.35; color: #b45309; background: #fffbeb;
                   border-left: 3px solid #f59e0b; padding: .35rem .5rem; border-radius: 0 4px 4px 0;
                   margin: .3rem 0; }
+/* The page named a channel's REFERENCE copy (OneCart → Betime Online), which is
+   never scanned — either it was moved onto the work order sharing the waybill,
+   or nothing holds the number yet and the reason is said. Slate, like the
+   reference chip on the Orders list: information, not an error. */
+.lri-ref-note  { font-size: .72rem; line-height: 1.4; color: #334155; background: #f1f5f9;
+                 border-left: 3px solid #64748b; padding: .35rem .5rem; border-radius: 0 4px 4px 0;
+                 margin: .3rem 0; }
+.lri-ref-note strong { display: block; font-weight: 700; margin-bottom: .15rem; color: #1e293b; }
 .lri-err       { background: var(--danger-bg);   color: var(--danger);   border: 1px solid var(--danger-border); }
 
 .label-review-body {
@@ -2536,6 +2544,8 @@ body.ls-open { overflow: hidden; }
                     background: #fffbeb; border-left: 3px solid #f59e0b;
                     padding: .3rem .45rem; border-radius: 0 4px 4px 0; margin-top: .15rem; }
 .lri-field-note strong { font-weight: 700; }
+/* The number is the channel's own for this shipment — information, not a warning. */
+.lri-field-note-ref { color: #334155; background: #f1f5f9; border-left-color: #64748b; }
 .lri-match-action { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-top: .25rem; }
 .lri-order-matched { font-size: .82rem; font-weight: 700; color: var(--success); }
 

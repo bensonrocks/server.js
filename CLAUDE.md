@@ -2973,6 +2973,85 @@ use `page.fill`; tabs hide rather than unmount, so the Orders DOM is the render
 from before the upload until it refetches — reload; and the desktop pass's real
 upload changes every count the Pixel 5 pass reads, so the phone goes first.
 
+#### A LABEL IS NEVER FILED ON A REFERENCE COPY — the TraxLogics case
+
+Reported from the floor (Yvonne, 9 Sep 2026) with two screenshots: *"waybill is
+matched, but the waybill not come out while scanning"* and *"all TraxLogics
+waybill does not come out while scanning"*. The review row read **matched via
+order number** to `171072056490328`, with the amber note *"read off the label —
+it matches no identifier on this order"* under the tracking number; the Orders
+list showed the same shipment as **GI-141936** under BETIME with waybill
+`TXSGD03800975`. Per the user, on being told: *"Do not match labels to orders
+under reference. as its not active orders. its just for reference."*
+
+WHAT HAPPENED: a TraxLogics label prints the MARKETPLACE order number, and that
+number is held by **Betime Online's reference copy** (reference mode above),
+while the GI Analysis upload files the same shipment under its **GI number**.
+`buildLabelMatchIndex` indexed every order `globalOrdersWithState` returns —
+references included — so the marketplace number was an "exact" hit on the
+reference record, the label was attached to a record that is never scanned,
+and the GI order opened with no label. The amber note was the identity check
+being RIGHT: the tracking matched nothing on the reference (whose waybill was
+still blank — OneCart's queue carries none). Every TraxLogics label had the
+same shape, hence "all".
+
+- **A REFERENCE RECORD IS NEVER A LABEL'S HOME.** `buildLabelMatchIndexFor`
+  indexes work orders only. A reference whose WAYBILL a work order carries
+  lends its identifiers to that order (`index.viaReference`, method
+  `order_number_of_reference_copy`), so a label printing only the marketplace
+  number still lands on the picking-list order; a number held by NOTHING but a
+  reference (`index.referenceOnly`) matches nothing and the page carries
+  `referenceHint` — the review row says *"the only record holding … is Betime
+  Online's reference copy, which is never scanned. Upload the picking list"* —
+  and the late-orders sweep attaches it the moment the picking list arrives
+  (the OneCart pull also calls `scheduleLabelAutoRematch('onecart-sync')` when
+  it fills a tracking number, since that is what creates the link).
+- **BY HAND TOO.** The manual-match route answers 409 `referenceOnly` for a
+  reference order, the CSV round-trip reports the row, and the Match-to-Order
+  picker never lists a `reference_only` row.
+- **THE TWIN IS FOUND BY WAYBILL AS WELL AS BY NUMBER.** `findReferenceTwin`
+  takes the work ORDER and falls back to a reference carrying the same
+  waybill, so the **📒 also in Betime Online** pill shows on GI-141936 and
+  `pushOnecartCompletion` relays the completion to OneCart's own order
+  (`onecart_completion_pushed` carries `twinVia: 'waybill'` and
+  `channelOrder`). Before this, no GI-numbered order ever reached OneCart.
+  The upload's "already in the channel ledger — carry on?" tier is still keyed
+  on the NUMBER only, deliberately: every BETIME upload shares waybills with
+  the ledger, and a dialog on every file is noise, not a prompt.
+- **THE IDENTITY CHECK KNOWS THE CHANNEL COPY.** The marketplace number on a
+  label matched to a GI order is verdict `reference` (slate, "the marketplace
+  number of this shipment — Betime Online's reference copy of the same
+  waybill. Not a mismatch"), never `foreign` — the wrong-order alarm must not
+  fire on the right order.
+- **LABELS ALREADY FILED THE OLD WAY ARE MOVED AT BOOT** (`rehomeReferenceLabels`,
+  in the inventory zone next to `backfillCataloguesFromOrders`, and again when
+  a store's mode is re-stamped): every page matched to a reference-only number
+  is detached and re-matched under the current rules — onto the work order
+  sharing the waybill (`page.rehomedFrom` says where from), else back to
+  unmatched with the reason. A stray `db.orderLabels` key on a reference number
+  is removed. Audited `labels_rehomed_from_reference` {moved, freed}; a clean
+  boot moves nothing and logs nothing.
+
+Verified 30 API checks (`label-ref-e2e.js`: the reference carries the waybill,
+the GI upload carries the same one and shows the twin pill; the TraxLogics
+page attaches to GI-141936 by the reference copy's number with the tracking
+AGREEING; the label is served for the GI order and 404 for the reference; a
+reference-only page stays unmatched with the reason; a hand match onto the
+reference is 409 and attaches nothing; the picking list arriving later gets
+the page by itself; completion PUTs OneCart's order 9003 via the waybill twin;
+a label seeded the old way is re-homed at boot with the audit row and a second
+boot is silent) — **the pre-fix build fails 20 of them and reproduces the
+screenshots exactly** (matched → 172397910455623, 404 for the GI order, 200
+for the reference) — plus 28 browser checks on desktop and a Pixel 5
+(`br-label-ref.js`: the matched row's slate note naming the marketplace number
+and Betime Online, no "matches no identifier" warning, the reference-only row's
+reason with Match to Order still offered, the picker listing the work orders
+and none of the three references, no sideways scroll). Regressions:
+`label-parcels-e2e` 32, `onecart-ref-e2e` 50, `e2e-cascade` unchanged.
+
+TEST GOTCHA: `.log-review-labels` is the UPLOAD tab's review button; on the
+Labels tab the whole `.label-history-item` row is the click target.
+
 ## Client Portal — read-only self-service for 3PL clients (/portal)
 
 `public/portal.html` + `portal.js`, served at `GET /portal`. Same architecture
