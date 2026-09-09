@@ -2659,7 +2659,7 @@
         ord.archived         ? `<span class="chip chip-unproc" title="Stored in the archive (older than 60 days)">&#128451; Archived</span>` : '',
         // 1 carton is the default and not worth a chip — only shown once an order actually split into more than one box
         cartonCount > 1      ? `<span class="chip chip-cartons" title="Packed across ${cartonCount} cartons">&#128230; ${cartonCount} Cartons</span>` : '',
-        ord.has_order_label  ? `<span class="chip chip-label">&#127991; Label</span>` : '',
+        ord.has_order_label  ? `<span class="chip chip-label" title="${ord.label_pages > 1 ? `${ord.label_pages} parcels — this order was split into ${ord.label_pages} boxes and every box's label is attached; printing gives all ${ord.label_pages}` : 'Carrier label attached'}">&#127991; Label${ord.label_pages > 1 ? ` &times;${ord.label_pages}` : ''}</span>` : '',
         ord.has_waybill_pdf  ? `<span class="chip chip-waybill">&#128196; Waybill</span>` : '',
         // COLLECTION. Green once the parcel has physically left; amber while it
         // is still on the staging shelf, red once its collection day has passed.
@@ -2742,7 +2742,7 @@
           ${isDone && !ord.has_waybill_pdf && !ord.has_order_label ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint label">&#128438;</button>` : ''}
           ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download slip">&#128196;</a>` : ''}
           ${ord.has_waybill_pdf && ord.batchId ? `<button class="btn-print-waybill" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId)}" title="Print waybill">&#128438; WB</button>` : ''}
-          ${ord.has_order_label ? `<button class="btn-print-order-label" data-order="${esc(ord.order_number)}" title="Print carrier label">&#127991;</button>` : ''}
+          ${ord.has_order_label ? `<button class="btn-print-order-label" data-order="${esc(ord.order_number)}" title="${ord.label_pages > 1 ? `Print carrier labels — ${ord.label_pages} parcels, one page each` : 'Print carrier label'}">&#127991;${ord.label_pages > 1 ? `<small>&times;${ord.label_pages}</small>` : ''}</button>` : ''}
           ${ord.archived ? '' : emailIndicator}
           ${ord.archived ? '' : kfBtn}
           ${ord.archived ? '' : syncBtn}
@@ -17734,6 +17734,7 @@
               <div class="lri-status-row">
                 <span class="lri-badge ${statusCls}">${page.matchStatus}</span>
                 ${page.matchMethod ? `<span class="lri-method">via ${page.matchMethod.replace(/_/g, ' ')}</span>` : ''}
+                ${page.parcel ? '<span class="lri-method" title="This order was split into more than one box — a different tracking number from the label already held, so this page is attached as another parcel rather than filed as a duplicate">&#128230; another parcel of the same order</span>' : ''}
                 ${page.ocr ? '<span class="lri-method">&#128269; read by OCR</span>' : ''}
               </div>
               ${page.matchStatus === 'ambiguous' ? `

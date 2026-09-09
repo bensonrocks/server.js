@@ -3097,6 +3097,8 @@ function globalOrdersWithState(keep) {
         zort_label:        _zortLabelState(db, ord),
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
+        // How many parcels' labels are attached — a split order has one per box.
+        label_pages:       labelPagesOf(orderLabels[ord.order_number]).length,
         pending_deletion:  state.pending_deletion  || null,
         // The courier brought it back, or never got it away. Recorded from the
         // hub; the order itself is never regressed by it.
@@ -5799,7 +5801,7 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
 // The matched waybill page, for the client that owns the order. Ownership is
 // re-checked here rather than trusted from the caller — /api/order-label is the
 // STAFF route and must never be reachable with a portal token.
-app.get('/api/portal/order/:orderNumber/label', requirePortalAuthMiddleware, (req, res) => {
+app.get('/api/portal/order/:orderNumber/label', requirePortalAuthMiddleware, async (req, res) => {
   const clientNorm = req.portalClient.trim().toLowerCase();
   const wanted = String(req.params.orderNumber);
   const db = readDb();
@@ -5809,11 +5811,11 @@ app.get('/api/portal/order/:orderNumber/label', requirePortalAuthMiddleware, (re
   if (!owns) return res.status(404).json({ error: 'Order not found' });
   const ref = (db.orderLabels || {})[wanted];
   if (!ref) return res.status(404).json({ error: 'No waybill matched to this order' });
-  const filePath = path.join(LABEL_IMPORT_DIR, ref.importId, ref.pageFile);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'The waybill file is no longer on file' });
+  const buf = await mergedLabelPdf(ref);   // every parcel of a split order, one document
+  if (!buf) return res.status(404).json({ error: 'The waybill file is no longer on file' });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${wanted}_waybill.pdf"`);
-  fs.createReadStream(filePath).pipe(res);
+  res.end(buf);
 });
 
 app.get('/api/portal/notices', requirePortalAuthMiddleware, (req, res) => {
@@ -7370,6 +7372,87 @@ class _NapiCanvasFactory {
 // the primary path; extractLargestPageImage() is the fallback when either
 // optional dependency (pdfjs-dist / @napi-rs/canvas) is missing or the render
 // fails, so labels that ARE one single bitmap keep working either way.
+// ── ONE ORDER, SEVERAL PARCELS, SEVERAL LABELS ─────────────────────────────
+// A large order is split into two boxes by the channel, and each box gets its
+// OWN label with its OWN tracking number, both printing the same order number.
+// `db.orderLabels[orderNumber]` used to hold exactly one page, so the second
+// box's label was filed `duplicate` and never attached — the packer got one
+// label for two parcels. Reported live on 171067267872131 (…417357 and
+// …417039). The rule now: a second page matched to the SAME order is another
+// PARCEL when it carries a DIFFERENT tracking number to every page already
+// held; it is a duplicate only when the tracking number is the same (the same
+// label printed twice) or when neither page carries one (nothing tells them
+// apart, and attaching both would print one box's label twice).
+// The record keeps its old shape — the first parcel is the top-level entry,
+// so every reader that checks `db.orderLabels[n]` still works — and further
+// parcels sit in `parcels[]`. Anything that PRINTS goes through
+// `mergedLabelPdf`, which hands back every parcel's page in one document.
+function labelTrackingOf(page) { return String(page?.extracted?.trackingNumber || '').trim().toUpperCase(); }
+function labelPagesOf(ref) { return ref ? [ref, ...(Array.isArray(ref.parcels) ? ref.parcels : [])] : []; }
+function labelHeldTrackings(ref) {
+  return new Set(labelPagesOf(ref).map(p => String(p.tracking || '').trim().toUpperCase()).filter(Boolean));
+}
+function isAnotherParcel(ref, tracking) {
+  const t = String(tracking || '').trim().toUpperCase();
+  if (!ref || !t) return false;
+  const held = labelHeldTrackings(ref);
+  return held.size > 0 && !held.has(t);
+}
+// Attach one page to an order. Returns 'primary' (first label), 'parcel' (an
+// additional box), 'same' (this exact page was already on it) or 'replaced'
+// (a correction — the previous primary page is swapped out, parcels kept).
+function attachLabelPage(db, orderNumber, entry) {
+  if (!db.orderLabels) db.orderLabels = {};
+  const ref = db.orderLabels[orderNumber];
+  const same = p => p.importId === entry.importId && p.pageIndex === entry.pageIndex;
+  if (!ref) { db.orderLabels[orderNumber] = { ...entry }; return 'primary'; }
+  if (same(ref)) { Object.assign(ref, entry, { parcels: ref.parcels }); return 'same'; }
+  const existing = (ref.parcels || []).find(same);
+  if (existing) { Object.assign(existing, entry); return 'same'; }
+  if (isAnotherParcel(ref, entry.tracking)) {
+    ref.parcels = ref.parcels || [];
+    ref.parcels.push({ ...entry });
+    return 'parcel';
+  }
+  db.orderLabels[orderNumber] = { ...entry, parcels: ref.parcels };
+  if (!db.orderLabels[orderNumber].parcels) delete db.orderLabels[orderNumber].parcels;
+  return 'replaced';
+}
+// Remove one page from an order's label record; a removed primary is replaced
+// by the next parcel, and an order left with nothing loses its key.
+function detachLabelPage(db, orderNumber, importId, pageIndex) {
+  const ref = (db.orderLabels || {})[orderNumber];
+  if (!ref) return false;
+  const pages = labelPagesOf(ref).filter(p => !(p.importId === importId && (pageIndex === undefined || p.pageIndex === pageIndex)));
+  if (pages.length === labelPagesOf(ref).length) return false;
+  if (!pages.length) { delete db.orderLabels[orderNumber]; return true; }
+  const [first, ...rest] = pages;
+  db.orderLabels[orderNumber] = { ...first };
+  delete db.orderLabels[orderNumber].parcels;
+  if (rest.length) db.orderLabels[orderNumber].parcels = rest;
+  return true;
+}
+function detachImportLabels(db, importId) {
+  let n = 0;
+  for (const on of Object.keys(db.orderLabels || {})) if (detachLabelPage(db, on, importId)) n++;
+  return n;
+}
+// Every parcel's page in ONE document — a single page is streamed as stored.
+async function mergedLabelPdf(ref) {
+  const pages = labelPagesOf(ref).map(p => path.join(LABEL_IMPORT_DIR, p.importId, p.pageFile)).filter(f => fs.existsSync(f));
+  if (!pages.length) return null;
+  if (pages.length === 1) return fs.readFileSync(pages[0]);
+  const out = await PDFDocument.create();
+  for (const f of pages) {
+    try {
+      const src = await PDFDocument.load(fs.readFileSync(f));
+      const copied = await out.copyPages(src, src.getPageIndices());
+      copied.forEach(p => out.addPage(p));
+    } catch (e) { console.error('[order-label] merge skipped a page:', e.message); }
+  }
+  return Buffer.from(await out.save());
+}
+
 async function renderPdfPageToPng(buffer, pageIndex = 0, scale = 3) {
   if (!LABEL_OCR_RENDER_AVAILABLE) return null;
   let doc = null;
@@ -7753,6 +7836,7 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
     let matchMethod        = null;
     let matchConfidence    = null;
     let candidates         = null;
+    let parcel             = false;   // an additional box of an order already labelled in this import
 
     if (rawText) {
       try {
@@ -7767,6 +7851,7 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
           matchConfidence    = hit.confidence;
           matchMethod        = hit.method;
           const held = matchedThisImport.get(hit.hit);
+          const tracking = labelTrackingOf({ extracted });
           // A DUPLICATE IS DECIDED ON EVIDENCE, NOT ON PAGE ORDER. The old
           // rule was first-come, so a page that claimed an order by a blind
           // scan kept it and the order's REAL label — arriving later, matched
@@ -7775,12 +7860,18 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
           // and sends the earlier page back to the pile.
           if (!held) {
             matchStatus = 'matched';
-            matchedThisImport.set(hit.hit, { pageIndex: i, confidence: hit.confidence });
+            matchedThisImport.set(hit.hit, { pageIndex: i, confidence: hit.confidence, trackings: new Set(tracking ? [tracking] : []) });
+          } else if (tracking && held.trackings.size && !held.trackings.has(tracking)) {
+            // ANOTHER PARCEL of the same order — a different tracking number
+            // to every page already held. Attached alongside, never a duplicate.
+            matchStatus = 'matched';
+            parcel      = true;
+            held.trackings.add(tracking);
           } else if (held.confidence === 'scan' && hit.confidence === 'exact') {
             const prev = pages[held.pageIndex];
             if (prev) { prev.matchStatus = 'duplicate'; prev.displacedBy = i; }
             matchStatus = 'matched';
-            matchedThisImport.set(hit.hit, { pageIndex: i, confidence: hit.confidence });
+            matchedThisImport.set(hit.hit, { pageIndex: i, confidence: hit.confidence, trackings: new Set(tracking ? [tracking] : []) });
           } else {
             matchStatus = 'duplicate';
           }
@@ -7789,16 +7880,16 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
     }
 
     if (matchedOrderNumber && matchStatus === 'matched') {
-      db.orderLabels[matchedOrderNumber] = {
-        importId, pageIndex: i, pageFile,
+      attachLabelPage(db, matchedOrderNumber, {
+        importId, pageIndex: i, pageFile, tracking: labelTrackingOf({ extracted }) || undefined,
         attachedAt: new Date().toISOString(), attachedBy: uploadedBy,
-      };
+      });
     }
 
     // rawText kept (truncated) so later rematches can reverse-scan without
     // re-parsing the PDF from the volume
     pages.push({ pageIndex: i, pageFile, extracted, rawText: rawText.slice(0, 4000),
-                 matchStatus, matchedOrderNumber, matchMethod, matchConfidence, candidates });
+                 matchStatus, matchedOrderNumber, matchMethod, matchConfidence, candidates, parcel: parcel || undefined });
   }
 
   // A LABEL WE ASKED FOR BY ORDER MUST NOT BE ORPHANED BY A MISREAD.
@@ -7808,16 +7899,22 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
   // "no label" they asked us to fix. ONE page only — a multi-page document is
   // not obviously all one order's, and guessing which page is worse than
   // saying so on the Labels tab.
-  if (forOrder && numPages === 1 && !db.orderLabels[forOrder] && pages[0] && pages[0].matchStatus !== 'matched') {
+  // …and a page fetched for an order that ALREADY has a label is its second
+  // parcel when it carries a different tracking number (TikTok hands back one
+  // URL per package), never a silent drop.
+  const _forRef = forOrder ? db.orderLabels[forOrder] : null;
+  if (forOrder && numPages === 1 && pages[0] && pages[0].matchStatus !== 'matched'
+      && (!_forRef || isAnotherParcel(_forRef, labelTrackingOf(pages[0])))) {
     pages[0].matchStatus       = 'matched';
     pages[0].matchedOrderNumber = forOrder;
     pages[0].matchMethod       = 'fetched-for-order';
-    db.orderLabels[forOrder] = {
-      importId, pageIndex: 0, pageFile: pages[0].pageFile,
+    if (_forRef) pages[0].parcel = true;
+    attachLabelPage(db, forOrder, {
+      importId, pageIndex: 0, pageFile: pages[0].pageFile, tracking: labelTrackingOf(pages[0]) || undefined,
       attachedAt: new Date().toISOString(), attachedBy: uploadedBy,
       attachedVia: 'fetched-for-order',
-    };
-    logAudit('sync_label_attached_by_request', { order: forOrder, importId,
+    });
+    logAudit('sync_label_attached_by_request', { order: forOrder, importId, parcel: !!_forRef,
       why: 'fetched from the channel for this order; the text on it did not match' });
   }
 
@@ -7877,9 +7974,7 @@ app.post('/api/label-imports', requireAuth, labelImportUpload.single('labelPdf')
           });
         }
         if (!dbChk.orderLabels) dbChk.orderLabels = {};
-        for (const [on, ref] of Object.entries(dbChk.orderLabels)) {
-          if (ref?.importId === prior.id) delete dbChk.orderLabels[on];
-        }
+        detachImportLabels(dbChk, prior.id);   // primary AND parcel pages from the old import
         dbChk.labelImports = dbChk.labelImports.filter(i => i.id !== prior.id);
         writeDb(dbChk);
         try { fs.rmSync(path.join(LABEL_IMPORT_DIR, prior.id), { recursive: true, force: true }); } catch {}
@@ -7972,9 +8067,7 @@ app.delete('/api/label-imports/:id', (req, res) => {
     if (idx === -1) return res.status(404).json({ error: 'Import not found' });
     const victim = db.labelImports[idx];
     if (!db.orderLabels) db.orderLabels = {};
-    for (const [orderNumber, ref] of Object.entries(db.orderLabels)) {
-      if (ref?.importId === id) delete db.orderLabels[orderNumber];
-    }
+    detachImportLabels(db, id);   // primary AND parcel pages from this import
     db.labelImports.splice(idx, 1);
     writeDb(db);
     logAudit('label_import_deleted', {
@@ -8024,19 +8117,19 @@ app.post('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) => {
 
   if (!db.orderLabels) db.orderLabels = {};
   // Remove previous mapping for this page if any
-  if (page.matchedOrderNumber && db.orderLabels[page.matchedOrderNumber]?.importId === id
-      && db.orderLabels[page.matchedOrderNumber]?.pageIndex === pageIdx) {
-    delete db.orderLabels[page.matchedOrderNumber];
-  }
+  if (page.matchedOrderNumber) detachLabelPage(db, page.matchedOrderNumber, id, pageIdx);
   page.matchedOrderNumber = orderNumber;
   page.matchStatus        = 'matched';
   page.matchMethod        = 'manual';
-  db.orderLabels[orderNumber] = {
-    importId: id, pageIndex: pageIdx, pageFile: page.pageFile,
+  // A hand match onto an order that already holds a label with a DIFFERENT
+  // tracking number is its next parcel; the same number is a correction.
+  const role = attachLabelPage(db, orderNumber, {
+    importId: id, pageIndex: pageIdx, pageFile: page.pageFile, tracking: labelTrackingOf(page) || undefined,
     attachedAt: new Date().toISOString(), attachedBy: req.userId,
-  };
+  });
+  page.parcel = role === 'parcel' || undefined;
   writeDb(db);
-  res.json({ ok: true, page });
+  res.json({ ok: true, page, role, labelPages: labelPagesOf(db.orderLabels[orderNumber]).length });
 });
 
 // Bulk counterpart to the single-page manual match above — the round-trip
@@ -8080,21 +8173,20 @@ app.post('/api/label-imports/:id/import-matches', requireAuth, labelImportUpload
     if (!page) { errors.push({ row: excelRow, reason: `Page "${rawPage}" not found in this import` }); continue; }
 
     const orderNumber = String(rawMatchedOrder).trim();
-    if (usedInThisImport.has(orderNumber)) { errors.push({ row: excelRow, reason: `Order ${orderNumber} already assigned to another row in this file` }); continue; }
+    // Two rows may name one order when they are two PARCELS (different tracking numbers).
+    if (usedInThisImport.has(orderNumber) && !isAnotherParcel(db.orderLabels[orderNumber], labelTrackingOf(page))) { errors.push({ row: excelRow, reason: `Order ${orderNumber} already assigned to another row in this file (same or no tracking number — not a second parcel)` }); continue; }
     const order = orders.find(o => o.order_number === orderNumber);
     if (!order) { errors.push({ row: excelRow, reason: `Order ${orderNumber} not found` }); continue; }
 
-    if (page.matchedOrderNumber && db.orderLabels[page.matchedOrderNumber]?.importId === imp.id
-        && db.orderLabels[page.matchedOrderNumber]?.pageIndex === pageIdx) {
-      delete db.orderLabels[page.matchedOrderNumber];
-    }
+    if (page.matchedOrderNumber) detachLabelPage(db, page.matchedOrderNumber, imp.id, pageIdx);
     page.matchedOrderNumber = orderNumber;
     page.matchStatus        = 'matched';
     page.matchMethod        = 'csv_import';
-    db.orderLabels[orderNumber] = {
-      importId: imp.id, pageIndex: pageIdx, pageFile: page.pageFile,
+    const role = attachLabelPage(db, orderNumber, {
+      importId: imp.id, pageIndex: pageIdx, pageFile: page.pageFile, tracking: labelTrackingOf(page) || undefined,
       attachedAt: new Date().toISOString(), attachedBy: req.userId,
-    };
+    });
+    page.parcel = role === 'parcel' || undefined;
     usedInThisImport.add(orderNumber);
     applied++;
   }
@@ -8113,12 +8205,12 @@ app.delete('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) =>
   const page    = imp.pages[pageIdx];
   if (!page) return res.status(404).json({ error: 'Page not found' });
   if (!db.orderLabels) db.orderLabels = {};
-  if (page.matchedOrderNumber && db.orderLabels[page.matchedOrderNumber]?.importId === id) {
-    delete db.orderLabels[page.matchedOrderNumber];
-  }
+  // Only THIS page comes off — a split order keeps its other parcel(s).
+  if (page.matchedOrderNumber) detachLabelPage(db, page.matchedOrderNumber, id, pageIdx);
   page.matchedOrderNumber = null;
   page.matchStatus        = 'unmatched';
   page.matchMethod        = null;
+  page.parcel             = undefined;
   writeDb(db);
   res.json({ ok: true });
 });
@@ -8138,11 +8230,18 @@ async function rematchLabelImport(id, rematchAll) {
   // Track which orders are already matched in THIS import (to detect duplicates)
   // order number → {pageIndex, confidence} — a Map, not a Set, so an exact
   // match can displace an earlier scan guess (see the decision below).
-  const matchedInImport = new Map(
-    imp.pages
-      .filter(p => p.matchStatus === 'matched' && p.matchedOrderNumber && !rematchAll)
-      .map(p => [p.matchedOrderNumber, { pageIndex: p.pageIndex, confidence: p.matchConfidence || 'exact' }])
-  );
+  // Every tracking number already held for an order rides along, so a later
+  // page carrying a DIFFERENT one is attached as another parcel, not refused.
+  const matchedInImport = new Map();
+  if (!rematchAll) {
+    for (const p of imp.pages) {
+      if (p.matchStatus !== 'matched' || !p.matchedOrderNumber) continue;
+      const t = labelTrackingOf(p);
+      const cur = matchedInImport.get(p.matchedOrderNumber);
+      if (cur) { if (t) cur.trackings.add(t); continue; }
+      matchedInImport.set(p.matchedOrderNumber, { pageIndex: p.pageIndex, confidence: p.matchConfidence || 'exact', trackings: new Set(t ? [t] : []) });
+    }
+  }
 
   let newMatches = 0;
   let ocrWorker  = null;
@@ -8225,31 +8324,38 @@ async function rematchLabelImport(id, rematchAll) {
     } else if (hit) {
       page.candidates = null;
       const held = matchedInImport.get(hit);
+      const tracking = labelTrackingOf(page);
+      // ANOTHER PARCEL of an order already labelled in this import — a
+      // different tracking number to every page held — attaches alongside.
+      const anotherParcel = !!(held && tracking && held.trackings.size && !held.trackings.has(tracking));
       // Evidence displaces a guess here too, or a rematch would restore the
       // first-come rule the import pass just gave up.
-      if (held && !(held.confidence === 'scan' && found.confidence === 'exact')) {
+      if (held && !anotherParcel && !(held.confidence === 'scan' && found.confidence === 'exact')) {
         page.matchStatus        = 'duplicate';
         page.matchedOrderNumber = hit;
         page.matchMethod        = method;
         page.matchConfidence    = found.confidence;
+        page.parcel             = undefined;
       } else {
-        if (held) {
+        if (held && !anotherParcel) {
           const prev = imp.pages.find(p => p.pageIndex === held.pageIndex);
           if (prev) { prev.matchStatus = 'duplicate'; prev.displacedBy = page.pageIndex; }
         }
         // Remove stale label reference from previous match if any
         if (page.matchedOrderNumber && page.matchedOrderNumber !== hit) {
-          delete db.orderLabels[page.matchedOrderNumber];
+          detachLabelPage(db, page.matchedOrderNumber, id, page.pageIndex);
         }
         page.matchedOrderNumber = hit;
         page.matchStatus        = 'matched';
         page.matchMethod        = method;
         page.matchConfidence    = found.confidence;
-        db.orderLabels[hit] = {
-          importId: id, pageIndex: page.pageIndex, pageFile: page.pageFile,
+        page.parcel             = anotherParcel || undefined;
+        attachLabelPage(db, hit, {
+          importId: id, pageIndex: page.pageIndex, pageFile: page.pageFile, tracking: tracking || undefined,
           attachedAt: new Date().toISOString(), attachedBy: 'auto-match',
-        };
-        matchedInImport.set(hit, { pageIndex: page.pageIndex, confidence: found.confidence });
+        });
+        if (anotherParcel) held.trackings.add(tracking);
+        else matchedInImport.set(hit, { pageIndex: page.pageIndex, confidence: found.confidence, trackings: new Set(tracking ? [tracking] : []) });
         newMatches++;
       }
     }
@@ -8321,17 +8427,24 @@ app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
 });
 
 // Serve the matched label PDF for an order (token-param auth for iframes)
-app.get('/api/order-label/:orderNumber/pdf', requireAuthOrToken, (req, res) => {
+app.get('/api/order-label/:orderNumber/pdf', requireAuthOrToken, async (req, res) => {
   const { orderNumber } = req.params;
   const db       = readDb();
   const labelRef = (db.orderLabels || {})[orderNumber];
   if (!labelRef) return res.status(404).json({ error: 'No label for this order' });
-  const filePath = path.join(LABEL_IMPORT_DIR, labelRef.importId, labelRef.pageFile);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Label file missing' });
+  // EVERY PARCEL'S LABEL, in one document — a split order prints all its boxes.
+  // `?parcel=N` (1-based) serves just that box's page.
+  const parcelNo = parseInt(req.query.parcel, 10);
+  const one = Number.isFinite(parcelNo) ? labelPagesOf(labelRef)[parcelNo - 1] : null;
+  if (Number.isFinite(parcelNo) && !one) return res.status(404).json({ error: `This order has ${labelPagesOf(labelRef).length} parcel label(s); there is no parcel ${parcelNo}` });
+  const buf = one
+    ? (fs.existsSync(path.join(LABEL_IMPORT_DIR, one.importId, one.pageFile)) ? fs.readFileSync(path.join(LABEL_IMPORT_DIR, one.importId, one.pageFile)) : null)
+    : await mergedLabelPdf(labelRef);
+  if (!buf) return res.status(404).json({ error: 'Label file missing' });
   const disp = req.query.dl === '1' ? 'attachment' : 'inline';
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `${disp}; filename="${orderNumber}_label.pdf"`);
-  fs.createReadStream(filePath).pipe(res);
+  res.end(buf);
 });
 
 // ── No-barcode SKUs — registry + printable substitute-barcode sheet ─────────

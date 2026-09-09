@@ -1109,6 +1109,57 @@ page whether the account holds 1,000 orders or 200,000** (measured at both).
 `index.scanKeys` is that Map now, not an array; the longest-key-first sort went
 with it, since a run either equals a key or it does not.
 
+### ONE ORDER, TWO BOXES, TWO LABELS — a second parcel is not a duplicate
+
+Reported live with both files: order `171067267872131` was split by the channel
+into two parcels, the ZORT print carried two pages — tracking `…417357` (4
+items) and `…417039` (1 item), the SAME order number on both — and IdealOne
+returned ONE label. `db.orderLabels[orderNumber]` held exactly one page, so
+the second page, correctly matched to the same order, was filed `duplicate`
+by the first-write-wins cascade and never attached. The packer got one label
+for two boxes.
+
+- **THE RULE**: a second page matched to an order that already holds a label
+  is **another PARCEL when it carries a DIFFERENT tracking number** to every
+  page already held (`isAnotherParcel`), and a duplicate only when the number
+  is the same (the same label printed twice) or when neither page carries one
+  (nothing tells them apart, and attaching both would print one box's label
+  twice). `labelTrackingOf(page)` reads `extracted.trackingNumber`.
+- **THE RECORD KEEPS ITS SHAPE.** The first parcel stays the top-level entry,
+  so every `!!db.orderLabels[n]` reader — `has_order_label`, `has_label`,
+  `labelAttached`, the label-chase gates — is untouched; further parcels sit in
+  `parcels[]`, each with `tracking`. `labelPagesOf(ref)` is the one way to
+  enumerate them; `label_pages` rides on the order object.
+- **ANYTHING THAT PRINTS GETS EVERY BOX** — `/api/order-label/:n/pdf` and the
+  portal's `/api/portal/order/:n/label` both serve `mergedLabelPdf(ref)` (all
+  parcels in one document, pdf-lib), so every existing print entry point
+  (row button, scan overlay, bulk print, completion) prints both without
+  change. `?parcel=N` serves one box; a parcel that does not exist is 404.
+- **ONE WRITER, ONE REMOVER.** `attachLabelPage` (import, rematch, manual,
+  CSV, fetched-for-order) returns `primary` / `parcel` / `same` / `replaced`
+  — a correction onto the same tracking replaces the primary and keeps the
+  parcels; `detachLabelPage` takes ONE page off and promotes the next parcel;
+  `detachImportLabels` clears every page of a deleted or superseded import.
+  The four old `delete db.orderLabels[...]` sites went through them, or a
+  deleted import would have left a parcel pointing at a file on disk that no
+  longer existed.
+- The import and rematch cascades carry `trackings` per matched order, the
+  page is flagged `parcel: true` and the review row says "📦 another parcel of
+  the same order"; the row chip reads **🏷 Label ×2**. A fetched-for-order
+  page (TikTok hands back one URL per package) attaches as a parcel too.
+- `import-matches` (the CSV round-trip) allows two rows naming one order when
+  they are two parcels, and says why when it refuses.
+
+Verified 29 API checks against the user's own two files through the real
+endpoints (`label-parcels-e2e.js`): the 2-page ZORT print OCRs to both tracking numbers, both pages
+match the order with one flagged a parcel and nothing filed duplicate, the
+record holds primary + 1 parcel each with its own tracking, the list says
+×2, the print route returns a 2-page PDF (`parcel=2` one page, `parcel=9`
+404), re-importing the …417357 page alone is NOT a third parcel and printing
+still gives exactly 2, unmatching one page leaves the other parcel and 1
+printed page, a hand match puts it back as `role: parcel`, ↻ Rematch All keeps
+both, and deleting the import takes both off.
+
 **THE ONE REMAINING JUDGEMENT CALL, stated rather than papered over:**
 `extractLabelFields` finds a tracking number by SHAPE, not by a caption, and
 takes the FIRST match in the page text. On a page carrying two tracking-shaped
