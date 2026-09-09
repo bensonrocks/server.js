@@ -7401,9 +7401,21 @@ function isAnotherParcel(ref, tracking) {
 // Attach one page to an order. Returns 'primary' (first label), 'parcel' (an
 // additional box), 'same' (this exact page was already on it) or 'replaced'
 // (a correction — the previous primary page is swapped out, parcels kept).
+// The key is an ORDER NUMBER — a plain string that names an order we hold.
+// It can arrive off a request body (manual match, the CSV round-trip), so a
+// value that is not a string, or is one of the object-prototype names, is
+// refused here rather than written into the map (CodeQL: prototype-polluting
+// assignment; the routes also check the order exists, but this is the writer).
+const _BAD_LABEL_KEY = new Set(['__proto__', 'constructor', 'prototype']);
+function safeLabelKey(orderNumber) {
+  const k = typeof orderNumber === 'string' ? orderNumber.trim() : '';
+  return k && !_BAD_LABEL_KEY.has(k) ? k : null;
+}
 function attachLabelPage(db, orderNumber, entry) {
   if (!db.orderLabels) db.orderLabels = {};
-  const ref = db.orderLabels[orderNumber];
+  orderNumber = safeLabelKey(orderNumber);
+  if (!orderNumber) return 'refused';
+  const ref = Object.prototype.hasOwnProperty.call(db.orderLabels, orderNumber) ? db.orderLabels[orderNumber] : null;
   const same = p => p.importId === entry.importId && p.pageIndex === entry.pageIndex;
   if (!ref) { db.orderLabels[orderNumber] = { ...entry }; return 'primary'; }
   if (same(ref)) { Object.assign(ref, entry, { parcels: ref.parcels }); return 'same'; }
@@ -7421,7 +7433,8 @@ function attachLabelPage(db, orderNumber, entry) {
 // Remove one page from an order's label record; a removed primary is replaced
 // by the next parcel, and an order left with nothing loses its key.
 function detachLabelPage(db, orderNumber, importId, pageIndex) {
-  const ref = (db.orderLabels || {})[orderNumber];
+  orderNumber = safeLabelKey(orderNumber);
+  const ref = orderNumber && Object.prototype.hasOwnProperty.call(db.orderLabels || {}, orderNumber) ? db.orderLabels[orderNumber] : null;
   if (!ref) return false;
   const pages = labelPagesOf(ref).filter(p => !(p.importId === importId && (pageIndex === undefined || p.pageIndex === pageIndex)));
   if (pages.length === labelPagesOf(ref).length) return false;
@@ -8127,6 +8140,7 @@ app.post('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) => {
     importId: id, pageIndex: pageIdx, pageFile: page.pageFile, tracking: labelTrackingOf(page) || undefined,
     attachedAt: new Date().toISOString(), attachedBy: req.userId,
   });
+  if (role === 'refused') return res.status(400).json({ error: 'That is not a usable order number' });
   page.parcel = role === 'parcel' || undefined;
   writeDb(db);
   res.json({ ok: true, page, role, labelPages: labelPagesOf(db.orderLabels[orderNumber]).length });
@@ -8186,6 +8200,10 @@ app.post('/api/label-imports/:id/import-matches', requireAuth, labelImportUpload
       importId: imp.id, pageIndex: pageIdx, pageFile: page.pageFile, tracking: labelTrackingOf(page) || undefined,
       attachedAt: new Date().toISOString(), attachedBy: req.userId,
     });
+    if (role === 'refused') {   // cannot happen past the order-exists check above; kept so the page never reads matched to nothing
+      page.matchedOrderNumber = null; page.matchStatus = 'unmatched'; page.matchMethod = null;
+      errors.push({ row: excelRow, reason: `Order "${orderNumber}" is not a usable order number` }); continue;
+    }
     page.parcel = role === 'parcel' || undefined;
     usedInThisImport.add(orderNumber);
     applied++;
