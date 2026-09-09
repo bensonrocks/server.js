@@ -23116,9 +23116,22 @@ async function _zortSendOutboxEntry(db, store, entry) {
     }
     const name = `${entry.orderNumber || entry.tracking || 'label'}.pdf`;
     const out = await processLabelPdf(pdf, name, `sync:${store.clientName || store.storename || ''}`, { forOrder: entry.orderNumber });
+    // A SPLIT ORDER'S OTHER BOXES. The list reader hands back every further
+    // label row as `more[]`; each goes through the SAME pipeline for the same
+    // order, where a different tracking number attaches it as another parcel
+    // and the same label listed twice is filed as a duplicate.
+    let parcels = 0;
+    for (const [k, extra] of (got && Array.isArray(got.more) ? got.more : []).entries()) {
+      if (!extra || !extra.pdf) continue;
+      try {
+        const o2 = await processLabelPdf(extra.pdf, `${entry.orderNumber || 'label'}_parcel${k + 2}.pdf`, `sync:${store.clientName || store.storename || ''}`, { forOrder: entry.orderNumber });
+        if (o2.matched) parcels++;
+      } catch (e) { console.warn('[zort-label] extra parcel import:', entry.orderNumber, e.message); }
+    }
     logAudit('sync_label_imported', {
       order: entry.orderNumber, client: store.clientName || '',
       importId: out.importId, pages: out.pageCount, matched: out.matched,
+      extraParcels: parcels || undefined,
     });
     return true;
   }

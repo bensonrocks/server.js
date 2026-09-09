@@ -1149,6 +1149,28 @@ for two boxes.
   page (TikTok hands back one URL per package) attaches as a parcel too.
 - `import-matches` (the CSV round-trip) allows two rows naming one order when
   they are two parcels, and says why when it refuses.
+- **THE AUTOMATIC FETCH GETS EVERY BOX TOO** (asked directly: "will Fetch
+  Label work?"). `fetchLabelPdf` (lib/zort.js) used to return on the FIRST
+  usable `GetShipmentLabels` row; a split order lists one row per box, so the
+  API path fetched one label and the 🏷 Get Labels gate (`if (labels[n])
+  continue`) then never asked again. Every further row that yields a
+  DIFFERENT PDF (sha256-deduped, so the same label listed twice is not a
+  parcel) now rides along as `more[]`, and the outbox drain imports each for
+  the same order through `processLabelPdf(…, {forOrder})` — audited on
+  `sync_label_imported` as `extraParcels`. The browser worker needs nothing:
+  it captures the print page's whole PDF, and a two-page capture text-matches
+  both pages. OneCart's `print_awbs` already walks every candidate. HONEST
+  LIMIT, unchanged: an order that ALREADY holds one label is skipped by Get
+  Labels, so a split order labelled before this shipped is healed by ↻
+  Rematch All on its import (the second page is already there, filed
+  duplicate), not by fetching again.
+- **CodeQL was right once here**: the new writer assigned
+  `db.orderLabels[orderNumber]` with a key that can come off a request body
+  (manual match, CSV), the prototype-polluting-assignment shape.
+  `safeLabelKey` refuses a non-string or an object-prototype name in the one
+  writer and the one remover, and lookups go through `hasOwnProperty`. The
+  three new medium alerts on the commit were these; the rest on the touched
+  lines are the standing route patterns.
 
 Verified 29 API checks against the user's own two files through the real
 endpoints (`label-parcels-e2e.js`): the 2-page ZORT print OCRs to both tracking numbers, both pages
