@@ -3099,6 +3099,18 @@ function globalOrdersWithState(keep) {
         has_order_label:   !!(orderLabels[ord.order_number]),
         // How many parcels' labels are attached — a split order has one per box.
         label_pages:       labelPagesOf(orderLabels[ord.order_number]).length,
+        // EVERY waybill this order is known by — the stored number plus the
+        // tracking number read off each attached parcel label, distinct. A
+        // split order has one per box; the screens show the count and the
+        // scan-to-find bar answers to any of them.
+        waybills:          (() => {
+          const seen = new Set(); const out = [];
+          for (const w of [ord.waybill_number, ...labelPagesOf(orderLabels[ord.order_number]).map(p => p.tracking)]) {
+            const s = String(w || '').trim(); const k = s.toUpperCase();
+            if (s && !seen.has(k)) { seen.add(k); out.push(s); }
+          }
+          return out;
+        })(),
         pending_deletion:  state.pending_deletion  || null,
         // The courier brought it back, or never got it away. Recorded from the
         // hub; the order itself is never regressed by it.
@@ -10839,6 +10851,9 @@ app.post('/api/waybill-lookup', (req, res) => {
       (pt && (pt === q || strip0(pt) === strip0(q))) ||
       (gi && (gi === q || strip0(gi) === strip0(q))) ||
       (o.waybill_number && o.waybill_number.trim().toLowerCase() === q) ||
+      // A split order's SECOND parcel carries its own tracking number — the
+      // barcode on that box has to open the same order.
+      (Array.isArray(o.waybills) && o.waybills.some(w => String(w).trim().toLowerCase() === q)) ||
       (o.po_number      && String(o.po_number).trim().toLowerCase() === q);
   });
   if (!order) return res.status(404).json({ error: `No order for waybill: ${waybill}` });

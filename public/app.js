@@ -2731,7 +2731,7 @@
         </td>
         <td class="ord-client-cell col-client"><span class="ord-client-name" title="${esc(ord.client_name || '')}">${esc(ord.client_name || '—')}</span>${ord.attribution_hint ? `<span class="client-hint" title="This order's SKUs could not name one owner, so filing fell back to the channel map. They point at: ${esc(ord.attribution_hint)}. RE-PULLING WILL NOT FIX IT — the sync skips order numbers it already holds. Use 🔄 Refile on this row to move it, and de-duplicate the SKU (one owner per item master) so the next one files itself.">SKUs → ${esc(ord.attribution_hint)}</span>` : ''}</td>
         <td class="ord-customer-cell col-customer">${esc(ord.customer_name || '—')}</td>
-        <td class="ord-waybill-cell col-waybill" title="${esc(ord.waybill_number || '')}">${esc(ord.waybill_number || '—')}</td>
+        <td class="ord-waybill-cell col-waybill" title="${esc(waybillsOf(ord).join('\n') || '')}">${esc(ord.waybill_number || '—')}${waybillCountHtml(ord)}</td>
         <td class="col-items">${itemsCell} ${carrierBadge}</td>
         <td class="ord-status-cell col-status"><span class="status-badge ${ord.scan_status}">${labels[ord.scan_status] || ord.scan_status}</span></td>
         <td class="ord-date-cell col-date">${dateStr}${placedSub}</td>
@@ -8777,15 +8777,38 @@
   // completion is a repacked carton. So the header always SAYS where the
   // waybill stands on a synced order, instead of showing a pill when there is
   // one and silence when there is not — and the pill is the button.
+  // Every waybill an order is known by — the stored number plus the tracking
+  // number on each attached parcel label. A split order has one per box.
+  function waybillsOf(order) {
+    const list = Array.isArray(order.waybills) && order.waybills.length ? order.waybills : [order.waybill_number];
+    return list.map(w => String(w || '').trim()).filter(Boolean);
+  }
+  // The "×N" token beside a waybill when the order has more than one, with
+  // every number in the tooltip — and, because a phone has no hover, a tap
+  // lists them in a dialog.
+  function waybillCountHtml(order) {
+    const all = waybillsOf(order);
+    if (all.length < 2) return '';
+    const title = `${all.length} waybills — this order was split into ${all.length} parcels, one per box:\n${all.join('\n')}`;
+    return ` <span class="wb-count" title="${esc(title)}" data-waybills="${esc(all.join('|'))}">&times;${all.length}</span>`;
+  }
+  document.addEventListener('click', e => {
+    const t = e.target.closest && e.target.closest('.wb-count');
+    if (!t) return;
+    e.stopPropagation();
+    const all = String(t.dataset.waybills || '').split('|').filter(Boolean);
+    alert(`${all.length} waybills on this order — one per parcel:\n\n${all.map((w, i) => `Parcel ${i + 1}: ${w}`).join('\n')}`);
+  });
   function waybillPillHtml(order) {
     const hasLabel = !!(order.has_order_label || order.has_waybill_pdf);
     const num = String(order.waybill_number || '').trim();
+    const cnt = waybillCountHtml(order);
     // An UPLOADED order's waybill comes from the client's file or an uploaded
     // label PDF. There is no channel to ask, so nothing changes for it.
     if (!order.api_source) {
-      return num ? `<span class="meta-pill meta-pill-waybill">${esc(num)}${hasLabel ? ' &#10003;' : ''}</span>` : '';
+      return num ? `<span class="meta-pill meta-pill-waybill">${esc(num)}${hasLabel ? ' &#10003;' : ''}${cnt}</span>` : '';
     }
-    if (hasLabel) return `<span class="meta-pill meta-pill-waybill" title="The carrier label is attached — print it from the &#8681; Label button.">${esc(num || 'Label')} &#10003;</span>`;
+    if (hasLabel) return `<span class="meta-pill meta-pill-waybill" title="The carrier label is attached — print it from the &#8681; Label button.">${esc(num || 'Label')} &#10003;${cnt}</span>`;
     const tap = ' data-waybill-now="1" style="cursor:pointer"';
     if (num) return `<span class="meta-pill meta-pill-waybill-warn"${tap} title="The channel gave a tracking number but no printable label yet. Tap to ask it now — this packs the order on the channel, which is what makes the label exist.">${esc(num)} &middot; &#9888; no label yet &mdash; tap</span>`;
     return `<span class="meta-pill meta-pill-waybill-none"${tap} title="This order came from a sales channel and has no waybill yet. Tap to ask the channel now.">&#9888; No waybill yet &mdash; tap to get it</span>`;
@@ -8799,7 +8822,8 @@
     if (ord.has_order_label) {
       waybillBtn.href = `/api/order-label/${encodeURIComponent(ord.order_number)}/pdf?token=${encodeURIComponent(token)}&dl=1`;
       waybillBtn.setAttribute('download', `${ord.order_number}_label.pdf`);
-      waybillBtn.innerHTML = '&#8681; Label';
+      waybillBtn.innerHTML = ord.label_pages > 1 ? `&#8681; Label &times;${ord.label_pages}` : '&#8681; Label';
+      waybillBtn.title = ord.label_pages > 1 ? `${ord.label_pages} parcels — every box's label prints, one page each` : 'Download the carrier label';
       waybillBtn.classList.remove('hidden');
     } else if (ord.has_waybill_pdf && ord.batchId) {
       waybillBtn.href = `/api/waybill-pdf/${encodeURIComponent(ord.batchId)}/${encodeURIComponent(ord.order_number)}?dl=1`;

@@ -3823,6 +3823,9 @@ tr.pa-split-row td { border-top: 0; }
 .chip-client-withdrew { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-weight: 700; }
 /* A channel's REFERENCE record — not an order, not counted, never scanned.
    Slate, deliberately neither the green of work nor the red of a problem. */
+/* "×N" beside a waybill — a split order has one waybill per parcel. Tappable:
+   a phone has no hover, so the list comes up in a dialog. */
+.wb-count { display: inline-block; margin-left: .35em; padding: 0 .4em; border-radius: 999px; background: #1d4ed8; color: #fff; font-size: .72em; font-weight: 800; line-height: 1.5; cursor: pointer; vertical-align: middle; }
 .chip-reference { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; font-weight: 700; }
 .chip-ref-twin  { background: #f8fafc; color: #64748b; border: 1px dashed #cbd5e1; }
 .sb-client-ref  { opacity: .75; }

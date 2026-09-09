@@ -1149,6 +1149,17 @@ for two boxes.
   page (TikTok hands back one URL per package) attaches as a parcel too.
 - `import-matches` (the CSV round-trip) allows two rows naming one order when
   they are two parcels, and says why when it refuses.
+- **THE COUNT IS ON BOTH SCREENS** (per the user, from a photo of the scan
+  overlay: "there are 2 waybills for this order. show the count"). The order
+  object carries `waybills[]` — the stored `waybill_number` plus the tracking
+  number read off each attached parcel label, distinct — and the client's
+  `waybillCountHtml` puts a blue `×N` token (`.wb-count`) beside the number on
+  the Orders row's waybill cell AND on the scan overlay's waybill pill, with
+  every number in the tooltip and, because a phone has no hover, a TAP that
+  lists them one per parcel. The overlay's download button reads `⇩ Label
+  ×2`. `waybill_number` itself is untouched (asserted). And the scan-to-find
+  bar's server fallback answers to any of `waybills[]`, so the SECOND box's
+  barcode opens the same order.
 - **THE AUTOMATIC FETCH GETS EVERY BOX TOO** (asked directly: "will Fetch
   Label work?"). `fetchLabelPdf` (lib/zort.js) used to return on the FIRST
   usable `GetShipmentLabels` row; a split order lists one row per box, so the
@@ -1172,8 +1183,12 @@ for two boxes.
   three new medium alerts on the commit were these; the rest on the touched
   lines are the standing route patterns.
 
-Verified 29 API checks against the user's own two files through the real
-endpoints (`label-parcels-e2e.js`): the 2-page ZORT print OCRs to both tracking numbers, both pages
+Verified 32 API checks against the user's own two files through the real
+endpoints (`label-parcels-e2e.js`) plus 20 browser checks on desktop and a
+Pixel 5 (`br-label-parcels.js` — the row cell reading the number with a blue
+×2, its tooltip and tap listing both, the row chip "Label ×2", the overlay
+pill "LZSGD… ✓ ×2" with "⇩ Label ×2", no sideways scroll): the 2-page ZORT
+print OCRs to both tracking numbers, both pages
 match the order with one flagged a parcel and nothing filed duplicate, the
 record holds primary + 1 parcel each with its own tracking, the list says
 ×2, the print route returns a 2-page PDF (`parcel=2` one page, `parcel=9`
