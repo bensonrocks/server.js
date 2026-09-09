@@ -167,10 +167,16 @@
   // Falls back to opening the PDF in a new tab if iframe printing is blocked
   // (e.g. a browser popup-blocker on the print() call itself).
   let _printFrameUrl = null;
-  async function authPrintPdf(url) {
+  // `init` is an optional fetch init — the bulk waybill run POSTs its
+  // selection and prints the PDF that comes back through the same frame.
+  async function authPrintPdf(url, init) {
     try {
-      const resp = await fetch(url);
-      if (!resp.ok) { alert('Print failed: ' + (await resp.text())); return; }
+      const resp = await fetch(url, init);
+      if (!resp.ok) {
+        let msg = await resp.text();
+        try { msg = JSON.parse(msg).error || msg; } catch {}
+        alert('Print failed: ' + msg); return false;
+      }
       const blob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
       if (_printFrameUrl) { try { URL.revokeObjectURL(_printFrameUrl); } catch {} }
       const blobUrl = _printFrameUrl = URL.createObjectURL(blob);
@@ -188,7 +194,8 @@
       };
       document.body.appendChild(frame);
       frame.src = blobUrl;
-    } catch (e) { alert('Print error: ' + e.message); }
+      return true;
+    } catch (e) { alert('Print error: ' + e.message); return false; }
   }
   async function postDownload(url, body, filename) {
     try {
@@ -2763,7 +2770,7 @@
       <div id="ordersBulkBar" class="orders-bulk-bar hidden">
         <span id="ordersBulkCount" class="obb-count">0 selected</span>
         <button id="ordersBulkWave" class="btn-primary btn-sm" title="Create a wave pick from the selected orders — it appears in Wave Management like any other wave">&#127754; Create Wave</button>
-        <button id="ordersBulkPrint" class="btn-secondary btn-sm" title="Print waybill/label for each selected order that has one">&#128438; Print Labels</button>
+        <button id="ordersBulkPrint" class="btn-secondary btn-sm" title="Print the WAYBILL label for every selected order in ONE print run — the carrier's label where one is attached (every parcel), the batch waybill PDF where one was uploaded, otherwise a SYSTEM label in its place so no order comes out blank.">&#128438; Print Waybills</button>
         <button id="ordersBulkCartonLabels" class="btn-secondary btn-sm" title="Reprint the CARTON labels for the selected orders — every box, with its contents. Completed orders included: they print the final CTN n / m.">&#127991; Carton Labels</button>
         <button id="ordersBulkFulfil" class="btn-secondary btn-sm" title="Download an XLSX of what the selected orders (or the whole client filter + date range) can fulfil from current stock, and what is short">&#128202; Can-Fulfil Report</button>
         <button id="ordersBulkTxn" class="btn-secondary btn-sm" title="Download this client's transaction statement — everything in and out over the date range, with opening and closing balances">&#129534; Transactions</button>
@@ -2776,6 +2783,7 @@
       </div>` : `
       <div id="ordersBulkBar" class="orders-bulk-bar hidden">
         <span id="ordersBulkCount" class="obb-count">0 selected</span>
+        <button id="ordersBulkPrint" class="btn-secondary btn-sm" title="Print the WAYBILL label for every selected order in ONE print run — the carrier's label where one is attached (every parcel), the batch waybill PDF where one was uploaded, otherwise a SYSTEM label in its place so no order comes out blank.">&#128438; Print Waybills</button>
         <button id="ordersBulkCartonLabels" class="btn-secondary btn-sm" title="Reprint the CARTON labels for the selected orders — every box, with its contents. Completed orders included: they print the final CTN n / m.">&#127991; Carton Labels</button>
         <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
       </div>`;
@@ -2934,9 +2942,9 @@
   // ── Orders mass-select + group actions ─────────────────────────────────────
   // Row checkboxes + a header "select all" feed orderSelection; a floating bar
   // exposes group actions. Admins get the full bar; WAREHOUSE gets a reduced
-  // one carrying only 🏷 Carton Labels (per the user, the floor reprints
-  // labels too) — the admin actions are absent from their DOM, and the server
-  // enforces each role-gated route regardless.
+  // one carrying only 🖨 Print Waybills + 🏷 Carton Labels (per the user, the
+  // floor prints labels too) — the admin actions are absent from their DOM,
+  // and the server enforces each role-gated route regardless.
   function updateOrdersBulkBar() {
     const bar = document.getElementById('ordersBulkBar');
     if (!bar) return;
@@ -2976,6 +2984,18 @@
         .filter(o => o && !o.archived);
       ctnBtn.disabled = printable.length === 0;
       ctnBtn.textContent = `\u{1F3F7} Carton Labels${printable.length ? ` (${printable.length})` : ''}`;
+    }
+    // Waybill labels print for EVERY selected work order — one with no carrier
+    // label attached gets a system label in its place, so the count is the
+    // selection minus archived rows (off the live db) and reference copies
+    // (never labelled — the server fence would refuse the whole call).
+    const wbBtn = document.getElementById('ordersBulkPrint');
+    if (wbBtn) {
+      const printable = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && !o.archived && !o.reference_only);
+      wbBtn.disabled = printable.length === 0;
+      wbBtn.textContent = `\u{1F5A8} Print Waybills${printable.length ? ` (${printable.length})` : ''}`;
     }
     // "Create Wave" takes orders that still have picking to do and are not
     // already inside a live wave.
@@ -3053,17 +3073,20 @@
       document.querySelectorAll('.ord-select').forEach(cb => { cb.checked = false; });
       updateOrdersBulkBar();
     });
-    document.getElementById('ordersBulkPrint')?.addEventListener('click', () => {
+    // WAYBILL LABELS FOR THE WHOLE SELECTION, ONE PRINT RUN. Used to open one
+    // modal per order, stacked — fifty dialogs for fifty parcels — and an
+    // order with no label attached was simply left out. Now the server builds
+    // one PDF: the carrier's label where there is one, else the batch waybill
+    // PDF, else a SYSTEM label in its place (per the user).
+    document.getElementById('ordersBulkPrint')?.addEventListener('click', async () => {
+      const btn = document.getElementById('ordersBulkPrint');
       const picked = [...orderSelection]
         .map(nm => loadedOrders.find(o => o.order_number === nm))
-        .filter(Boolean);
-      const printable = picked.filter(o => o.has_order_label || o.has_waybill_pdf);
-      if (!printable.length) { alert('None of the selected orders have a printable label or waybill yet.'); return; }
-      // Open each in turn — the print modals stack sequentially.
-      printable.forEach(o => {
-        if (o.has_order_label) showPrintOrderLabelModal(o);
-        else if (o.has_waybill_pdf && o.batchId) showPrintWaybillModal(o);
-      });
+        .filter(o => o && !o.archived && !o.reference_only);
+      if (!picked.length) { alert('None of the selected orders can print — archived orders and channel reference copies cannot.'); return; }
+      if (btn) btn.disabled = true;
+      try { await printWaybillLabelsForOrders(picked.map(o => o.order_number)); }
+      finally { if (btn) btn.disabled = false; updateOrdersBulkBar(); }
     });
     document.getElementById('ordersBulkWave')?.addEventListener('click', async () => {
       const waveable = [...orderSelection]
@@ -10005,6 +10028,38 @@
       `${orderNumbers.length} order${orderNumbers.length === 1 ? '' : 's'}?` +
       (failed.length ? `\n\nCould not build:\n${failed.join('\n')}` : ''))) return;
     printCartonLabelDoc(bodies.join(''), `${bodies.length} carton labels`);
+  }
+
+  // WAYBILL labels for a selection, in one run. The plan is asked for FIRST
+  // (`dry`) so the confirm can say, in numbers, how many carrier labels are
+  // coming and how many orders will get a system label in their place — the
+  // person at the printer should know which parcels will need the carrier's
+  // own label found later. The real call prints through the same hidden PDF
+  // frame the single-order print uses.
+  async function printWaybillLabelsForOrders(orderNumbers) {
+    const size = currentUser?.labelSize || '100x150';
+    let plan;
+    try {
+      const r = await fetch('/api/orders/print-labels', { method: 'POST', headers: hdrs(), body: JSON.stringify({ orders: orderNumbers, size, dry: true }) });
+      plan = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(plan.error || 'Could not plan the print run.'); return false; }
+    } catch (err) { alert('Could not plan the print run: ' + err.message); return false; }
+    const s = plan.summary || {};
+    const sys = (plan.plan || []).filter(p => p.source === 'system');
+    const missing = (plan.plan || []).filter(p => p.source === 'missing' || p.source === 'reference');
+    const noWaybill = sys.filter(p => !p.waybill);
+    const lines = [
+      `Print waybill labels for ${s.orders} order${s.orders === 1 ? '' : 's'} — ${s.pages} page${s.pages === 1 ? '' : 's'} in one run?`,
+      '',
+      s.carrier    ? `• ${s.carrier} with the carrier's label attached` : null,
+      s.waybillPdf ? `• ${s.waybillPdf} with the batch waybill PDF` : null,
+      s.system     ? `• ${s.system} with NO carrier label — a SYSTEM label prints in its place:\n  ${sys.slice(0, 6).map(p => p.order).join(', ')}${sys.length > 6 ? ` … +${sys.length - 6} more` : ''}` : null,
+      noWaybill.length ? `  (${noWaybill.length} of those ${noWaybill.length === 1 ? 'has' : 'have'} no waybill number yet either — the barcode is the ORDER number and the label says so)` : null,
+      missing.length ? `• ${missing.length} cannot print: ${missing.slice(0, 4).map(p => `${p.order} (${p.why})`).join('; ')}` : null,
+    ].filter(l => l !== null);
+    if (!s.pages) { alert(lines.join('\n')); return false; }
+    if (!confirm(lines.join('\n'))) return false;
+    return authPrintPdf('/api/orders/print-labels', { method: 'POST', headers: hdrs(), body: JSON.stringify({ orders: orderNumbers, size }) });
   }
 
   async function printCartonSlip() {

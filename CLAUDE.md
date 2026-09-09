@@ -8244,6 +8244,70 @@ off-PO catalogue barcode resolves to its real SKU (and is still counted as an
 extra), a RETURN resolves barcodes too, and the damaged condition and eventId
 idempotency both still hold through the new path.
 
+## Printing waybill labels for a SELECTION — one run, and a system label where none is attached
+
+Per the user: *"allow multiple selection of orders to print waybill label instead
+of now, one by one. if order doesnt come with waybill label, system label will
+printed in replacement."* The old 🖨 Print Labels on the Orders bulk bar opened
+ONE modal PER ORDER, stacked, and silently left out every order with nothing
+attached — fifty dialogs for fifty parcels, and the ones that most needed a
+label got none.
+
+- **`POST /api/orders/print-labels {orders[], size?, dry?}`** builds ONE PDF, in
+  selection order, one source per order, first that exists:
+  1. the carrier label(s) attached (`db.orderLabels`, EVERY parcel — the same
+     pages `/api/order-label/:n/pdf` serves);
+  2. the waybill PDF uploaded with the batch (`WAYBILL_DIR/<batch>/<n>.pdf`,
+     what `has_waybill_pdf` means);
+  3. a **SYSTEM label drawn server-side** (`drawSystemLabelPage`, pdf-lib +
+     bwip-js Code128): waybill barcode, Deliver To, order/GI/client/channel/
+     pieces/printed-at, the items (what fits, the rest counted — never
+     silently cut), the carrier as the header (a saved HTML carrier template's
+     header wording/colours and show-flags are honoured, same as the on-screen
+     system label).
+- **IT SAYS "SYSTEM LABEL" IN WORDS**, on every one. A label that looks like a
+  courier's AWB and is not one gets handed to a courier. With no waybill number
+  the barcode is the ORDER number and the caption says so.
+- **A corrupt attachment falls back to a system label THAT SAYS WHY** rather
+  than dropping the order from the run — a missing label on a bench is noticed;
+  a missing page in a 40-page run is not. So the PLAN (`dry`) can say `carrier`
+  for an order the real run prints as `system`; the real summary is the truth.
+- **`dry: true` answers the PLAN and writes nothing**, so the confirm dialog
+  states the numbers before paper moves: N with the carrier's label, N with the
+  batch PDF, N getting a system label BY ORDER NUMBER, and which of those have
+  no waybill number at all. The real response carries `X-Print-Summary` and is
+  audited `labels_bulk_printed` — counts and the system-labelled order numbers
+  only, never an address.
+- **Fenced by path**: a reference copy in the selection is 409 `referenceOnly`
+  before the route runs (the client filters `reference_only` and `archived`
+  rows out first, so the count on the button is what will print).
+- **Any signed-in user** — WAREHOUSE's reduced bulk bar carries 🖨 Print
+  Waybills beside 🏷 Carton Labels; the floor prints labels. Cap
+  `PRINT_LABELS_MAX` (300) per run. `size` is the user's Printer Settings label
+  size (`100x150` default; carrier pages keep their own size).
+- pdf-lib's standard fonts are WinAnsi only: `_pdfSafe` turns a character
+  outside that range into `?` (a Chinese customer name prints as `???`) rather
+  than throwing mid-run. HONEST LIMIT: no CJK font is bundled; embedding one is
+  the fix if that name matters on paper.
+- `authPrintPdf(url, init)` now takes a fetch init, so the POSTed PDF prints
+  through the same hidden frame the single-order print uses. The per-order
+  modals (`showPrintOrderLabelModal` / `showPrintWaybillModal`) still serve the
+  completion flow and the row click; only the bulk path changed.
+
+Verified 39 API checks (`bulk-print-e2e.js`: the plan per source, selection
+order kept, a two-parcel order contributing both pages, the batch PDF page, the
+system label's text — waybill/order/GI/client/channel/pieces/items, the
+no-waybill wording, a 30-line order counting the overflow, the corrupt
+attachment's note, the CJK name as `?`, page size by preference and the
+fallback size, the reference copy fenced naming only the copy, empty/301/all-
+missing/no-token refusals, warehouse printing, a duplicate number printing
+once, the audit row with no address) plus 32 browser checks on desktop as admin
+and a Pixel 5 as warehouse (`br-bulk-print.js`: the button's count, the reduced
+bar, the confirm's exact wording, declining sending only the plan request and
+printing nothing, accepting sending the real request with the size and putting
+ONE blob in the print frame, no per-order modal, no sideways scroll). The three
+system-label pages were rendered to PNG and read by eye.
+
 ## Label PDFs — one pipeline for staff uploads AND client submissions
 
 `processLabelPdf(buffer, filename, uploadedBy)` is the single implementation:

@@ -15,7 +15,7 @@ const zlib       = require('zlib');
 const XLSX       = require('xlsx');
 const nodemailer = require('nodemailer');
 const mysql      = require('mysql2/promise');
-const { PDFDocument, PDFName, PDFRawStream, PDFArray, decodePDFRawStream } = require('pdf-lib');
+const { PDFDocument, PDFName, PDFRawStream, PDFArray, decodePDFRawStream, StandardFonts, rgb: pdfRgb } = require('pdf-lib');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch {}
 let extractLabelFields;
@@ -17294,6 +17294,253 @@ app.post('/api/master/orders/mass-complete', (req, res) => {
   }
   logAudit('orders_mass_completed', { count: completed.length, orders: completed.slice(0, 100), refused: refused.slice(0, 30), by: who });
   res.json({ ok: true, completed, refused });
+});
+
+// ── PRINT THE WAYBILL LABELS FOR A SELECTION, IN ONE RUN ───────────────────
+// Per the user: select several orders and print their waybill labels together
+// instead of one dialog per order — and an order with NO carrier label gets a
+// SYSTEM label in its place, so nothing in the selection comes out blank.
+//
+// ONE DOCUMENT, in selection order, one source per order, first that exists:
+//   1. the carrier label(s) attached to the order (`db.orderLabels`, every
+//      parcel — the same pages `/api/order-label/:n/pdf` serves);
+//   2. the waybill PDF uploaded with the batch (`WAYBILL_DIR/<batch>/<n>.pdf`,
+//      what `has_waybill_pdf` means);
+//   3. a system label drawn here — barcode of the waybill number (or, with no
+//      waybill yet, of the order number, and it SAYS so), customer, address,
+//      order/GI/client/pieces and the items. Marked "SYSTEM LABEL" in words,
+//      because a label that looks like a courier's AWB and is not one would
+//      be handed to a courier.
+// A page that cannot be read (a corrupt attachment) falls back to the system
+// label rather than dropping the order from the run — a missing label on a
+// bench is noticed; a missing page in a 40-page run is not.
+// `dry: true` answers with the PLAN and writes nothing, so the confirm dialog
+// can state how many carrier labels and how many system labels are coming.
+// Fenced by path: a reference copy in the selection is refused 409 before
+// this runs. Any signed-in user — the floor prints labels.
+const PRINT_LABELS_MAX = 300;
+const LABEL_PAGE_PT = { '100x160': [283.46, 453.54], '100x150': [283.46, 425.2], '4x6': [288, 432] };
+const _mmPt = v => v * 72 / 25.4;
+// pdf-lib's standard fonts are WinAnsi only — a character outside it throws
+// mid-draw. Replaced with '?' rather than dropped, so a name that could not
+// be printed reads as "could not be printed" and not as a different name.
+function _pdfSafe(s) { return String(s ?? '').replace(/[^\x20-\x7E\xA0-\xFF]/g, '?').replace(/\s+/g, ' ').trim(); }
+function _wrapPdfText(text, font, size, maxW) {
+  const out = [];
+  for (const para of _pdfSafe(text).split(/\n/)) {
+    let line = '';
+    for (const word of para.split(' ')) {
+      const next = line ? line + ' ' + word : word;
+      if (font.widthOfTextAtSize(next, size) <= maxW || !line) line = next;
+      else { out.push(line); line = word; }
+    }
+    if (line) out.push(line);
+  }
+  // A single token wider than the box (a long tracking number) is broken by character.
+  return out.flatMap(l => {
+    if (font.widthOfTextAtSize(l, size) <= maxW) return [l];
+    const parts = []; let cur = '';
+    for (const ch of l) { if (font.widthOfTextAtSize(cur + ch, size) > maxW && cur) { parts.push(cur); cur = ch; } else cur += ch; }
+    if (cur) parts.push(cur);
+    return parts;
+  });
+}
+function _hexRgb(hex, fallback) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return fallback;
+  const n = parseInt(m[1], 16);
+  return pdfRgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+}
+async function drawSystemLabelPage(doc, fonts, { order, batch, size, template, note }) {
+  const [W, H] = LABEL_PAGE_PT[size] || LABEL_PAGE_PT['100x150'];
+  const page = doc.addPage([W, H]);
+  const { bold, reg } = fonts;
+  const M = _mmPt(3), innerW = W - 2 * M;
+  const black = pdfRgb(0, 0, 0), grey = pdfRgb(0.33, 0.33, 0.33), light = pdfRgb(0.85, 0.85, 0.85);
+  let y = H - M;
+  const text = (s, x, yy, sz, f = reg, color = black) => page.drawText(_pdfSafe(s), { x, y: yy, size: sz, font: f, color });
+  const centred = (s, yy, sz, f, color) => text(s, (W - f.widthOfTextAtSize(_pdfSafe(s), sz)) / 2, yy, sz, f, color);
+  const rightAligned = (s, xr, yy, sz, f, color) => text(s, xr - f.widthOfTextAtSize(_pdfSafe(s), sz), yy, sz, f, color);
+
+  // Header bar — the carrier (or the saved template's wording) white on black,
+  // same as the on-screen system label.
+  const carrier = String(order.carrier || '').trim();
+  const headerText = (template && (template.header_text || template.carrier)) || carrier || 'IDEALONE';
+  const headerBg = _hexRgb(template && template.header_bg, black);
+  const headerFg = _hexRgb(template && template.header_color, pdfRgb(1, 1, 1));
+  const hh = _mmPt(11);
+  page.drawRectangle({ x: M, y: y - hh, width: innerW, height: hh, color: headerBg });
+  centred(headerText.toUpperCase().slice(0, 28), y - hh + _mmPt(3.4), 16, bold, headerFg);
+  y -= hh + _mmPt(1.5);
+  // SAID IN WORDS. This is not the courier's AWB.
+  centred(note || 'SYSTEM LABEL - no carrier label attached to this order', y - 7, 7, bold, grey);
+  y -= _mmPt(4);
+
+  // Barcode box — the waybill when there is one; the order number, labelled as
+  // such, when there is not. A blank box would be a label nobody can scan.
+  const waybill = String(order.waybill_number || '').trim();
+  const bcValue = waybill || String(order.order_number || '');
+  const bh = _mmPt(24);
+  page.drawRectangle({ x: M, y: y - bh, width: innerW, height: bh, borderColor: black, borderWidth: 0.8 });
+  let barcodeDrawn = false;
+  if (bwipjs && bcValue) {
+    try {
+      const png = await bwipjs.toBuffer({ bcid: 'code128', text: bcValue, scale: 3, height: 12, includetext: false });
+      const img = await doc.embedPng(png);
+      const maxW = innerW - _mmPt(6), maxH = _mmPt(13);
+      const sc = Math.min(maxW / img.width, maxH / img.height);
+      const iw = img.width * sc, ih = img.height * sc;
+      page.drawImage(img, { x: (W - iw) / 2, y: y - _mmPt(2.5) - ih, width: iw, height: ih });
+      barcodeDrawn = true;
+    } catch (e) { console.warn('[print-labels] barcode failed:', e.message); }
+  }
+  if (!barcodeDrawn) centred('(barcode unavailable)', y - _mmPt(9), 8, reg, grey);
+  centred(bcValue, y - bh + _mmPt(5.2), 10, bold);
+  centred(waybill ? 'WAYBILL' : 'ORDER NO - no waybill number on this order yet', y - bh + _mmPt(1.6), 6, bold, grey);
+  y -= bh + _mmPt(2);
+
+  const showAddress = !template || template.show_address !== false;
+  const showTel     = !template || template.show_tel     !== false;
+  const showItems   = !template || template.show_items   !== false;
+  const showPlatform= !template || template.show_platform!== false;
+
+  // Deliver To
+  if (showAddress) {
+    const name = String(order.customer_name || '').trim() || '-';
+    const addrLines = _wrapPdfText(order.delivery_address || '-', reg, 8.5, innerW - _mmPt(5)).slice(0, 4);
+    const tel = showTel ? String(order.tel || '').trim() : '';
+    const boxH = _mmPt(3) + 12 + addrLines.length * 11 + (tel ? 10 : 0) + _mmPt(3.5);
+    page.drawRectangle({ x: M, y: y - boxH, width: innerW, height: boxH, borderColor: black, borderWidth: 0.8 });
+    let yy = y - _mmPt(2.6);
+    text('DELIVER TO', M + _mmPt(2.5), yy - 4, 6, bold, grey); yy -= 12;
+    text(_wrapPdfText(name, bold, 12, innerW - _mmPt(5))[0] || '-', M + _mmPt(2.5), yy - 4, 12, bold); yy -= 13;
+    for (const l of addrLines) { text(l, M + _mmPt(2.5), yy - 4, 8.5, reg); yy -= 11; }
+    if (tel) text('Tel: ' + tel, M + _mmPt(2.5), yy - 4, 8, reg, grey);
+    y -= boxH + _mmPt(2);
+  }
+
+  // Order reference block — two columns; only the identifiers the order has.
+  const gi = String(order.issue_no || '').trim();
+  const pieces = (order.lines || []).reduce((s, l) => s + (Number(l.qty) || 0), 0);
+  const platform = order.platform ? (order.shop_name ? `${order.platform} / ${order.shop_name}` : order.platform) : (order.shop_name || '');
+  const rows = [['ORDER NO', order.order_number]];
+  if (gi && gi !== order.order_number) rows.push(['GI NO', gi]);
+  if (batch && batch.client_name) rows.push(['CLIENT', batch.client_name]);
+  if (showPlatform && platform) rows.push(['CHANNEL', platform]);
+  if (order.po_number) rows.push(['PO NO', order.po_number]);
+  rows.push(['PIECES', String(pieces)]);
+  rows.push(['PRINTED', new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })]);
+  const colW = innerW / 2, rowH = 20, nRows = Math.ceil(rows.length / 2);
+  const refH = nRows * rowH + _mmPt(2.5);
+  page.drawRectangle({ x: M, y: y - refH, width: innerW, height: refH, borderColor: black, borderWidth: 0.8 });
+  rows.forEach((r, i) => {
+    const cx = M + _mmPt(2.5) + (i % 2) * colW, cy = y - _mmPt(1.5) - Math.floor(i / 2) * rowH;
+    text(r[0], cx, cy - 6, 5.5, bold, grey);
+    const valSz = i === 0 ? 10 : 8.5;
+    text(_wrapPdfText(r[1], i === 0 ? bold : reg, valSz, colW - _mmPt(4))[0] || '', cx, cy - 6 - valSz - 2.5, valSz, i === 0 ? bold : reg);
+  });
+  y -= refH + _mmPt(2);
+
+  // Items — what fits; the rest is counted, never silently cut.
+  if (showItems) {
+    const lines = order.lines || [];
+    const avail = y - M - _mmPt(4);
+    const maxRows = Math.max(0, Math.floor((avail - 14) / 10));
+    const shown = lines.slice(0, lines.length > maxRows ? Math.max(0, maxRows - 1) : maxRows);
+    let yy = y - 2;
+    text('SKU / ITEM', M + _mmPt(1), yy - 6, 6, bold, grey);
+    rightAligned('QTY', W - M - _mmPt(1), yy - 6, 6, bold, grey);
+    yy -= 9;
+    page.drawLine({ start: { x: M, y: yy }, end: { x: W - M, y: yy }, thickness: 0.6, color: black });
+    for (const l of shown) {
+      yy -= 10;
+      const desc = String(l.description || '').trim();
+      const cell = _wrapPdfText(desc && desc !== l.sku ? `${l.sku}  ${desc}` : String(l.sku), reg, 7.5, innerW - _mmPt(14))[0] || '';
+      text(cell, M + _mmPt(1), yy - 1, 7.5, reg);
+      rightAligned(String(l.qty ?? ''), W - M - _mmPt(1), yy - 1, 8, bold);
+      page.drawLine({ start: { x: M, y: yy - 3.5 }, end: { x: W - M, y: yy - 3.5 }, thickness: 0.3, color: light });
+    }
+    if (lines.length > shown.length) { yy -= 10; text(`+ ${lines.length - shown.length} more line(s) - see the pick list`, M + _mmPt(1), yy - 1, 7, reg, grey); }
+  }
+  // Footer: the order number once more, small, so a trimmed label still says whose it is.
+  text(`Order ${order.order_number}`, M, M - 2, 6, reg, grey);
+  rightAligned('IdealOne system label', W - M, M - 2, 6, reg, grey);
+}
+
+async function buildBulkLabelPdf(db, orderNumbers, { size, dry } = {}) {
+  const doc = dry ? null : await PDFDocument.create();
+  const fonts = dry ? null : { bold: await doc.embedFont(StandardFonts.HelveticaBold), reg: await doc.embedFont(StandardFonts.Helvetica) };
+  const templates = readLabelTemplates();
+  const tplFor = carrier => (templates || []).find(t => String(t.carrier || '').toLowerCase() === String(carrier || '').toLowerCase()) || null;
+  const plan = [];
+  const copyPdf = async (buf) => {
+    const src = await PDFDocument.load(buf, { ignoreEncryption: true });
+    const copied = await doc.copyPages(src, src.getPageIndices());
+    copied.forEach(p => doc.addPage(p));
+    return copied.length;
+  };
+  for (const n of orderNumbers) {
+    const batch = findBatchForOrder(db, n);
+    const order = batch && (batch.orders || []).find(o => o.order_number === n);
+    if (!batch || !order) { plan.push({ order: n, source: 'missing', pages: 0, why: 'not on the live order list (deleted or archived)' }); continue; }
+    if (isReferenceBatch(batch)) { plan.push({ order: n, source: 'reference', pages: 0, why: 'a channel reference copy is never labelled' }); continue; }
+    const ref = (db.orderLabels || {})[n];
+    const wbFile = path.join(WAYBILL_DIR, batch.id, `${n}.pdf`);
+    let entry = null, carrierWhy = '';
+    if (ref && labelPagesOf(ref).some(p => fs.existsSync(path.join(LABEL_IMPORT_DIR, p.importId, p.pageFile)))) {
+      const parcels = labelPagesOf(ref).length;
+      if (dry) entry = { order: n, source: 'carrier', pages: parcels, parcels };
+      else {
+        try { const buf = await mergedLabelPdf(ref); entry = { order: n, source: 'carrier', pages: await copyPdf(buf), parcels }; }
+        catch (e) { console.warn('[print-labels] carrier label unreadable for', n, e.message); entry = null; carrierWhy = 'the attached carrier label could not be read'; }
+      }
+    }
+    if (!entry && fs.existsSync(wbFile)) {
+      if (dry) entry = { order: n, source: 'waybill-pdf', pages: 1 };
+      else {
+        try { entry = { order: n, source: 'waybill-pdf', pages: await copyPdf(fs.readFileSync(wbFile)) }; }
+        catch (e) { console.warn('[print-labels] batch waybill unreadable for', n, e.message); entry = null; }
+      }
+    }
+    if (!entry) {
+      const why = carrierWhy;
+      entry = { order: n, source: 'system', pages: 1, waybill: String(order.waybill_number || '').trim(), why };
+      if (!dry) await drawSystemLabelPage(doc, fonts, { order, batch, size, template: tplFor(order.carrier), note: why ? 'SYSTEM LABEL - ' + why : '' });
+    }
+    plan.push(entry);
+  }
+  const summary = {
+    orders: orderNumbers.length,
+    carrier:    plan.filter(p => p.source === 'carrier').length,
+    waybillPdf: plan.filter(p => p.source === 'waybill-pdf').length,
+    system:     plan.filter(p => p.source === 'system').length,
+    missing:    plan.filter(p => p.source === 'missing' || p.source === 'reference').length,
+    pages:      plan.reduce((s, p) => s + (p.pages || 0), 0),
+  };
+  return { plan, summary, pdf: dry || !summary.pages ? null : Buffer.from(await doc.save()) };
+}
+
+app.post('/api/orders/print-labels', express.json(), async (req, res) => {
+  const wanted = [...new Set((Array.isArray(req.body?.orders) ? req.body.orders : []).map(v => String(v ?? '').trim()).filter(Boolean))];
+  if (!wanted.length) return res.status(400).json({ error: 'No orders listed' });
+  if (wanted.length > PRINT_LABELS_MAX) return res.status(400).json({ error: `At most ${PRINT_LABELS_MAX} orders per print run (${wanted.length} selected)` });
+  const size = LABEL_PAGE_PT[req.body?.size] ? req.body.size : '100x150';
+  const dry = req.body?.dry === true || req.body?.dry === 'yes';
+  try {
+    const db = readDb();
+    const { plan, summary, pdf } = await buildBulkLabelPdf(db, wanted, { size, dry });
+    if (dry) return res.json({ ok: true, plan, summary, size });
+    if (!pdf) return res.status(404).json({ error: 'None of the selected orders is on the live order list, so there is nothing to print.', plan, summary });
+    // Counts only — never an address, never a label URL — on the trail.
+    logAudit('labels_bulk_printed', { by: req.userId || _tokenUserId(req) || '', size, ...summary, systemFor: plan.filter(p => p.source === 'system').map(p => p.order).slice(0, 100) });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="waybill_labels_${summary.orders}_orders.pdf"`);
+    res.setHeader('X-Print-Summary', encodeURIComponent(JSON.stringify(summary)));
+    res.end(pdf);
+  } catch (err) {
+    console.error('[print-labels]', err);
+    res.status(500).json({ error: 'Could not build the label run: ' + err.message });
+  }
 });
 
 // ── "THESE ARE NOT OURS TO FULFIL" — the sticky way to say it ──────────────
