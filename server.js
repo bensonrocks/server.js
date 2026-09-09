@@ -7414,7 +7414,11 @@ function safeLabelKey(orderNumber) {
 function attachLabelPage(db, orderNumber, entry) {
   if (!db.orderLabels) db.orderLabels = {};
   orderNumber = safeLabelKey(orderNumber);
-  if (!orderNumber) return 'refused';
+  // The literal comparisons are repeated HERE, at the assignment site, on
+  // purpose: CodeQL's prototype-pollution query recognises them as a
+  // sanitiser only in the same function as the write (a Set lookup in a
+  // helper left all three assignments flagged — measured on the PR run).
+  if (!orderNumber || orderNumber === '__proto__' || orderNumber === 'constructor' || orderNumber === 'prototype') return 'refused';
   const ref = Object.prototype.hasOwnProperty.call(db.orderLabels, orderNumber) ? db.orderLabels[orderNumber] : null;
   const same = p => p.importId === entry.importId && p.pageIndex === entry.pageIndex;
   if (!ref) { db.orderLabels[orderNumber] = { ...entry }; return 'primary'; }
