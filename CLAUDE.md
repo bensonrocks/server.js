@@ -3052,6 +3052,54 @@ and none of the three references, no sideways scroll). Regressions:
 TEST GOTCHA: `.log-review-labels` is the UPLOAD tab's review button; on the
 Labels tab the whole `.label-history-item` row is the click target.
 
+#### THE RING FENCE — a reference copy is written by the pull and by nothing else
+
+Per the user, after the above: *"dont let this happen again. how do I ring
+fence to prevent such occurrence in future."* The label fix guarded ONE reader
+(the match index). A guard at a reader is a guard the next writer forgets, so
+the fence now sits where it cannot be forgotten — at the path and at the writer
+— and a test in the repo bites when either is removed.
+
+- **`referenceOnlyOrder(db, n)`** is the ONE question: is this number held by a
+  reference copy and by no work order. `findBatchForOrder` prefers the work
+  batch, so a number with a work order is never fenced. **`workOrderForReference
+  (db, ref)`** is its partner: the work order sharing the copy's waybill.
+- **THE ROUTE FENCE** (`referenceOrderFence`, `app.use`d right behind the auth
+  gate): every POST/DELETE under `/api/scan/`, `/api/orders/` and `/api/waves`
+  is read for the order numbers it names — `orderNumber`, `orders[]`,
+  `order_numbers[]`, `targets[]`, the `:orderNumber` in the path — and refused
+  409 `referenceOnly` (audited `reference_order_fenced`) when any is a
+  reference-only number. A mixed bulk call is refused naming only the copies.
+  **A route added tomorrow is fenced by its path** and has to opt OUT
+  (`_REF_FENCE_EXEMPT`: `intake`, `backfill-gi` — the two that legitimately
+  create or heal orders). Cheap: it returns before `readDb` when the request
+  names no order, and before any lookup when no reference batch exists.
+- **THE WRITER FENCE**: `attachLabelPage` returns `'reference'` for a reference
+  number, so a label cannot be filed on a copy by import, rematch, re-home,
+  manual match, CSV or a fetch-for-order — whichever caller asked and whatever
+  the matcher said. Every caller treats it as unmatched with the reason.
+- **A LABEL FETCHED FOR A REFERENCE COPY** (OneCart's auto-label at intake asks
+  by the marketplace number) is redirected to the work order sharing its
+  waybill (`fetched-for-order_of_reference_copy`); with no work order yet it is
+  left unmatched with the reason (`sync_label_for_reference_unplaced`) for the
+  late-orders sweep, never blind-attached to the copy.
+- **`npm test` — `test/reference-fence.test.js`**, `node:test`, no extra
+  dependencies. Boots the REAL server on a scratch data dir seeded with one
+  reference copy and one work order sharing its waybill, and proves the
+  re-home at boot, eleven fenced routes, a mixed bulk call, the work order
+  passing through, the hand-match refusal, and a silent second boot. Runs in
+  ~30s. `IDEALONE_SERVER=<path>` points it at another build: **against
+  `f2b1cbd` (pre-fix) it fails 5 of 6, against `a69e23d` (label fix, no fence)
+  it fails the two route-fence cases** — so it measures the fence, not just
+  the fix. `.github/workflows/test.yml` runs it on every push and PR; the
+  branch deploys regardless, so a red run means "do not deploy", not "cannot".
+- **THE RULE FOR ANY NEW RECORD KIND THAT IS "NOT WORK"**: give it a flag on
+  the batch, one predicate, and put the refusal at the gate and at the writer.
+  Never at the screen alone, and never only in the index a reader consults.
+
+Verified 6 in-repo checks (above), plus the 30 + 32 + 50 label/reference
+suites re-run green after the fence went in.
+
 ## Client Portal — read-only self-service for 3PL clients (/portal)
 
 `public/portal.html` + `portal.js`, served at `GET /portal`. Same architecture

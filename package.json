@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "audit": "npm audit --omit=dev",
     "audit:report": "npm audit --omit=dev --json > audit-report.json || true",
-    "postinstall": "playwright install chromium || echo \"chromium not installed - the ZORT web-label worker will report itself unavailable\""
+    "postinstall": "playwright install chromium || echo \"chromium not installed - the ZORT web-label worker will report itself unavailable\"",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.2",

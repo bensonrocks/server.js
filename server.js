@@ -3588,6 +3588,79 @@ function refuseReferenceOrder(batch, res) {
   });
   return true;
 }
+// ── THE FENCE ───────────────────────────────────────────────────────────────
+// A reference copy is written by the OneCart pull and by NOTHING ELSE. These
+// two helpers are the fence every writer stands behind:
+//   referenceOnlyOrder(db, n)  — the number is held by a reference copy and by
+//                                no work order (null otherwise). Since
+//                                findBatchForOrder prefers the work batch, a
+//                                number with a work order is never fenced.
+//   workOrderForReference(db, ref) — the work order that shares the copy's
+//                                waybill, i.e. where a label, a scan or a
+//                                completion aimed at the copy really belongs.
+// The route fence (referenceOrderFence, at the auth gate) refuses every
+// mutating /api/scan, /api/orders and /api/waves call naming a reference-only
+// number, and attachLabelPage refuses at the writer — so a route added
+// tomorrow is fenced by its path, and a label can never be filed on a copy
+// whichever path tries. Reported from the floor as "waybill not come out
+// while scanning" when only the index guarded it; this is what "do not let
+// it happen again" means in code.
+function referenceOnlyOrder(db, orderNumber) {
+  if (!orderNumber) return null;
+  const b = findBatchForOrder(db, String(orderNumber));
+  return b && isReferenceBatch(b) ? b : null;
+}
+function workOrderForReference(db, refOrder) {
+  const wb = normStr(refOrder && refOrder.waybill_number);
+  if (!wb) return null;
+  for (const batch of db.batches || []) {
+    if (isReferenceBatch(batch)) continue;
+    const order = (batch.orders || []).find(o => normStr(o.waybill_number) === wb);
+    if (order) return { batch, order };
+  }
+  return null;
+}
+// Every order number a mutating request names, wherever the route keeps it.
+const _REF_FENCE_EXEMPT = new Set(['/api/orders/intake', '/api/orders/backfill-gi']);
+function _orderNumbersNamed(req) {
+  const out = new Set();
+  const add = v => { if (typeof v === 'string' || typeof v === 'number') { const s = String(v).trim(); if (s) out.add(s); } };
+  const m = req.path.match(/^\/api\/orders\/([^/]+)\/(refile|waybill-now)$/);
+  if (m) { try { add(decodeURIComponent(m[1])); } catch { add(m[1]); } }
+  const b = req.body && typeof req.body === 'object' ? req.body : {};
+  add(b.orderNumber); add(b.order_number);
+  for (const list of [b.orders, b.order_numbers, b.targets]) {
+    if (!Array.isArray(list)) continue;
+    for (const x of list.slice(0, 2000)) {
+      if (x && typeof x === 'object') { add(x.orderNumber); add(x.order_number); }
+      else add(x);
+    }
+  }
+  return [...out];
+}
+function referenceOrderFence(req, res, next) {
+  if (req.method !== 'POST' && req.method !== 'DELETE') return next();
+  const p = req.path;
+  if (!(p.startsWith('/api/scan/') || p.startsWith('/api/orders/') || p === '/api/waves' || p.startsWith('/api/waves/'))) return next();
+  if (_REF_FENCE_EXEMPT.has(p)) return next();
+  let fenced = [];
+  try {
+    const numbers = _orderNumbersNamed(req);
+    if (!numbers.length) return next();
+    const db = readDb();
+    if (!(db.batches || []).some(isReferenceBatch)) return next();   // nothing to fence against — the common case
+    fenced = numbers.filter(n => referenceOnlyOrder(db, n));
+  } catch (e) { console.error('[reference-fence]', e.message); return next(); }
+  if (!fenced.length) return next();
+  const client = (referenceOnlyOrder(readDb(), fenced[0]) || {}).client_name || 'the client';
+  try { logAudit('reference_order_fenced', { path: p, orders: fenced.slice(0, 50), count: fenced.length, by: req.userId || _tokenUserId(req) || '' }); } catch (_) {}
+  return res.status(409).json({
+    referenceOnly: true, orders: fenced,
+    error: fenced.length === 1
+      ? `${fenced[0]} is a channel reference record for ${client} (synced from OneCart), not a work order — it is never scanned, cancelled, moved or labelled here. Upload the picking list to process it.`
+      : `${fenced.length} of these are channel reference records for ${client} (synced from OneCart), not work orders: ${fenced.slice(0, 5).join(', ')}${fenced.length > 5 ? '…' : ''}. Deselect them — a reference copy is never scanned, cancelled, moved or labelled here.`,
+  });
+}
 // Takes the work ORDER (or just its number). The twin is the reference holding
 // the SAME NUMBER — or, failing that, the SAME WAYBILL: a GI Analysis upload
 // files the order under its GI number while the channel's copy carries the
@@ -7447,6 +7520,10 @@ function attachLabelPage(db, orderNumber, entry) {
   // sanitiser only in the same function as the write (a Set lookup in a
   // helper left all three assignments flagged — measured on the PR run).
   if (!orderNumber || orderNumber === '__proto__' || orderNumber === 'constructor' || orderNumber === 'prototype') return 'refused';
+  // THE WRITER IS THE FENCE. A channel's reference copy is never scanned, so
+  // a label on it never comes out — whichever path asked (import, rematch,
+  // manual, CSV, a fetch for the order). Refused here, not left to callers.
+  if (referenceOnlyOrder(db, orderNumber)) return 'reference';
   const ref = Object.prototype.hasOwnProperty.call(db.orderLabels, orderNumber) ? db.orderLabels[orderNumber] : null;
   const same = p => p.importId === entry.importId && p.pageIndex === entry.pageIndex;
   if (!ref) { db.orderLabels[orderNumber] = { ...entry }; return 'primary'; }
@@ -7992,10 +8069,17 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
     }
 
     if (matchedOrderNumber && matchStatus === 'matched') {
-      attachLabelPage(db, matchedOrderNumber, {
+      const role = attachLabelPage(db, matchedOrderNumber, {
         importId, pageIndex: i, pageFile, tracking: labelTrackingOf({ extracted }) || undefined,
         attachedAt: new Date().toISOString(), attachedBy: uploadedBy,
       });
+      // The writer is the fence: a reference copy (or an unusable key) is
+      // never a label's home, whatever the matcher said.
+      if (role === 'reference' || role === 'refused') {
+        referenceHint = role === 'reference' ? (referenceOnlyHint(extracted, matchIndex) || { field: 'orderNumber', value: matchedOrderNumber, order: matchedOrderNumber, client: (referenceOnlyOrder(db, matchedOrderNumber) || {}).client_name || '' }) : referenceHint;
+        matchedThisImport.delete(matchedOrderNumber);
+        matchStatus = 'unmatched'; matchedOrderNumber = null; matchMethod = null; matchConfidence = null; parcel = false;
+      }
     }
 
     // rawText kept (truncated) so later rematches can reverse-scan without
@@ -8015,20 +8099,45 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
   // …and a page fetched for an order that ALREADY has a label is its second
   // parcel when it carries a different tracking number (TikTok hands back one
   // URL per package), never a silent drop.
-  const _forRef = forOrder ? db.orderLabels[forOrder] : null;
-  if (forOrder && numPages === 1 && pages[0] && pages[0].matchStatus !== 'matched'
+  // …and a label fetched FOR a channel's reference copy (OneCart's auto-label
+  // at intake asks by the marketplace number) belongs to the WORK order that
+  // shares its waybill — the copy itself is never scanned. No work order yet
+  // means no blind attach: the page stays unmatched with the reason, and the
+  // late-orders sweep places it when the picking list arrives.
+  let forTarget = forOrder || null;
+  if (forTarget) {
+    const refBatch = referenceOnlyOrder(db, forTarget);
+    if (refBatch) {
+      const refOrd = (refBatch.orders || []).find(o => o.order_number === forTarget);
+      const work = workOrderForReference(db, refOrd);
+      if (work) { forTarget = work.order.order_number; }
+      else {
+        forTarget = null;
+        if (pages[0] && pages[0].matchStatus !== 'matched') {
+          pages[0].referenceHint = pages[0].referenceHint || { field: 'orderNumber', value: forOrder, order: forOrder, client: refBatch.client_name || '' };
+        }
+        logAudit('sync_label_for_reference_unplaced', { order: forOrder, importId, client: refBatch.client_name || '',
+          why: 'fetched for a channel reference copy and no picking-list order carries its waybill yet' });
+      }
+    }
+  }
+  const _forRef = forTarget ? db.orderLabels[forTarget] : null;
+  if (forTarget && numPages === 1 && pages[0] && pages[0].matchStatus !== 'matched'
       && (!_forRef || isAnotherParcel(_forRef, labelTrackingOf(pages[0])))) {
-    pages[0].matchStatus       = 'matched';
-    pages[0].matchedOrderNumber = forOrder;
-    pages[0].matchMethod       = 'fetched-for-order';
-    if (_forRef) pages[0].parcel = true;
-    attachLabelPage(db, forOrder, {
+    const role = attachLabelPage(db, forTarget, {
       importId, pageIndex: 0, pageFile: pages[0].pageFile, tracking: labelTrackingOf(pages[0]) || undefined,
       attachedAt: new Date().toISOString(), attachedBy: uploadedBy,
       attachedVia: 'fetched-for-order',
     });
-    logAudit('sync_label_attached_by_request', { order: forOrder, importId, parcel: !!_forRef,
-      why: 'fetched from the channel for this order; the text on it did not match' });
+    if (role !== 'refused' && role !== 'reference') {
+      pages[0].matchStatus       = 'matched';
+      pages[0].matchedOrderNumber = forTarget;
+      pages[0].matchMethod       = forTarget === forOrder ? 'fetched-for-order' : 'fetched-for-order_of_reference_copy';
+      if (forTarget !== forOrder) pages[0].referenceHint = { via: true, order: forOrder, client: (referenceOnlyOrder(db, forOrder) || {}).client_name || '' };
+      if (_forRef) pages[0].parcel = true;
+      logAudit('sync_label_attached_by_request', { order: forTarget, importId, parcel: !!_forRef, viaReference: forTarget !== forOrder ? forOrder : undefined,
+        why: 'fetched from the channel for this order; the text on it did not match' });
+    }
   }
 
   const importRecord = {
@@ -8244,6 +8353,7 @@ app.post('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) => {
     attachedAt: new Date().toISOString(), attachedBy: req.userId,
   });
   if (role === 'refused') return res.status(400).json({ error: 'That is not a usable order number' });
+  if (role === 'reference') return res.status(409).json({ referenceOnly: true, error: `${orderNumber} is a channel reference record, not a work order — a label on it would never come out at scanning.` });
   page.parcel = role === 'parcel' || undefined;
   writeDb(db);
   res.json({ ok: true, page, role, labelPages: labelPagesOf(db.orderLabels[orderNumber]).length });
@@ -8304,9 +8414,9 @@ app.post('/api/label-imports/:id/import-matches', requireAuth, labelImportUpload
       importId: imp.id, pageIndex: pageIdx, pageFile: page.pageFile, tracking: labelTrackingOf(page) || undefined,
       attachedAt: new Date().toISOString(), attachedBy: req.userId,
     });
-    if (role === 'refused') {   // cannot happen past the order-exists check above; kept so the page never reads matched to nothing
+    if (role === 'refused' || role === 'reference') {   // cannot happen past the checks above; kept so the page never reads matched to nothing
       page.matchedOrderNumber = null; page.matchStatus = 'unmatched'; page.matchMethod = null;
-      errors.push({ row: excelRow, reason: `Order "${orderNumber}" is not a usable order number` }); continue;
+      errors.push({ row: excelRow, reason: role === 'reference' ? `Order ${orderNumber} is a channel reference record, not a work order` : `Order "${orderNumber}" is not a usable order number` }); continue;
     }
     page.parcel = role === 'parcel' || undefined;
     usedInThisImport.add(orderNumber);
@@ -8476,10 +8586,15 @@ async function rematchLabelImport(id, rematchAll) {
         page.matchMethod        = method;
         page.matchConfidence    = found.confidence;
         page.parcel             = anotherParcel || undefined;
-        attachLabelPage(db, hit, {
+        const role = attachLabelPage(db, hit, {
           importId: id, pageIndex: page.pageIndex, pageFile: page.pageFile, tracking: tracking || undefined,
           attachedAt: new Date().toISOString(), attachedBy: 'auto-match',
         });
+        if (role === 'reference' || role === 'refused') {   // the writer is the fence — never on a reference copy
+          page.matchedOrderNumber = null; page.matchStatus = 'unmatched'; page.matchMethod = null; page.matchConfidence = null; page.parcel = undefined;
+          page.referenceHint = role === 'reference' ? (referenceOnlyHint(page.extracted, matchIndex) || { field: 'orderNumber', value: hit, order: hit, client: (referenceOnlyOrder(db, hit) || {}).client_name || '' }) : undefined;
+          continue;
+        }
         if (anotherParcel) held.trackings.add(tracking);
         else matchedInImport.set(hit, { pageIndex: page.pageIndex, confidence: found.confidence, trackings: new Set(tracking ? [tracking] : []) });
         newMatches++;
@@ -8539,7 +8654,7 @@ function rehomeReferenceLabels(db, trigger) {
           importId: imp.id, pageIndex: page.pageIndex, pageFile: page.pageFile, tracking: labelTrackingOf(page) || undefined,
           attachedAt: new Date().toISOString(), attachedBy: 'reference-rehome',
         });
-        if (role !== 'refused') {
+        if (role !== 'refused' && role !== 'reference') {
           page.matchedOrderNumber = found.hit; page.matchStatus = 'matched';
           page.matchMethod = found.method; page.matchConfidence = found.confidence;
           page.parcel = role === 'parcel' || undefined; page.candidates = null;
@@ -9512,6 +9627,10 @@ app.use((req, res, next) => {
   if (req.headers['x-api-key']) return apiKeyAuth(req, res, next);
   requireAuth(req, res, next);
 });
+// A channel's reference copy is never work. Fenced by PATH, right behind the
+// auth gate, so every mutating scan / orders / waves route — present and
+// future — refuses a reference-only number without having to remember to.
+app.use(referenceOrderFence);
 
 // ── WHAT AN API KEY MAY DO ──────────────────────────────────────────────────
 // Path → the scope required to call it. Checked longest-prefix-first, and a

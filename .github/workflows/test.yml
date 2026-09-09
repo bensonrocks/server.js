@@ -1,0 +1,38 @@
+name: Tests (reference-record fence)
+
+# The invariants that must never regress, run against the REAL server on every
+# push and pull request. Today that is the reference-record fence: a channel's
+# reference copy (OneCart → Betime Online) is never scanned, cancelled, moved
+# or labelled, and a label filed on one is moved onto the work order at boot.
+# A red run here blocks nothing by itself — the branch deploys straight to
+# Railway — so treat a failure as "do not deploy", and read the job log.
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+      - master
+      - claude/ecommerce-order-dashboard-cxMNo
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The suite drives the API only; no browser is launched, so the
+      # postinstall Chromium download is skipped to keep the job quick.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild better-sqlite3 sharp
+      - run: npm test
