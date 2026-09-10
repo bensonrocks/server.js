@@ -38,7 +38,11 @@ Suites live in `test/` from Week 1 onward. `npm test` runs all of them.
   `test/browser/`, rewrite absolute paths to `path.join(__dirname, …)`,
   give each its own port and data dir, and add an `npm run test:e2e` and
   `npm run test:browser` script. Add both to `.github/workflows/test.yml`.
-  Done when: CI runs them and is green.
+  Delete the one-off diagnostics named in `test/legacy/README.md`. Adding
+  `test/legacy/` raised CodeQL on PR #15 by ONE medium alert (181 → 182,
+  commit `bb5815b`) — it is in a test or mock script; find it on the PR's
+  Security tab and fix or delete that script while wiring. Done when: CI
+  runs the suites and is green, and CodeQL is back at the 181 baseline.
 - [ ] **W2 · Boot smoke test + size guard.** `test/smoke.test.js`: boot on a
   scratch dir, log in as demo, hit 25 core routes (orders, upload preview,
   scan increment/complete, inbound list, putaway queue, labels list,
