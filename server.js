@@ -2420,14 +2420,41 @@ function getDefaultRecipient() {
 const _pendingOAuthStates = new Map();
 
 // ── Email ───────────────────────────────────────────────────────────────────
+// IS EMAIL SET UP AT ALL? Answered from a 60s cache rather than re-reading two
+// config files, and said ONCE per boot rather than once per order. Seen on the
+// live Railway log: "Completion alert for <order> skipped — email not
+// configured" on EVERY completed order, at error severity, for a feature that
+// was simply switched off — the noise that buried the one real error beside
+// it (a ZORT pull timing out). Each of those also cost an extra full db.json
+// write to stamp `alert_email_sent: false`, and painted a red ⚠ + Resend on
+// every completed row for admins, as though every email had failed.
+let _emailCfg = { at: 0, ok: false };
+function emailConfigured() {
+  if (Date.now() - _emailCfg.at < 60000) return _emailCfg.ok;
+  const ok = !!(buildTransporter() && getFromEmail() && getDefaultRecipient());
+  _emailCfg = { at: Date.now(), ok };
+  return ok;
+}
+function forgetEmailConfig() { _emailCfg = { at: 0, ok: false }; }
+let _saidEmailOff = false;
+function noteEmailOff(what) {
+  if (_saidEmailOff) return;
+  _saidEmailOff = true;
+  console.log(`[IdealOne] ${what} — no email is configured (Administrator → Email Settings). Said once; not repeated per order.`);
+}
+// Said at boot, so the log carries the fact exactly once instead of on every
+// completed order.
+setTimeout(() => { try { if (!emailConfigured()) noteEmailOff('Completion alert emails are off'); } catch (_) {} }, 3000).unref?.();
+
 async function sendCompletionAlert(orderNumber, ord, operator) {
+  if (!emailConfigured()) {
+    noteEmailOff('Completion alert emails are off');
+    return { sent: false, reason: 'not_configured' };
+  }
   const transporter = buildTransporter();
   const fromEmail   = getFromEmail();
   const toEmail     = getDefaultRecipient();
-  if (!transporter || !fromEmail || !toEmail) {
-    console.warn(`[IdealOne] Completion alert for ${orderNumber} skipped — email not configured.`);
-    return { sent: false, reason: 'not_configured' };
-  }
+  if (!transporter || !fromEmail || !toEmail) return { sent: false, reason: 'not_configured' };
   const opLine = operator ? `Operator: ${operator}\n` : '';
   await transporter.sendMail({
     from: fromEmail, to: toEmail,
@@ -3081,7 +3108,9 @@ function globalOrdersWithState(keep) {
         operator:          state.operator          || null,
         keyfields_closed:  state.keyfields_closed  || false,
         claimed_by:        claimHolder(state),
-        alert_email_sent:  state.alert_email_sent  ?? null,
+        // `false` with no error is the old "email not configured" stamp —
+        // not a failed email, so no ⚠ / Resend on the row. Healed on read.
+        alert_email_sent:  (state.alert_email_sent === false && !state.alert_email_error) ? null : (state.alert_email_sent ?? null),
         alert_email_error: state.alert_email_error || null,
         batchId:           batch.id,
         client_name:       batch.client_name       || '',
@@ -17258,7 +17287,9 @@ app.post('/api/scan/complete', (req, res) => {
   if (holder) return res.status(409).json({ error: `Order is being packed by ${holder} at another station.` });
   if (!mismatches.length) {
     completeOrderCore(db, batch, ord, state, { startTime, endTime, operator });
-    sendCompletionAlert(orderNumber, ord, operator).then(result => {
+    // With no email configured there is nothing to send, nothing to stamp and
+    // nothing to write — the row simply carries no email indicator.
+    if (emailConfigured()) sendCompletionAlert(orderNumber, ord, operator).then(result => {
       const db2    = readDb();
       const batch2 = findBatchForOrder(db2, orderNumber);
       if (batch2) {
@@ -18180,7 +18211,9 @@ app.post('/api/scan/resend-completion-alert', async (req, res) => {
   const ord = batch.orders.find(o => o.order_number === orderNumber);
   const state = (batch.orderStates || {})[orderNumber] || {};
   try {
-    await sendCompletionAlert(orderNumber, ord, state.operator);
+    const result = await sendCompletionAlert(orderNumber, ord, state.operator);
+    // A resend with no email configured used to stamp the order as SENT.
+    if (!result || !result.sent) return res.status(400).json({ error: 'Email is not configured — add it under Administrator → Email Settings first.' });
     if (!batch.orderStates) batch.orderStates = {};
     const s = batch.orderStates[orderNumber] || {};
     s.alert_email_sent  = true;
@@ -25586,7 +25619,7 @@ setInterval(async () => {
       const last = store.lastPullAt ? new Date(store.lastPullAt).getTime() : 0;
       if (Date.now() - last < store.autoPullMinutes * 60000) continue;
       try { await pullZortStore(db, store); }
-      catch (e) { console.error(`[zort] auto-pull failed (${store.clientName}):`, e.message); }
+      catch (e) { console.error(`[zort] auto-pull failed (${store.clientName || store.storename || store.id}):`, e.message); }
     }
   } catch (e) { console.error('[zort] scheduler error:', e.message); }
   finally { _zortPulling = false; }
@@ -26420,6 +26453,7 @@ app.post('/api/master/email-config', (req, res) => {
     to_email:    (to_email || '').trim(),
   };
   fs.writeFileSync(EMAIL_CONFIG_FILE, JSON.stringify(updated, null, 2));
+  forgetEmailConfig();
   res.json({ ok: true });
 });
 
@@ -26446,6 +26480,7 @@ app.post('/api/master/email-config/test', async (req, res) => {
 app.delete('/api/master/email-config', (req, res) => {
   if (!checkMaster(req, res)) return;
   try { fs.unlinkSync(EMAIL_CONFIG_FILE); } catch {}
+  forgetEmailConfig();
   res.json({ ok: true });
 });
 
@@ -26538,6 +26573,7 @@ app.get('/oauth2callback', async (req, res) => {
       to_email:      pending.to_email,
       connected_at:  new Date().toISOString(),
     }, null, 2));
+    forgetEmailConfig();
     res.send(closeScript(true, 'Gmail connected!'));
   } catch (err) {
     res.status(500).send(closeScript(false, err.message));
@@ -26548,6 +26584,7 @@ app.get('/oauth2callback', async (req, res) => {
 app.delete('/api/master/gmail/disconnect', (req, res) => {
   if (!checkMaster(req, res)) return;
   try { fs.unlinkSync(GMAIL_OAUTH_FILE); } catch {}
+  forgetEmailConfig();
   res.json({ ok: true });
 });
 

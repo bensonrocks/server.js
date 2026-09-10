@@ -8412,6 +8412,45 @@ it, and with the PNG route forced to 503 both the row and Enlarge fall back to
 the framed PDF. A portrait label on a wide monitor is bounded by HEIGHT, so
 "fills the screen" is width OR height, not width.
 
+## "Is this wasting resources?" — the Railway log was one line per completed order about a feature that is off
+
+Reported with a screenshot of the Railway log: every completed order produced
+`[IdealOne] Completion alert for <order> skipped — email not configured.` at
+ERROR severity (`console.warn` goes to stderr, which Railway paints red), one
+`Detected 5 diacritics` line, and one `[zort] auto-pull failed (): The
+operation was aborted due to timeout`. Three different things:
+
+- **THE COMPLETION-ALERT LINE WAS THE WASTE, and not mainly the log line.**
+  `sendCompletionAlert` ran on every completion, read the two email config
+  files three times over, warned, and the caller then stamped
+  `alert_email_sent: false` on the order — **a second full db.json write per
+  completion** to record a fact that never changes — and the Orders list read
+  that stamp as a FAILED email, painting a red ⚠ + **Resend** on every
+  completed row for admins. A warning about a feature that is simply switched
+  off, repeated per order, burying the one real error beside it.
+  - `emailConfigured()` answers from a 60s cache; the completion route skips
+    the alert entirely when it is false — no call, no log, no stamp, no write,
+    no indicator. `forgetEmailConfig()` at the four config write/unlink sites.
+  - The fact is said **once at boot**, at info level, not per order.
+  - `POST /api/scan/resend-completion-alert` used to stamp the order as SENT
+    when nothing was configured; it is a 400 in words now.
+  - **Rows already stamped the old way heal on read**: `false` with no
+    `alert_email_error` is read as "no verdict" (`null`), so the red ⚠ comes
+    off every completed row without touching stored data; a genuine failure
+    (an error recorded) still reads as failed with its reason.
+- **`Detected N diacritics` is the Tesseract OCR core talking** during a label
+  OCR pass — harmless, one line per page it reads, and left alone.
+- **The ZORT auto-pull timeout is REAL** and is the line worth reading: the
+  hub did not answer GetOrders inside the timeout, so that pull did nothing and
+  the next cadence retries. The store name was blank in the message; it now
+  falls back to the store name or id.
+
+Verified 12 API checks (`email-off-e2e.js`): two orders completed with no
+email configured produce no per-order line, no stamp and no extra write, read
+with no email verdict, Resend is refused in words and does not mark the order
+sent, a legacy `false`-with-no-error stamp heals to no verdict on read, and a
+genuine failed email still reads as failed with its reason.
+
 ## Rollback points — named snapshots of a known-good state
 
 Written down HERE, in the repo, because a git tag created in a sandbox is not
