@@ -12673,11 +12673,28 @@
           <div class="hint" style="color:#94a3b8">${esc(hc.note || '')}</div>
         </div></div>`;
       const om = h.onemap || {};
+      // THE LABEL BROWSER. "zort has labels, why can't I pull?" is answered by
+      // one of four facts — a browser that launches here, a web login on the
+      // store, its breaker, the last thing it said — and this is where they
+      // are readable without tapping an order.
+      const lb = h.labelBrowser;
+      const lbRows = lb ? (() => {
+        const rows = [`${dot(lb.available ? G : R)}${lb.available ? `Browser launches on this server${lb.launchTestedAt ? ` (tested ${when(lb.launchTestedAt)})` : ''}` : `<b style="color:#dc2626">Browser cannot run on this server</b> — ${esc(lb.why || '')}`}`];
+        (lb.stores || []).forEach(s => {
+          const what = !s.labelSync ? 'label pull is off' : !s.webLoginSet ? 'no ZORT web login saved — Lazada labels cannot be fetched (store form → 🔑 ZORT web login)'
+            : s.loginBreakerTripped ? 'last sign-in FAILED — re-save the web password on the store form' : s.ready ? 'web login set — labels fetched automatically' : 'web login set, but the browser cannot run here';
+          rows.push(`${dot(s.ready ? G : (!s.labelSync ? N : R))}<b>${esc(s.client)}</b> — ${what}`);
+        });
+        if (lb.lastUnusableSaid) rows.push(`${dot(A)}Last label the API could not hand over (${when(lb.lastUnusableAt)}): ${esc(lb.lastUnusableSaid)}`);
+        rows.push(`<div class="hint" style="color:#94a3b8">${esc(lb.note || '')}</div>`);
+        return `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">Label browser (ZORT print-page labels)</b><div style="font-size:12px;margin-top:.25rem;display:grid;gap:.2rem">${rows.map(x => `<div>${x}</div>`).join('')}</div></div>`;
+      })() : '';
       out.innerHTML =
         mpSection('Lazada — direct', h.lazada) +
         mpSection('Shopee — direct', h.shopee) +
         `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">TikTok</b><div style="font-size:12px;margin-top:.25rem">${dot(N)}${esc(h.tiktok?.note || 'Via the Sales Channel Hub.')}</div></div>` +
         `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">Sales Channel Hub</b><div style="font-size:12px;margin-top:.25rem;display:grid;gap:.2rem">${hubRows.length ? hubRows.map(x => `<div>${x}</div>`).join('') : `<div>${dot(N)}No stores connected.</div>`}</div></div>` +
+        lbRows +
         callRows +
         `<div><b style="font-size:.85rem">Road distances (OneMap)</b><div style="font-size:12px;margin-top:.25rem">${dot(om.tokenValid ? G : A)}${om.tokenValid ? `Routing token valid until ${when(om.expiresAt)}${om.canRefresh ? ' · auto-refreshes' : ' · no auto-refresh (add email+password)'}` : 'No routing token — distances fall back to estimates'} · ${om.geocodeCached || 0} postal code(s) cached</div></div>` +
         `<div class="hint" style="margin-top:.6rem;color:#94a3b8">Snapshot at ${when(h.generatedAt)} — read-only, nothing was changed.</div>`;

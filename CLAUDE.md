@@ -8665,6 +8665,67 @@ the exact live shape): the worker signs in and captures the 15,738-byte PDF,
 a second label reuses the saved session without re-login, and a wrong password
 is reported in words rather than hung on.
 
+#### "ZORT HAS LABELS. WHY I CANT PULL?" — the worker never got the link, and nothing said so
+
+Reported live (10 Sep 2026) with three screenshots: the scan overlay on a
+Mayer2026 Lazada order reading **⚠ no label yet — tap**, ZORT's own Sell list
+showing that order Completed with a `Label` tag and three DisplayPdfByUrl tabs
+open, and the tap's dialog: *"The channel has a label for this order but not in
+a form we can import — the channel offered lazada/url … Print it from th — it
+keeps retrying."* Two defects, and the first is why the second was invisible.
+
+1. **THE BROWSER WORKER WAS SILENTLY SKIPPED ON THE ONE SHAPE IT EXISTS FOR.**
+   The outbox read the print-page link off `got.tried[].url` — and the per-hop
+   diagnostics rewrite ("EVERY LINK NOW SAYS WHAT IT DID") had changed those
+   records to `{field, host, status, …}` with NO `url`, deliberately, because
+   `tried` is shown on screen and kept on the entry. So `fullLink` was blank,
+   the `if (https)` guard fell through, and the worker was never called — while
+   `webLabelReady` on the store form read ✓. `fetchLabelPdf` now returns the
+   full link separately as **`pageLink`** (never in `tried`, never on the trail)
+   and both the drain and 🧪 Test label fetch read that. **The pre-fix build
+   fails 9 of 19 checks; the label never attaches on it.**
+2. **A REFUSAL THAT DOES NOT NAME ITS GATE IS A SUPPORT QUESTION.** The worker
+   has four gates — a web login on the store, the login breaker, a browser that
+   launches, a link to open — plus its own failure, and every one of them
+   vanished into `entry.webError`, which no screen read. The 'unusable' error
+   now reads *"ZORT has the label, but its API only hands out a link to ZORT's
+   own print viewer, not the PDF (…). The label browser …"* followed by the
+   gate: **no ZORT web login saved** (and where to add it), **last sign-in
+   FAILED** (re-save the password), **cannot run on this server** (with the
+   launch error), **no print-page link**, or **tried and failed: <reason>** —
+   then *"print it from ZORT and upload the PDF on the Labels tab"* until it is
+   fixed. On the entry as `webNote`, on `sync_label_unusable` as `browser`.
+- **"PLAYWRIGHT IS INSTALLED" IS NOT "CHROMIUM CAN LAUNCH."** `available()` only
+  checked `require('playwright')`, so a deployment whose postinstall download
+  or shared libraries were missing read as available while every launch threw.
+  A launch failure is now remembered in `lib/zort-web.js` and reported by
+  `available()` for `ZORT_WEB_LAUNCH_RETRY_MS` (30 min, then re-tested), and
+  **`probeLaunch()` runs at boot** (20s, `ZORT_WEB_PROBE_DELAY_MS`) on any
+  deployment with a store carrying a web login + label pull, so the store form,
+  the tap and the health check say "Chromium cannot launch here" BEFORE a
+  packer finds out. Fix on Railway: `ZORT_BROWSER_PATH` to an installed
+  Chromium, or install its system libraries.
+- **`lastError` was cut at 200 characters** — hence "Print it from th". 700 now.
+- **STILL FETCHING IS NOT A FAILURE.** The tap holds the screen 8s; the worker
+  signs in and waits for ZORT's viewer, which takes longer — and the route
+  then quoted the PREVIOUS attempt's error as this one's. `_zortLabelInFlight`
+  marks a label entry while the drain has it, and the tap says *"the label
+  browser is signing in to ZORT and fetching it right now … tap again shortly"*.
+- **Health Check → "Label browser"** (`labelBrowser` on
+  `/api/master/connections/health`): whether it launches here (and when that
+  was tested), each store's login / breaker / readiness, and the last thing the
+  browser said about a label the API could not hand over.
+
+Verified 19 API checks (`web-note-e2e.js`, against `web-note-mock.js` — a
+ZORT whose print viewer serves the PDF ONLY with the web-login session cookie,
+so the API's one-hop fetch gets 403 exactly as live): the worker disabled, a
+bogus `ZORT_BROWSER_PATH` named on the health check, the store form and the
+tap with the launch error, the untruncated sentence on the entry and the
+audit row with no URL on the trail; no web login named with where to set it;
+the breaker named; the boot probe recorded; and, once the password is re-saved,
+the browser signing in, capturing the PDF from the viewer and attaching it,
+audited `via: web-browser`, entry gone.
+
 #### THE LAST MANUAL STEP, AND WHY IT IS STILL MANUAL
 
 Reported from the floor, as the actual daily routine: *"I RTS in Zort, select

@@ -21256,6 +21256,19 @@ async function refreshMarketplaceTokens(trigger) {
   return { results };
 }
 setTimeout(() => refreshMarketplaceTokens('boot'), 90 * 1000);
+// PROVE THE LABEL BROWSER LAUNCHES, at boot, on any deployment that has a
+// store relying on it — so the store form, the health check and the tap all
+// say "Chromium cannot launch here" BEFORE a packer discovers it at the bench.
+// Only when a store carries a web login: nothing else ever launches Chromium.
+setTimeout(async () => {
+  try {
+    const db = readDb();
+    if (!zortStores(db).some(s => s.webEmail && s.webPassword && s.labelSync)) return;
+    const r = await zortWeb.probeLaunch();
+    if (r.ok) console.log('[zort-web] label browser launches — auto-fetch of ZORT print-page labels is available');
+    else console.warn('[zort-web] label browser CANNOT launch here —', r.why);
+  } catch (e) { console.warn('[zort-web] launch probe:', e.message); }
+}, Number(process.env.ZORT_WEB_PROBE_DELAY_MS) || 20 * 1000);
 setInterval(() => refreshMarketplaceTokens('schedule'), 15 * 60 * 1000);
 
 // On-demand sweep — "refresh my tokens now", for when someone is watching.
@@ -21340,6 +21353,25 @@ app.get('/api/master/connections/health', (req, res) => {
         pctOfLimit: Math.round((st.total / 50000) * 1000) / 10,
         top,
         note: 'Counted since this server last started, for today (SGT). A restart resets it, so it is a floor, not a total.',
+      };
+    })(),
+    // THE LABEL BROWSER — whether it can actually run here, and which stores
+    // can use it. Reported from the floor as "zort has labels, why can't I
+    // pull?": the answer is one of these four facts, and none was readable
+    // anywhere before.
+    labelBrowser: (() => {
+      const a = zortWeb.available();
+      const stores = (db.zortStores || []).map(s => ({
+        client: s.clientName || '', labelSync: !!s.labelSync,
+        webLoginSet: !!(s.webEmail && s.webPassword), loginBreakerTripped: !!s.webLoginFailed,
+        ready: !!(s.labelSync && s.webEmail && s.webPassword && !s.webLoginFailed && a.ok),
+      }));
+      const lastUnusable = (db.auditLog || []).slice(-600).reverse().find(e => e.type === 'sync_label_unusable');
+      return {
+        available: a.ok, why: a.why || '', launchTestedAt: a.launchTestedAt || null,
+        stores,
+        lastUnusableAt: lastUnusable?.at || null, lastUnusableSaid: lastUnusable?.browser || '',
+        note: 'ZORT\'s API hands out a link to its own print viewer, never the Lazada label PDF, so a store needs its ZORT WEB login saved and a browser that launches on this server for labels to be fetched automatically.',
       };
     })(),
     onemap: (() => {
@@ -22990,9 +23022,17 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
     if ((after.orderLabels || {})[orderNumber]) steps.push('Label fetched and attached.');
     else {
       const e = (after.zortOutbox || []).find(x => x.kind === 'label' && x.orderNumber === orderNumber);
-      steps.push(e?.lastError && !/waiting for the channel|not available yet/i.test(e.lastError)
-        ? `The label could not be fetched: ${e.lastError} — it keeps retrying.`
-        : 'The channel has not generated the label yet. It keeps trying in the background.');
+      // STILL BEING FETCHED IS NOT A FAILURE. The label browser signs in and
+      // waits for ZORT's print page, which outlasts the 8s this route holds
+      // the screen for — quoting the PREVIOUS attempt's error at that moment
+      // told the floor "could not be fetched" about a fetch still under way.
+      if (e && queuedAt && e.nextAttemptAt === queuedAt && _zortLabelInFlight.has(orderNumber)) {
+        steps.push('The label browser is signing in to ZORT and fetching the label right now — that can take up to a minute. Tap the pill again shortly; it attaches by itself when it lands.');
+      } else {
+        steps.push(e?.lastError && !/waiting for the channel|not available yet/i.test(e.lastError)
+          ? `The label could not be fetched: ${e.lastError} — it keeps retrying.`
+          : 'The channel has not generated the label yet. It keeps trying in the background.');
+      }
     }
     return done();
   } catch (err) {
@@ -23579,6 +23619,14 @@ async function _zortSendOutboxEntry(db, store, entry) {
     }
     let pdf = got && got.pdf;
     let webVia = '';
+    // WHY THE BROWSER DID OR DID NOT DELIVER — said in words, on the entry and
+    // in the error the packer reads. Reported from the floor as "zort has
+    // labels. why i cant pull?" with the dialog saying only "not in a form we
+    // can import": the worker's four gates (a web login on the store, the
+    // login breaker, a browser that launches, a link to open) and its own
+    // failure all vanished into `entry.webError`, which no screen showed. A
+    // refusal that does not name its gate is a support question, not an answer.
+    let webNote = '';
     // ── THE WORKER: WHAT THE API CANNOT REACH, THE BROWSER CAN ───────────────
     // The API gave a print-page URL it could not turn into a PDF (proven live:
     // secure.zortout.com serves a signed-in browser app). If this store has a
@@ -23586,31 +23634,44 @@ async function _zortSendOutboxEntry(db, store, entry) {
     // page loads — the one thing the manual daily run was for. Only on
     // 'unusable' with a real https link the diagnostics found; never on a
     // genuine "not generated yet", and never while the login breaker is set.
-    if (!pdf && got && got.why === 'unusable' && store.webEmail && store.webPassword
-        && !store.webLoginFailed && zortWeb.available().ok) {
-      const link = (got.tried || []).map(t => t && t.url).find(u => /^https?:\/\//i.test(String(u)))
-        || String(entry.labelUrl || '').trim();
-      // `tried` stores a shortened url tail for display; the full link is the
-      // one the API handed us as labelUrl, else re-read it from the row.
-      const fullLink = /^https?:\/\//i.test(String(entry.labelUrl)) ? entry.labelUrl : link;
-      if (/^https?:\/\//i.test(String(fullLink))) {
+    if (!pdf && got && got.why === 'unusable') {
+      const webAvail = zortWeb.available();
+      // THE LINK COMES BACK AS `pageLink`, in full and on its own. It used to
+      // be read off `tried[].url` — a field the per-hop diagnostics had
+      // dropped — so the worker silently found nothing to open and never ran
+      // on the live shape. `tried` stays host-and-outcome only, because it is
+      // shown on screen and kept on the entry.
+      const fullLink = /^https?:\/\//i.test(String(entry.labelUrl)) ? entry.labelUrl
+        : /^https?:\/\//i.test(String(got.pageLink || '')) ? got.pageLink
+        : (got.tried || []).map(t => t && t.url).find(u => /^https?:\/\//i.test(String(u))) || '';
+      if (!store.webEmail || !store.webPassword) {
+        webNote = 'The label browser could not sign in to ZORT because NO ZORT WEB LOGIN is saved on this store — add the ZORT website email and password on Connections → the ZORT store form (🔑 ZORT web login), then tap again';
+      } else if (store.webLoginFailed) {
+        webNote = 'The label browser\'s last sign-in to ZORT FAILED, so it is not retried until the web password is re-saved on Connections → the ZORT store form';
+      } else if (!webAvail.ok) {
+        webNote = `The label browser cannot run on this server: ${webAvail.why}`;
+      } else if (!/^https?:\/\//i.test(String(fullLink))) {
+        webNote = 'The channel gave no print-page link for the label browser to open';
+      } else {
         try {
           const w = await zortWeb.fetchLabelPdfViaBrowser(store, fullLink);
           if (w && w.pdf) { pdf = w.pdf; webVia = 'web-browser'; }
+          else webNote = 'The label browser signed in but the print page produced no PDF';
         } catch (e) {
           const msg = String(e.message || e);
           // A LOGIN failure trips the breaker — do not hammer their sign-in.
           if (/sign.?in|password|web email|web login/i.test(msg)) {
-            const f = lazadaFindOrder(readDb(), entry.orderNumber, '');
             const dbw = readDb();
             const sw = zortStores(dbw).find(s => s.id === store.id);
             if (sw) { sw.webLoginFailed = true; writeDb(dbw); store.webLoginFailed = true; }
             logAudit('zort_web_login_failed', { storeId: store.id, client: store.clientName || '', detail: msg.slice(0, 200) });
           }
-          entry.webError = msg.slice(0, 200);
+          entry.webError = msg.slice(0, 300);
+          webNote = `The label browser tried to fetch it from ZORT's print page and failed: ${msg.slice(0, 300)}`;
           console.warn('[zort-web-label]', entry.orderNumber, msg);
         }
       }
+      entry.webNote = webNote;
     }
     if (pdf && webVia) {
       logAudit('sync_label_via_fallback', { order: entry.orderNumber, storeId: store.id, via: webVia });
@@ -23643,8 +23704,15 @@ async function _zortSendOutboxEntry(db, store, entry) {
           order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
           why: got.why, keysSeen: (got.keysSeen || []).slice(0, 20),
           offered: (got.offered || []).slice(0, 10), detail: String(got.detail || '').slice(0, 250),
+          browser: String(webNote || '').slice(0, 300),
         });
-        throw new Error(`The channel has a label for this order but not in a form we can import — ${got.detail}. Print it from the channel for now.`);
+        // THE GATE IS NAMED. ZORT's API hands out a link to its own print
+        // viewer, never the PDF, so on this shape the browser worker is the
+        // only way in — and the sentence has to say which of its gates stopped
+        // it, or the floor is left staring at a label ZORT plainly has.
+        throw new Error(got.why === 'unusable'
+          ? `ZORT has the label, but its API only hands out a link to ZORT's own print viewer, not the PDF (${got.detail}). ${webNote || 'The label browser was not tried.'}. Until then, print it from ZORT and upload the PDF on the Labels tab.`
+          : `The channel has a label for this order but not in a form we can import — ${got.detail}. Print it from the channel for now.`);
       }
       const e = new Error(got?.detail ? `Label not available yet — ${got.detail}` : 'Label not available yet');
       e.notReady = true;
@@ -24139,6 +24207,7 @@ const zortHubIsQuiet = store => (_zortHubQuiet.get(store?.id) || 0) > Date.now()
 const ZORT_DRAIN_MAX_PER_PASS = Math.max(1, Number(process.env.ZORT_DRAIN_MAX_PER_PASS) || 25);
 
 let _zortOutboxDraining = false;
+const _zortLabelInFlight = new Map();     // orderNumber -> when this pass started fetching its label
 async function drainZortOutbox() {
   if (_zortOutboxDraining) return;
   _zortOutboxDraining = true;
@@ -24156,6 +24225,10 @@ async function drainZortOutbox() {
       if (!store || !store.enabled) { remaining.push(entry); continue; } // store paused — hold, don't drop
       if (zortHubIsQuiet(store)) { remaining.push(entry); continue; }    // hub is not answering — hold
       sent++;
+      // A label fetch can hold the browser worker for a minute; the on-demand
+      // route reads this to say "still fetching" instead of quoting the LAST
+      // attempt's error as though it were this one's.
+      if (entry.kind === 'label') _zortLabelInFlight.set(entry.orderNumber, Date.now());
       try {
         await _zortSendOutboxEntry(db, store, entry);
         changed = true; // success → drop entry (not pushed to remaining)
@@ -24179,7 +24252,9 @@ async function drainZortOutbox() {
           changed = true; remaining.push(entry); continue;
         }
         entry.attempts = (entry.attempts || 0) + 1;
-        entry.lastError = String(err.message).slice(0, 200);
+        // Long enough to carry the reason AND which gate stopped the label
+        // browser — at 200 the floor read "Print it from th" and nothing after.
+        entry.lastError = String(err.message).slice(0, 700);
         entry.nextAttemptAt = new Date(now + _zortBackoffMs(entry.attempts)).toISOString();
         if (entry.attempts >= 20 && !entry.stalled) {
           entry.stalled = true;
@@ -24191,6 +24266,8 @@ async function drainZortOutbox() {
         }
         changed = true;
         remaining.push(entry);
+      } finally {
+        if (entry.kind === 'label') _zortLabelInFlight.delete(entry.orderNumber);
       }
     }
     if (changed) { db.zortOutbox = remaining; writeDb(db); }
@@ -25299,7 +25376,8 @@ app.post('/api/master/zort/stores/:id/web-label-test', express.json(), async (re
     try {
       const got = await zortApi.fetchLabelPdf(store, { id: c.zortId, number: c.orderNumber, tracking: c.tracking, skipFileEndpoint: true });
       if (got && got.pdf) return res.json({ ok: true, order: c.orderNumber, note: 'The API returned the label directly — the browser worker was not even needed for this one.' });
-      const l = (got?.tried || []).map(t => t?.url).filter(u => /^https?:\/\//i.test(u))[0] || '';
+      const l = /^https?:\/\//i.test(String(got?.pageLink || '')) ? got.pageLink
+        : (got?.tried || []).map(t => t?.url).filter(u => /^https?:\/\//i.test(u))[0] || '';
       if (l) { target = c; link = l; break; }
     } catch (_) {}
   }
