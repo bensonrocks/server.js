@@ -17809,6 +17809,7 @@
       const token = localStorage.getItem('wms_token') || '';
       body.innerHTML = imp.pages.map((page, i) => {
         const pdfUrl = `/api/label-imports/${esc(importId)}/pages/${i}/pdf?token=${encodeURIComponent(token)}`;
+        const pngUrl = `/api/label-imports/${esc(importId)}/pages/${i}/png?token=${encodeURIComponent(token)}`;
         const statusCls = { matched: 'lri-matched', unmatched: 'lri-unmatched', duplicate: 'lri-dup',
                             ambiguous: 'lri-ambig', error: 'lri-err' }[page.matchStatus] || 'lri-unmatched';
         const f = page.extracted || {};
@@ -17863,8 +17864,8 @@
             <div class="lri-thumb-col">
               <div class="lri-page-num">Page ${i + 1}</div>
               <div class="lri-thumb-wrap">
-                <iframe class="lri-pdf-preview" src="${pdfUrl}#toolbar=0" title="Label page ${i + 1}"></iframe>
-                <button class="lri-zoom-btn" data-url="${pdfUrl}" data-page="${i + 1}" title="Enlarge label">&#x26F6; Enlarge</button>
+                <img class="lri-img-preview" src="${pngUrl}&size=thumb" alt="Label page ${i + 1}" loading="lazy" data-pdf="${pdfUrl}">
+                <button class="lri-zoom-btn" data-url="${pdfUrl}" data-png="${pngUrl}&size=full" data-page="${i + 1}" title="Enlarge label">&#x26F6; Enlarge</button>
               </div>
             </div>
             <div class="lri-info-col">
@@ -17905,8 +17906,20 @@
           </div>`;
       }).join('');
 
+      // A PICTURE, WITH THE FRAMED PDF AS THE FALLBACK. Android Chrome has no
+      // inline PDF viewer, so an <iframe> of the page paints a broken-document
+      // icon on the phone the floor works from — reported as "no preview".
+      // The rendered PNG is what shows; only when the server cannot render
+      // (503) does the old iframe come back, which a desktop can still show.
+      body.querySelectorAll('.lri-img-preview').forEach(img =>
+        img.addEventListener('error', () => {
+          const fr = document.createElement('iframe');
+          fr.className = 'lri-pdf-preview'; fr.title = img.alt; fr.src = `${img.dataset.pdf}#toolbar=0`;
+          img.replaceWith(fr);
+        }, { once: true })
+      );
       body.querySelectorAll('.lri-zoom-btn').forEach(btn =>
-        btn.addEventListener('click', () => openLabelLightbox(btn.dataset.url, `Label — Page ${btn.dataset.page}`))
+        btn.addEventListener('click', () => openLabelLightbox(btn.dataset.url, `Label — Page ${btn.dataset.page}`, btn.dataset.png))
       );
 
       body.querySelectorAll('.lri-match-btn').forEach(btn =>
@@ -17935,16 +17948,31 @@
   }
 
   // ── Label lightbox — full-screen enlarge for checking label details ────────
-  function openLabelLightbox(pdfUrl, title) {
+  // The enlarged view is the rendered PNG (pinch-zoomable on a phone, and the
+  // only thing Android Chrome can show at all); the framed PDF is the fallback
+  // when the server cannot render the page.
+  function openLabelLightbox(pdfUrl, title, pngUrl) {
     const box = document.getElementById('labelLightbox');
+    const img = document.getElementById('labelLightboxImg');
+    const frame = document.getElementById('labelLightboxFrame');
     document.getElementById('labelLightboxTitle').textContent = title || 'Label';
-    document.getElementById('labelLightboxFrame').src = pdfUrl;
+    frame.src = 'about:blank'; frame.classList.add('hidden');
+    img.classList.add('hidden'); img.removeAttribute('src');
+    if (pngUrl) {
+      img.onload = () => { img.classList.remove('hidden'); };
+      img.onerror = () => { img.classList.add('hidden'); frame.src = pdfUrl; frame.classList.remove('hidden'); };
+      img.src = pngUrl;
+    } else {
+      frame.src = pdfUrl; frame.classList.remove('hidden');
+    }
     box.classList.remove('hidden');
   }
   function closeLabelLightbox() {
     const box = document.getElementById('labelLightbox');
     box.classList.add('hidden');
     document.getElementById('labelLightboxFrame').src = 'about:blank';
+    const img = document.getElementById('labelLightboxImg');
+    img.onload = img.onerror = null; img.removeAttribute('src'); img.classList.add('hidden');
   }
   document.getElementById('labelLightboxClose').addEventListener('click', closeLabelLightbox);
   document.getElementById('labelLightbox').addEventListener('click', e => {

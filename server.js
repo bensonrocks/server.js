@@ -8323,6 +8323,39 @@ app.get('/api/label-imports/:id/pages/:idx/pdf', requireAuthOrToken, (req, res) 
   fs.createReadStream(filePath).pipe(res);
 });
 
+// THE PREVIEW IS A PICTURE, NOT A FRAMED PDF. Reported from a phone as "no
+// preview": the review row framed the page PDF in an <iframe>, and Android
+// Chrome has no inline PDF viewer — it paints a broken-document icon and
+// nothing else, so the one screen where a person checks a doubtful match
+// showed them nothing to check. The page is rendered to PNG here with the
+// same pdfjs + canvas path the OCR pass uses (so whatever OCR can read, the
+// screen can show), cached beside the PDF at that scale, and the client falls
+// back to the iframe only when this route cannot render (503) — a desktop
+// still gets the PDF viewer then, a phone the honest broken icon.
+const LABEL_PNG_SCALES = { thumb: 1.2, full: 2.5 };
+app.get('/api/label-imports/:id/pages/:idx/png', requireAuthOrToken, async (req, res) => {
+  const { id, idx } = req.params;
+  const n = parseInt(idx) + 1;
+  if (!/^[A-Za-z0-9_-]+$/.test(String(id)) || !(n >= 1)) return res.status(400).json({ error: 'Bad page reference' });
+  const pdfPath = path.join(LABEL_IMPORT_DIR, id, `page_${n}.pdf`);
+  if (!fs.existsSync(pdfPath)) return res.status(404).json({ error: 'Page not found' });
+  if (!LABEL_OCR_RENDER_AVAILABLE) return res.status(503).json({ error: 'Page rendering is not available on this server' });
+  const size = req.query.size === 'full' ? 'full' : 'thumb';
+  const pngPath = path.join(LABEL_IMPORT_DIR, id, `page_${n}.${size}.png`);
+  try {
+    if (!fs.existsSync(pngPath)) {
+      const png = await renderPdfPageToPng(fs.readFileSync(pdfPath), 0, LABEL_PNG_SCALES[size]);
+      if (!png) return res.status(503).json({ error: 'Could not render this page' });
+      fs.writeFileSync(pngPath, png);
+    }
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    fs.createReadStream(pngPath).pipe(res);
+  } catch (e) {
+    res.status(503).json({ error: `Could not render this page — ${String(e.message || e).slice(0, 120)}` });
+  }
+});
+
 app.post('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) => {
   const { id, idx } = req.params;
   const { orderNumber } = req.body;

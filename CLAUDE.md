@@ -8378,6 +8378,40 @@ normalised key of **≥8 chars (10 if all digits)**, so short order numbers can
 never match by text scan. That guard is deliberate — it stops a 4-digit code
 matching random text on a label.
 
+### "NO PREVIEW" — the review row framed the PDF, and a phone cannot show a framed PDF
+
+Reported from an Android phone with a screenshot: the label review row showed
+a broken-document icon where the label should be. The row rendered the page
+as `<iframe src=".../pages/:idx/pdf">`, and **Android Chrome has no inline PDF
+viewer** — it paints that icon and nothing else (desktop Chrome has one, which
+is why this was never seen at a desk). The one screen where a person checks a
+doubtful match — this one carried the amber "matches no identifier" note —
+showed them nothing to check.
+
+- **`GET /api/label-imports/:id/pages/:idx/png?size=thumb|full`**
+  (`requireAuthOrToken`, so an `<img src>` can carry `?token=`) renders the
+  page with the SAME `renderPdfPageToPng` the OCR pass uses — whatever OCR can
+  read, the screen can show — and caches it beside the PDF as
+  `page_N.<size>.png` (a deleted import takes the cache with it). 404 for a
+  page that does not exist; **503 when the renderer is not available**, which
+  is the client's cue to fall back.
+- The row is an `<img class="lri-img-preview">` and the Enlarge lightbox an
+  `<img id="labelLightboxImg">` (pinch-zoomable on a phone); **the iframe is
+  the FALLBACK, not the default** — swapped in only when the PNG errors, so a
+  desktop still gets the PDF viewer on a server that cannot render, and a
+  phone the honest broken icon rather than a blank.
+- `.label-lightbox .hidden` needs its own `display:none !important` — the
+  lightbox's `iframe`/`img` rules set `display`, which outranked the global
+  `.hidden`.
+
+Verified 7 API checks (a real PNG, cached, `full` larger than `thumb`, the
+second read in 2ms, 404, no token 401) plus 16 browser checks on a Pixel 5 and
+a desktop (`br-preview.js`): the row shows the rendered picture with no iframe
+present, Enlarge shows the picture full-screen without overflow, close clears
+it, and with the PNG route forced to 503 both the row and Enlarge fall back to
+the framed PDF. A portrait label on a wide monitor is bounded by HEIGHT, so
+"fills the screen" is width OR height, not width.
+
 ## Rollback points — named snapshots of a known-good state
 
 Written down HERE, in the repo, because a git tag created in a sandbox is not
