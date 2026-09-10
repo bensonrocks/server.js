@@ -8741,6 +8741,86 @@ the breaker named; the boot probe recorded; and, once the password is re-saved,
 the browser signing in, capturing the PDF from the viewer and attaching it,
 audited `via: web-browser`, entry gone.
 
+#### "USERS ARE EXPERIENCING A LAG" / "ORDERS NEED 20–30 SECS TO OPEN" — the browser ran INSIDE the request that opened the order
+
+Reported the day after the two fixes above went live — which is the tell: the
+worker had not changed, it had started WORKING. Chromium runs in the SAME
+container as node, and three things were handing it work with nothing holding
+them back:
+
+1. **OPENING AN ORDER RAN A BROWSER SESSION IN THE REQUEST.** The scan overlay
+   fires `/waybill-now` (`auto: true`) for every synced order without a label,
+   and that route made the label entry due and called `drainZortOutbox()` —
+   a FULL pass, browser worker included, awaited inside the request. With the
+   old 45s nav + 25s PDF wait, twice (open, sign in, open again), one label
+   ZORT had not generated yet held Chromium for over two minutes — and on a
+   busy floor every open of every synced order did it. That is the 20–30s.
+2. **THE BACKGROUND DRAIN WAS UNBOUNDED**: up to 25 entries a pass, one after
+   another, each a browser session, and a browser miss retried on the ordinary
+   ladder's ONE-MINUTE first rung — the same page, the same answer, two more
+   minutes of Chromium.
+3. Every retry re-asked the hub's API first, so a backlog of browser-only
+   labels also spent the 50,000/day quota on the same answer.
+
+Fixed at all three, each an env override for tests:
+
+- **AN OPEN ONLY QUEUES.** `auto` makes the entry due and returns at once
+  (`queued: true`); no drain, no exemption, no browser. The background pass
+  fetches it within its budget, and the scan screen polls the new cheap
+  `GET /api/orders/:orderNumber/label-status` (in-memory, no hub call, nothing
+  written) every 15s for three minutes (`watchLabelLanding`) so the pill and
+  the ⇩ Label button repaint BY THEMSELVES when it lands. Measured: the overlay
+  opens in ~40ms and the pill settles in ~60ms; the label repainted 15s after
+  landing with no reload and no tap.
+- **A TAP IS STILL NOW, AND ONLY FOR THAT ORDER.** `askedAt` stamps a real tap
+  (exempt from the per-pass cap for `ZORT_WEB_ASKED_MS`, 2 min), and the route
+  runs `drainZortOutbox({ only: orderNumber })` — that label and nothing else,
+  raced against the 8s the route holds the screen, carrying on in the
+  background past it ("fetching right now — tap again shortly", or "busy with
+  another order's label — this one is next" when a background pass holds the
+  guard).
+- **`ZORT_WEB_MAX_PER_PASS` (2)** browser fetches per background pass. The
+  rest are HELD — `webDeferredAt` on the entry, attempts 0, no audit row, the
+  drain skips them WITHOUT a hub call once the budget is spent (the API is
+  asked once to learn a label needs the browser, then the hold is free).
+- **`ZORT_WEB_RETRY_MS` (15 min)** after a browser miss (`err.webRan`),
+  whatever the failure ladder says. `ZORT_DRAIN_MAX_MS` (120s) of wall clock
+  per pass; `ZORT_OUTBOX_MS` is a named constant now.
+- **The worker itself is lighter**: `ZORT_WEB_NAV_TIMEOUT` 45s → 20s,
+  `ZORT_WEB_PDF_WAIT_MS` 25s → 12s (a page that has a label serves it in
+  seconds; one that does not will not because we waited longer), images/fonts/
+  media aborted at the route, and Chromium launched with extensions, background
+  networking, sync and audio off and its renderers capped.
+- **THE HEALTH CHECK SAYS WHAT THE LAST PASS DID** (`labelBrowser.lastPass`:
+  ms, entries tried, browser fetches, held for budget/time; `budget`; and
+  `labelsWaitingOnBrowser`) — "is the browser eating the server?" is a number
+  on Connections → Health Check → Label browser, not a guess.
+
+HONEST LIMIT: the sandbox cannot see the live container, so the diagnosis is
+from the code path plus the timing of the report. Confirm on Railway → Metrics
+(CPU and memory from ~00:20 SGT on 10 Sep, when `77217ed`/`02b99b8` deployed)
+and on the Health Check's last-pass line after this deploys.
+
+Verified 25 API checks (`lag-e2e.js` against `lag-mock.js` — four RTS'd
+labels, one with a real PDF behind the session cookie, three whose print page
+has none): one browser fetch per pass with the rest held at attempts 0 and no
+audit row; the browser-missed label waiting ~10 min not 2s; the real label
+still attaching; no label browser-tried twice in a minute; a held label making
+no further hub calls; with the cap at 0 the background never opening a print
+page while an OPEN answers in 6ms with `queued` and a TAP still fetches and
+attaches; entries past the pass clock held and counted. **The pre-fix build
+fails 16 of 25** (attempts climbing 3/2/2 in a minute, every pass a browser
+fetch). Plus 15 browser checks on desktop and a Pixel 5 (`br-lag.js`): the
+overlay open in under 50ms, the pill settling with no dialog, the self-repaint
+and the Label button appearing with no reload, no sideways scroll. `web-note-
+e2e` 19 and `npm test` 6 re-run green.
+
+TEST GOTCHAS: the mock's hit counters run across boots — measure deltas; an
+OPEN counts against the route's 8s per-order cooldown, so a harness tap right
+after it reads "Asked a moment ago"; and the API's one-hop HTML probe opens the
+print page once per hub read, so page-open counts are per attempt, not per
+browser session.
+
 #### THE LAST MANUAL STEP, AND WHY IT IS STILL MANUAL
 
 Reported from the floor, as the actual daily routine: *"I RTS in Zort, select

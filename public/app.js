@@ -8887,6 +8887,12 @@
         activeOrder.has_order_label = !!d.hasLabel;
         repaintWaybillPill(activeOrder);
       }
+      // AN OPEN ONLY QUEUES THE FETCH — the label browser runs in the
+      // background within its budget, not inside the request that opened the
+      // order. So watch for it to land and repaint the pill when it does:
+      // a cheap status read every 15s for up to three minutes, only while
+      // this order is still the one on screen.
+      if (!d.hasLabel && d.queued) watchLabelLanding(orderNumber);
       // The steps are the answer — "packed it, number is X, label attached" or
       // "the channel has not generated it yet". A tooltip is unreadable on the
       // phone the floor works from.
@@ -8895,6 +8901,28 @@
       if (activeOrder && activeOrder.order_number === orderNumber) repaintWaybillPill(activeOrder);
       if (!auto) alert(e.message);
     } finally { _waybillNowBusy = false; }
+  }
+
+  let _labelWatchTimer = null;
+  function watchLabelLanding(orderNumber) {
+    if (_labelWatchTimer) clearTimeout(_labelWatchTimer);
+    let left = 12;
+    const tick = async () => {
+      _labelWatchTimer = null;
+      if (!activeOrder || activeOrder.order_number !== orderNumber || activeOrder.has_order_label) return;
+      try {
+        const r = await fetch(`/api/orders/${encodeURIComponent(orderNumber)}/label-status`, { headers: hdrs() });
+        if (r.ok) {
+          const d = await r.json();
+          if (activeOrder && activeOrder.order_number === orderNumber) {
+            if (d.waybill) activeOrder.waybill_number = d.waybill;
+            if (d.hasLabel) { activeOrder.has_order_label = true; repaintWaybillPill(activeOrder); setScanLabelBtn(activeOrder); return; }
+          }
+        }
+      } catch (_) {}
+      if (--left > 0) _labelWatchTimer = setTimeout(tick, 15000);
+    };
+    _labelWatchTimer = setTimeout(tick, 15000);
   }
 
   document.addEventListener('click', e => {
@@ -12686,6 +12714,14 @@
           rows.push(`${dot(s.ready ? G : (!s.labelSync ? N : R))}<b>${esc(s.client)}</b> — ${what}`);
         });
         if (lb.lastUnusableSaid) rows.push(`${dot(A)}Last label the API could not hand over (${when(lb.lastUnusableAt)}): ${esc(lb.lastUnusableSaid)}`);
+        // IS THE BROWSER EATING THE SERVER? The last outbox pass in numbers,
+        // and the limits that keep it from running continuously beside the app.
+        if (lb.lastPass && lb.budget) {
+          const lp = lb.lastPass, bd = lb.budget;
+          const held = (lp.heldForBudget || 0) + (lp.heldForTime || 0);
+          rows.push(`${dot(lp.lastPassMs > (bd.passMaxSeconds || 120) * 1000 ? A : N)}Last outbox pass${lp.lastPassAt ? ` (${when(lp.lastPassAt)})` : ''}: ${lp.lastPassAt ? `${(lp.lastPassMs / 1000).toFixed(1)}s · ${lp.entriesTried || 0} entr${lp.entriesTried === 1 ? 'y' : 'ies'} · ${lp.browserFetches || 0} browser fetch${lp.browserFetches === 1 ? '' : 'es'}${held ? ` · ${held} held for the next pass` : ''}` : 'none yet this boot'}` +
+            ` — limits: ${bd.browserFetchesPerPass} browser fetch${bd.browserFetchesPerPass === 1 ? '' : 'es'} per pass, a pass every ${bd.passEverySeconds}s and at most ${bd.passMaxSeconds}s long, a label the browser could not get waits ${bd.retryAfterBrowserMins} min${lb.labelsWaitingOnBrowser ? ` · ${lb.labelsWaitingOnBrowser} label(s) waiting on the browser` : ''}`);
+        }
         rows.push(`<div class="hint" style="color:#94a3b8">${esc(lb.note || '')}</div>`);
         return `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">Label browser (ZORT print-page labels)</b><div style="font-size:12px;margin-top:.25rem;display:grid;gap:.2rem">${rows.map(x => `<div>${x}</div>`).join('')}</div></div>`;
       })() : '';

@@ -21371,6 +21371,10 @@ app.get('/api/master/connections/health', (req, res) => {
         available: a.ok, why: a.why || '', launchTestedAt: a.launchTestedAt || null, executable: a.executable || null,
         stores,
         lastUnusableAt: lastUnusable?.at || null, lastUnusableSaid: lastUnusable?.browser || '',
+        // Is the browser eating the server? The last outbox pass, in numbers.
+        lastPass: { ..._zortDrainStats },
+        budget: { browserFetchesPerPass: ZORT_WEB_MAX_PER_PASS, retryAfterBrowserMins: Math.round(ZORT_WEB_RETRY_MS / 60000), passMaxSeconds: Math.round(ZORT_DRAIN_MAX_MS / 1000), passEverySeconds: Math.round(ZORT_OUTBOX_MS / 1000) },
+        labelsWaitingOnBrowser: (db.zortOutbox || []).filter(e => e.kind === 'label' && e.webNote).length,
         note: 'ZORT\'s API hands out a link to its own print viewer, never the Lazada label PDF, so a store needs its ZORT WEB login saved and a browser that launches on this server for labels to be fetched automatically.',
       };
     })(),
@@ -22887,6 +22891,23 @@ function enqueueZortProduct(db, storeId, clientId, sku) {
 // print a label must not have to find an admin.
 const _waybillNowAt = new Map();          // orderNumber -> last run, for a light rate limit
 const WAYBILL_NOW_COOLDOWN_MS = 8000;
+
+// Has the label landed yet? The scan screen polls this after an open queued
+// the fetch — one in-memory lookup, no hub call, nothing written.
+app.get('/api/orders/:orderNumber/label-status', (req, res) => {
+  const orderNumber = String(req.params.orderNumber || '').trim();
+  const db = readDb();
+  const f = lazadaFindOrder(db, orderNumber, '');
+  if (!f) return res.status(404).json({ error: 'Order not found' });
+  const e = (db.zortOutbox || []).find(x => x.kind === 'label' && x.orderNumber === orderNumber);
+  res.json({
+    ok: true, order: orderNumber,
+    waybill: String(f.ord.waybill_number || '').trim(),
+    hasLabel: !!(db.orderLabels || {})[orderNumber],
+    queued: !!e, inFlight: _zortLabelInFlight.has(orderNumber),
+    nextAttemptAt: e?.nextAttemptAt || null, lastError: e?.lastError ? String(e.lastError).slice(0, 300) : '',
+  });
+});
 app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res) => {
   const orderNumber = String(req.params.orderNumber || '').trim();
   const auto = req.body?.auto === true;    // fired by opening the order, not by a tap
@@ -22996,26 +23017,41 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
       // tap would do nothing at all for up to a minute — the exact dead button
       // this endpoint exists to remove. An explicit ask makes it due.
       const e4 = (db4.zortOutbox || []).find(x => x.kind === 'label' && x.orderNumber === orderNumber);
-      if (e4) { e4.nextAttemptAt = new Date().toISOString(); e4.stalled = false; queuedAt = e4.nextAttemptAt; }
+      // A TAP is a person standing at the bench — exempt from the per-pass
+      // browser budget that keeps the background drain from starving the app.
+      // OPENING the order is not: every open of every synced order used to
+      // run the label browser inside this request, which on a busy floor is
+      // Chromium running continuously beside the app (reported as orders
+      // taking 20–30 seconds to open). An open only makes the label DUE; the
+      // background pass fetches it within its budget and the pill repaints
+      // when it lands.
+      if (e4) { e4.nextAttemptAt = new Date().toISOString(); e4.stalled = false; if (!auto) e4.askedAt = e4.nextAttemptAt; queuedAt = e4.nextAttemptAt; }
       writeDb(db4);
+    }
+    if (auto) {
+      steps.push('Label fetch queued — the background fetch picks it up within a minute or two; the pill updates by itself when it lands.');
+      return done({ queued: true });
     }
     // AND THE DRAIN HAS TO ACTUALLY RUN. drainZortOutbox holds a reentry guard
     // for the 30s scheduler, so a single call lands as a silent no-op whenever
     // it collides with one — which read as "the channel has no label" when the
     // truth was "we never asked". Try until the entry has genuinely been
     // attempted (its next attempt time moves, or it succeeds and disappears),
-    // then answer. Bounded, so a wedged drain cannot hold the packer's screen.
+    // then answer. Bounded, so a wedged drain cannot hold the packer's screen:
+    // the pass is THIS order's label only, and it carries on in the background
+    // past the 8s this route holds the screen for.
     {
       const until = Date.now() + 8000;
+      let pass = null;
       for (;;) {
-        try { await drainZortOutbox(); } catch (_) {}
+        if (!pass) pass = drainZortOutbox({ only: orderNumber }).catch(() => {}).then(() => { pass = null; });
+        await Promise.race([pass, new Promise(r => setTimeout(r, 250))]);
         const now = readDb();
         if ((now.orderLabels || {})[orderNumber]) break;
         const e = (now.zortOutbox || []).find(x => x.kind === 'label' && x.orderNumber === orderNumber);
         if (!e) break;                                   // gone = sent
         if (queuedAt && e.nextAttemptAt !== queuedAt) break;   // tried, and answered
         if (Date.now() >= until) break;
-        await new Promise(r => setTimeout(r, 250));
       }
     }
     const after = readDb();
@@ -23028,6 +23064,8 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
       // told the floor "could not be fetched" about a fetch still under way.
       if (e && queuedAt && e.nextAttemptAt === queuedAt && _zortLabelInFlight.has(orderNumber)) {
         steps.push('The label browser is signing in to ZORT and fetching the label right now — that can take up to a minute. Tap the pill again shortly; it attaches by itself when it lands.');
+      } else if (e && queuedAt && e.nextAttemptAt === queuedAt && _zortOutboxDraining) {
+        steps.push('The label browser is busy with another order\'s label right now — this one is next. Tap the pill again shortly; it attaches by itself when it lands.');
       } else {
         steps.push(e?.lastError && !/waiting for the channel|not available yet/i.test(e.lastError)
           ? `The label could not be fetched: ${e.lastError} — it keeps retrying.`
@@ -23403,6 +23441,34 @@ function pushZortCompletion(db, ord, state) {
   } catch (e) { console.error('[zort] enqueue completion error:', e.message); }
 }
 
+// ── THE LABEL BROWSER SHARES THE CONTAINER WITH THE APP ─────────────────────
+// Reported as "users are experiencing a lag", the day after the browser worker
+// started genuinely running on the deployment. Chromium runs in the SAME
+// container as node, and the outbox was handing it up to 25 labels a pass,
+// one after another, each holding it for over two minutes when ZORT had not
+// generated the label yet — and then retrying that same label ONE MINUTE
+// later on the ordinary failure ladder. On a small plan that is Chromium
+// running near-continuously beside the app, and every screen waits for it.
+// Three limits, each an env override for tests:
+//   • at most ZORT_WEB_MAX_PER_PASS browser fetches per pass (the rest are
+//     HELD for the next pass, not counted as attempts) — an explicit tap on
+//     the order's pill is exempt, since a packer is standing there;
+//   • a label the browser tried and could not get waits ZORT_WEB_RETRY_MS
+//     before the next try, whatever the failure ladder says — a print page
+//     with no PDF means ZORT has not made the label yet, and asking again in
+//     a minute costs two more minutes of Chromium for the same answer;
+//   • one pass never runs longer than ZORT_DRAIN_MAX_MS of wall clock.
+const ZORT_WEB_MAX_PER_PASS = process.env.ZORT_WEB_MAX_PER_PASS !== undefined ? Math.max(0, Number(process.env.ZORT_WEB_MAX_PER_PASS) || 0) : 2;
+const ZORT_WEB_RETRY_MS = Number(process.env.ZORT_WEB_RETRY_MS) || 15 * 60 * 1000;
+const ZORT_DRAIN_MAX_MS = Number(process.env.ZORT_DRAIN_MAX_MS) || 120 * 1000;
+const ZORT_OUTBOX_MS = Math.max(1000, Number(process.env.ZORT_OUTBOX_MS) || 30000);
+const ZORT_WEB_ASKED_MS = 2 * 60 * 1000;   // how long a tap keeps an entry exempt from the per-pass cap
+const _zortWebPass = { used: 0 };          // browser fetches made in the pass under way
+// What the last pass did — on the health check, so "is the browser eating
+// the server?" is a number someone can read rather than a guess.
+const _zortDrainStats = { lastPassAt: null, lastPassMs: 0, entriesTried: 0, browserFetches: 0, heldForBudget: 0, heldForTime: 0 };
+const zortWebAsked = entry => !!(entry && entry.askedAt && (Date.now() - new Date(entry.askedAt).getTime()) < ZORT_WEB_ASKED_MS);
+
 // Backoff schedule for a failed send (minutes), then hourly.
 function _zortBackoffMs(attempts) {
   // Flat override for tests, same escape hatch ZORT_LABEL_RETRY_MS already has
@@ -23627,6 +23693,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
     // failure all vanished into `entry.webError`, which no screen showed. A
     // refusal that does not name its gate is a support question, not an answer.
     let webNote = '';
+    let webRan = false, webDeferred = false;
     // ── THE WORKER: WHAT THE API CANNOT REACH, THE BROWSER CAN ───────────────
     // The API gave a print-page URL it could not turn into a PDF (proven live:
     // secure.zortout.com serves a signed-in browser app). If this store has a
@@ -23652,7 +23719,15 @@ async function _zortSendOutboxEntry(db, store, entry) {
         webNote = `The label browser cannot run on this server: ${webAvail.why}`;
       } else if (!/^https?:\/\//i.test(String(fullLink))) {
         webNote = 'The channel gave no print-page link for the label browser to open';
+      } else if (_zortWebPass.used >= ZORT_WEB_MAX_PER_PASS && !zortWebAsked(entry)) {
+        // THE PASS'S BROWSER BUDGET IS SPENT. Held for the next pass rather
+        // than tried now — not a failure, not an attempt, and no audit row:
+        // nothing has been learned about this label yet.
+        webDeferred = true;
+        entry.webDeferredAt = new Date().toISOString();   // the drainer holds it for free next pass — no API call
+        webNote = `The label browser has already fetched ${_zortWebPass.used} label(s) this pass (limit ${ZORT_WEB_MAX_PER_PASS}, so it does not slow the server down) — this one is queued for the next pass in about ${Math.round(ZORT_OUTBOX_MS / 1000)}s. Tapping the order's pill fetches it at once.`;
       } else {
+        _zortWebPass.used++; webRan = true; delete entry.webDeferredAt;
         try {
           const w = await zortWeb.fetchLabelPdfViaBrowser(store, fullLink);
           if (w && w.pdf) { pdf = w.pdf; webVia = 'web-browser'; }
@@ -23672,6 +23747,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
         }
       }
       entry.webNote = webNote;
+      if (webDeferred) { const e = new Error(webNote); e.webDeferred = true; throw e; }
     }
     if (pdf && webVia) {
       logAudit('sync_label_via_fallback', { order: entry.orderNumber, storeId: store.id, via: webVia });
@@ -23710,9 +23786,11 @@ async function _zortSendOutboxEntry(db, store, entry) {
         // viewer, never the PDF, so on this shape the browser worker is the
         // only way in — and the sentence has to say which of its gates stopped
         // it, or the floor is left staring at a label ZORT plainly has.
-        throw new Error(got.why === 'unusable'
+        const e = new Error(got.why === 'unusable'
           ? `ZORT has the label, but its API only hands out a link to ZORT's own print viewer, not the PDF (${got.detail}). ${webNote || 'The label browser was not tried.'}. Until then, print it from ZORT and upload the PDF on the Labels tab.`
           : `The channel has a label for this order but not in a form we can import — ${got.detail}. Print it from the channel for now.`);
+        e.webRan = webRan;   // the drainer gives a browser-tried label the long wait
+        throw e;
       }
       const e = new Error(got?.detail ? `Label not available yet — ${got.detail}` : 'Label not available yet');
       e.notReady = true;
@@ -24208,7 +24286,11 @@ const ZORT_DRAIN_MAX_PER_PASS = Math.max(1, Number(process.env.ZORT_DRAIN_MAX_PE
 
 let _zortOutboxDraining = false;
 const _zortLabelInFlight = new Map();     // orderNumber -> when this pass started fetching its label
-async function drainZortOutbox() {
+// `only` = one order's label and nothing else — the on-demand tap's pass. A
+// tap used to run a FULL pass inside the request, browser fetches for every
+// other due label included, so a packer pressing the pill waited on labels
+// that were not theirs.
+async function drainZortOutbox({ only = null } = {}) {
   if (_zortOutboxDraining) return;
   _zortOutboxDraining = true;
   try {
@@ -24216,11 +24298,24 @@ async function drainZortOutbox() {
     const ob = zortOutbox(db);
     if (!ob.length) return;
     const now = Date.now();
-    let changed = false, sent = 0;
+    let changed = false, sent = 0, heldForTime = 0, heldForBudget = 0;
+    _zortWebPass.used = 0;
     const remaining = [];
     for (const entry of ob) {
+      if (only && !(entry.kind === 'label' && entry.orderNumber === only)) { remaining.push(entry); continue; }
       if (new Date(entry.nextAttemptAt).getTime() > now) { remaining.push(entry); continue; }
       if (sent >= ZORT_DRAIN_MAX_PER_PASS) { remaining.push(entry); continue; }
+      // A pass has a clock as well as a count: a browser fetch can hold it
+      // for a minute, and nothing else in this process should wait on that.
+      if (Date.now() - now > ZORT_DRAIN_MAX_MS) { remaining.push(entry); heldForTime++; continue; }
+      // A label already known to need the browser is held WITHOUT a hub call
+      // once the pass's browser budget is spent. Re-asking the API each pass
+      // for fifteen labels the browser cannot take yet would spend the daily
+      // quota on the same answer — the meter counts every one of those.
+      if (entry.kind === 'label' && entry.webDeferredAt && _zortWebPass.used >= ZORT_WEB_MAX_PER_PASS && !zortWebAsked(entry)) {
+        entry.nextAttemptAt = new Date(Date.now() + ZORT_OUTBOX_MS).toISOString();
+        changed = true; heldForBudget++; remaining.push(entry); continue;
+      }
       const store = zortStores(db).find(s => s.id === entry.storeId);
       if (!store || !store.enabled) { remaining.push(entry); continue; } // store paused — hold, don't drop
       if (zortHubIsQuiet(store)) { remaining.push(entry); continue; }    // hub is not answering — hold
@@ -24251,11 +24346,24 @@ async function drainZortOutbox() {
           }
           changed = true; remaining.push(entry); continue;
         }
+        // HELD, NOT FAILED: the pass's browser budget was spent before this
+        // label's turn. Next pass, no attempt counted, nothing stalled.
+        if (err.webDeferred) {
+          heldForBudget++;
+          entry.lastError = String(err.message).slice(0, 1200);
+          entry.nextAttemptAt = new Date(Date.now() + ZORT_OUTBOX_MS).toISOString();
+          changed = true; remaining.push(entry); continue;
+        }
         entry.attempts = (entry.attempts || 0) + 1;
         // Long enough to carry the reason AND which gate stopped the label
         // browser — at 200 the floor read "Print it from th" and nothing after.
         entry.lastError = String(err.message).slice(0, 1200);
-        entry.nextAttemptAt = new Date(now + _zortBackoffMs(entry.attempts)).toISOString();
+        // A label the BROWSER tried and could not get waits the long interval:
+        // the print page had no PDF because ZORT has not generated it yet, and
+        // the one-minute rung would spend another two minutes of Chromium on
+        // the same answer.
+        const back = err.webRan ? Math.max(_zortBackoffMs(entry.attempts), ZORT_WEB_RETRY_MS) : _zortBackoffMs(entry.attempts);
+        entry.nextAttemptAt = new Date(now + back).toISOString();
         if (entry.attempts >= 20 && !entry.stalled) {
           entry.stalled = true;
           logAudit(entry.kind === 'stock' ? 'zort_stock_push_failed'
@@ -24271,10 +24379,14 @@ async function drainZortOutbox() {
       }
     }
     if (changed) { db.zortOutbox = remaining; writeDb(db); }
+    if (!only) Object.assign(_zortDrainStats, {
+      lastPassAt: new Date(now).toISOString(), lastPassMs: Date.now() - now,
+      entriesTried: sent, browserFetches: _zortWebPass.used, heldForBudget, heldForTime,
+    });
   } catch (e) { console.error('[zort] outbox drain error:', e.message); }
   finally { _zortOutboxDraining = false; }
 }
-setInterval(drainZortOutbox, Math.max(1000, Number(process.env.ZORT_OUTBOX_MS) || 30000));
+setInterval(drainZortOutbox, ZORT_OUTBOX_MS);
 
 app.get('/api/master/zort/stores', (req, res) => {
   if (!checkMaster(req, res)) return;
