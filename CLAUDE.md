@@ -8976,3 +8976,77 @@ TEST GOTCHA: Playwright resolves to `chrome-headless-shell`, which this sandbox
 does not ship — set `ZORT_BROWSER_PATH=/opt/pw-browsers/chromium-*/chrome-linux/chrome`
 (the escape hatch `_getBrowser` already honours) or the launch fails with a
 "just installed or updated" message that reads like a missing dependency.
+
+#### "HOW TO SPEED UP THE USER EXPERIENCE" — 5–7 users, and what the Railway charts said
+
+Asked with the Railway Metrics open (10 Sep 2026). The charts settled the
+question before any code moved: **CPU 0.2–1.2 of 8 vCPU, memory 0.75–1.5 of
+8 GB — the plan is not the limit and upgrading it does nothing.** Response
+time p50 was 12 ms and p99 hit 20 s every few minutes: a QUEUE on the one Node
+thread, not capacity. Egress ran 40–80 MB bursts every few minutes against
+near-zero ingress: everything went out RAW. Three changes, each proven
+against the build without it, none touching what any screen does:
+
+- **EVERY COMPRESSIBLE RESPONSE IS GZIPPED / BROTLI'D** (`compression`,
+  threshold 1 KB, mounted first). `app.js` goes from 1,156 KB to ~293 KB on
+  the wire; the orders-list JSON shrinks the same way. PDFs and PNGs are left
+  alone by the content-type filter (asserted), and a client that cannot take
+  gzip gets the identical bytes. Chromium asks for Brotli and gets it — a test
+  asserting `gzip` alone fails on a real browser.
+- **PDF WORK RUNS ON A WORKER THREAD** (`lib/pdf-worker.js` behind
+  `lib/pdf-pool.js`): pdf-parse text extraction, pdfjs+canvas page rendering
+  and pdf-lib page splitting — the three things that held the request thread
+  for seconds per page during a label import or the background label pass.
+  `extractPdfPageTexts`, `renderPdfPageToPng` and the new
+  `splitPdfPagesOffThread` (used by `processLabelPdf` AND `splitWaybillPdf`)
+  try the pool first and **fall back to the in-process implementation when
+  the worker is down** — a worker that cannot start degrades to exactly what
+  shipped before, never to "labels stopped". The worker's copies must stay
+  IDENTICAL to the in-process ones (the in-process one is the reference).
+  Tesseract already ran on its own thread; sharp is in the libuv pool.
+  `PDF_WORKERS` sizes the pool (default 2 on >2 cores, else 1; `0` disables it,
+  which is how the fallback is tested). One op is bounded at
+  `PDF_WORKER_TASK_MS` (3 min); a timed-out worker is terminated and the next
+  task respawns one. Measured: a plain `/api/ping` waited **7 ms** behind twelve
+  page renders with the worker and **218 ms** without; 171 ms behind an import
+  in-process vs 16 ms. The image-only OCR path (render → Tesseract → match)
+  is unchanged in outcome: a 3-page scanned AWB OCRs and matches 3/3.
+- **A BURST OF WRITES IS ONE SERIALISATION.** `JSON.stringify` of the WHOLE
+  db.json is the one blocking part of every write and it ran once per
+  writeDb. `writeDb` now debounces `DB_PERSIST_DEBOUNCE_MS` (250) after the
+  last write, never more than `DB_PERSIST_MAX_WAIT_MS` (2 s) after the first;
+  ten writes in 27 ms became ONE file write holding the final state.
+  `flushDb()` is still immediate (it folds a pending timer in) and
+  **`gracefulShutdown` flushes every pending timer first** — asserted by
+  SIGTERM inside the window and reading the write back off disk. The scan
+  journal already covered the deferred window for counted scans.
+  **THE COST IS NOW MEASURED, NOT GUESSED**: `_dbPersistStats` (bytes,
+  stringifyMs, worst, writes, coalesced) on `/api/version` and on the health
+  check, a warning in the log the first three times a write holds the thread
+  over 300 ms naming the size — because on a 12-month account this figure is
+  the next suspect if p95 stays high, and nobody could read it before.
+
+**Connections → 🩺 Health Check → "Server thread"** now leads the panel:
+the last db.json write's size and how long it held the thread (amber over
+300 ms, with "every user waits for this on each scan"), whether PDF work is on
+the worker or has fallen back onto the request thread (red), and gzip.
+
+NOT done, deliberately, in this pass: caching `/api/orders` (p50 is 12 ms —
+not where the time goes) and coalescing the client polls. The one open
+question is the week view's 26k-4xx bursts on some days; the app's 401 handler
+clears the token before reloading so it is not a reload loop, and which path
+produced them needs the Railway log for that day.
+
+Verified 26 API checks (`perf-e2e.js`: gzip on JSON and JS, identity for a
+client that cannot take it, PDF and PNG untouched; a 12-page label import
+matching 12/12 with 12 files on disk; 12 renders through the worker with 0
+restarts; the version and health fields; ten rapid writes → one file write
+holding the final state; a write in its debounce window surviving SIGTERM;
+`PDF_WORKERS=0` importing and rendering identically in-process; and the
+ping-wait comparison above), 6 OCR checks (`perf-ocr-e2e.js`), 10 browser
+checks on desktop and a Pixel 5 (`br-perf.js`), plus `npm test` 6,
+`br-preview` 24 and `email-off-e2e` 13 re-run green.
+
+TEST GOTCHA: `pgrep -f <data-dir>` matches the shell running it — the fourth
+time this file has recorded that trap. Kill a test server by scanning
+`/proc/*/environ` for its `PORT=`.

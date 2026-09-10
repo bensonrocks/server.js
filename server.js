@@ -5,6 +5,8 @@ process.on('uncaughtException',  (err) => console.error('[CRASH] uncaughtExcepti
 process.on('unhandledRejection', (err) => console.error('[CRASH] unhandledRejection:', err?.stack || err));
 
 const express    = require('express');
+const compression = require('compression');
+const pdfPool    = require('./lib/pdf-pool');
 const multer     = require('multer');
 const { parse }  = require('csv-parse/sync');
 const { v4: uuidv4 } = require('uuid');
@@ -138,6 +140,21 @@ async function runOcr(buffer, extraParams = {}, worker = null) {
 }
 
 const app    = express();
+// GZIP EVERY COMPRESSIBLE RESPONSE. Railway's traffic chart showed 40–80 MB
+// egress bursts every few minutes against near-zero ingress: the orders list
+// JSON and the 1.2 MB app.js were going out raw, and on the phones the floor
+// works from over 5G that is time spent watching a spinner whether or not the
+// server is busy. PDFs/PNGs are already compressed and are skipped by the
+// content-type filter; anything under 1 KB is not worth the CPU.
+app.use(compression({ threshold: 1024 }));
+// The PDF worker thread: pdf-parse, pdfjs rendering and pdf-lib page splits
+// used to hold the ONE request thread for seconds per page, so a label import
+// or the background label pass queued every user's click behind it (p50 12 ms,
+// p99 20 s on the Railway response-time chart). Ping it once at boot so the
+// log says whether it is carrying the work or the in-process fallback is.
+pdfPool.ping().then(c => {
+  console.log(`[IdealOne] PDF worker thread: available (render ${c.renderAvailable ? 'yes' : 'no'}, text ${c.pdfParse ? 'yes' : 'no'}, split ${c.pdfLib ? 'yes' : 'no'}, workers ${pdfPool.snapshot().size})`);
+}).catch(e => console.warn('[IdealOne] PDF worker thread unavailable — PDF work stays in-process:', e.message));
 const UPLOAD_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per file
 const UPLOAD_MAX_ROWS  = 5000;
 
@@ -1189,12 +1206,30 @@ function readDb() {
 // but one tenant's write never blocks another's.
 const _dbWriting = new Map();        // tenantId -> bool
 const _dbWritePending = new Map();   // tenantId -> bool
+// THE STRINGIFY IS THE ONE PART OF A WRITE THAT BLOCKS THE THREAD, and it is
+// the whole db.json every time — so its cost is a fact worth reading off the
+// health check rather than guessing at. `_dbPersistStats` carries the last
+// size and duration; anything over DB_PERSIST_SLOW_MS is said in the log.
+const DB_PERSIST_SLOW_MS = 300;
+const _dbPersistStats = { bytes: 0, stringifyMs: 0, lastAt: null, writes: 0, coalesced: 0, slow: 0, maxMs: 0 };
 function _persistDb(tenantId) {
   if (_dbWriting.get(tenantId)) { _dbWritePending.set(tenantId, true); return; }
   _dbWriting.set(tenantId, true);
   let json;
+  const t0 = Date.now();
   try { json = JSON.stringify(_dbCacheByTenant.get(tenantId)); }
   catch (e) { console.error('[writeDb] stringify error:', e.message); _dbWriting.set(tenantId, false); return; }
+  {
+    const ms = Date.now() - t0;
+    _dbPersistStats.bytes = json.length; _dbPersistStats.stringifyMs = ms; _dbPersistStats.lastAt = new Date().toISOString();
+    _dbPersistStats.writes++; if (ms > _dbPersistStats.maxMs) _dbPersistStats.maxMs = ms;
+    if (ms > DB_PERSIST_SLOW_MS) {
+      _dbPersistStats.slow++;
+      if (_dbPersistStats.slow <= 3 || _dbPersistStats.slow % 50 === 0) {
+        console.warn(`[writeDb] serialising db.json (${(json.length / 1048576).toFixed(1)} MB) held the thread for ${ms} ms — every user waits for this on each write; the 12-month archive keeps it bounded, and Connections → Health Check shows the figure`);
+      }
+    }
+  }
   const dbFile = tenantStore.tenantDbFile(tenantId);
   const tmp = dbFile + '.tmp';
   fs.writeFile(tmp, json, err => {
@@ -1211,13 +1246,42 @@ function _persistDb(tenantId) {
     });
   });
 }
+// A BURST OF WRITES IS ONE SERIALISATION, NOT ONE PER WRITE. Seven packers
+// scanning is several writeDb calls a second, and each one used to schedule
+// its own full stringify on the next tick — the in-flight/pending pair
+// coalesced some, but a burst still paid the blocking cost several times for
+// the same end state. Persistence now waits DB_PERSIST_DEBOUNCE_MS after the
+// LAST write (never longer than DB_PERSIST_MAX_WAIT_MS after the first), so a
+// burst lands as one write of the final state. The scan journal already covers
+// the deferred window for counted scans, flushDb() is still immediate, and a
+// shutdown flushes anything still waiting (see gracefulShutdown).
+const DB_PERSIST_DEBOUNCE_MS = parseInt(process.env.DB_PERSIST_DEBOUNCE_MS || '', 10) || 250;
+const DB_PERSIST_MAX_WAIT_MS = parseInt(process.env.DB_PERSIST_MAX_WAIT_MS || '', 10) || 2000;
+const _dbPersistTimers = new Map();  // tenantId -> { timer, firstAt }
+function _flushPersistTimer(tenantId) {
+  const t = _dbPersistTimers.get(tenantId);
+  if (!t) return false;
+  clearTimeout(t.timer);
+  _dbPersistTimers.delete(tenantId);
+  _persistDb(tenantId);
+  return true;
+}
+function _flushAllPersistTimers() {
+  for (const tenantId of [..._dbPersistTimers.keys()]) _flushPersistTimer(tenantId);
+}
 function writeDb(data) {
   const tenantId = tenantContext.currentTenantId();
   _dbCacheByTenant.set(tenantId, data);
-  // Defer JSON.stringify to the NEXT event loop tick so any pending res.json()
-  // calls in the current tick are not blocked by a potentially-slow stringify.
-  // (A large db.json with many batches was causing 30s+ event-loop stalls.)
-  setImmediate(() => _persistDb(tenantId));
+  const now = Date.now();
+  const t = _dbPersistTimers.get(tenantId);
+  if (t) {
+    _dbPersistStats.coalesced++;
+    if (now - t.firstAt >= DB_PERSIST_MAX_WAIT_MS) { _flushPersistTimer(tenantId); return; }
+    clearTimeout(t.timer);
+    t.timer = setTimeout(() => _flushPersistTimer(tenantId), Math.min(DB_PERSIST_DEBOUNCE_MS, DB_PERSIST_MAX_WAIT_MS - (now - t.firstAt)));
+    return;
+  }
+  _dbPersistTimers.set(tenantId, { firstAt: now, timer: setTimeout(() => _flushPersistTimer(tenantId), DB_PERSIST_DEBOUNCE_MS) });
 }
 
 // Ensure database is flushed to disk before continuing (used for critical ops like uploads)
@@ -1232,8 +1296,8 @@ function flushDb() {
       if (writeStarted && !isWriting) return resolve();
       setTimeout(checkWrite, 10);
     };
-    // Trigger an immediate persist
-    _persistDb(tenantId);
+    // Trigger an immediate persist (a debounced one still waiting is folded in)
+    if (!_flushPersistTimer(tenantId)) _persistDb(tenantId);
     checkWrite();
   });
 }
@@ -1251,6 +1315,8 @@ function gracefulShutdown(signal) {
   if (_shuttingDown) return;
   _shuttingDown = true;
   console.log(`[IdealOne] ${signal} received — shutting down cleanly`);
+  // A write still sitting in its debounce window must not die with the process.
+  try { _flushAllPersistTimers(); } catch (e) { console.error('[IdealOne] flush on shutdown:', e.message); }
   const done = () => {
     // Final safety flush of the global store (users/sessions) before exit.
     try { _persistGlobalDbSync(); } catch {}
@@ -7216,7 +7282,17 @@ function normStr(s) { return String(s || '').replace(/[\s\-_]/g, '').toUpperCase
 // Never run pdf-parse on pdf-lib re-saved single pages: pdf-parse (pdf.js
 // 1.10) frequently fails on pdf-lib output ("Invalid PDF structure" /
 // "bad XRef entry"), while original client/courier PDFs parse fine.
+// Off the request thread when the worker is up; the in-process version below
+// is the fallback and the reference implementation (the worker's copy must
+// stay identical — see lib/pdf-worker.js).
 async function extractPdfPageTexts(buffer) {
+  if (pdfPool.available()) {
+    try { return await pdfPool.pageTexts(buffer); }
+    catch (e) { if (!/worker unavailable|pdf worker/.test(e.message)) throw e; }
+  }
+  return extractPdfPageTextsInProcess(buffer);
+}
+async function extractPdfPageTextsInProcess(buffer) {
   const pageTexts = [];
   if (!pdfParse) return pageTexts;
   await pdfParse(buffer, {
@@ -7235,11 +7311,30 @@ async function extractPdfPageTexts(buffer) {
   return pageTexts;
 }
 
+// Split a PDF into single-page PDFs (Buffers, in page order) on the worker
+// thread, falling back to pdf-lib in-process when the worker is down.
+async function splitPdfPagesOffThread(buffer) {
+  if (pdfPool.available()) {
+    try { return await pdfPool.splitPages(buffer); }
+    catch (e) { if (!/worker unavailable|pdf worker/.test(e.message)) throw e; }
+  }
+  const src = await PDFDocument.load(buffer);
+  const n = src.getPageCount();
+  const pages = [];
+  for (let i = 0; i < n; i++) {
+    const single = await PDFDocument.create();
+    const [pg] = await single.copyPages(src, [i]);
+    single.addPage(pg);
+    pages.push(Buffer.from(await single.save()));
+  }
+  return pages;
+}
+
 async function splitWaybillPdf(pdfBuffer, batchId, orders) {
   const matched = {};
   try {
-    const pdfDoc   = await PDFDocument.load(pdfBuffer);
-    const numPages = pdfDoc.getPageCount();
+    const pageBufs = await splitPdfPagesOffThread(pdfBuffer);
+    const numPages = pageBufs.length;
     const dir      = path.join(WAYBILL_DIR, batchId);
     fs.mkdirSync(dir, { recursive: true });
 
@@ -7263,10 +7358,7 @@ async function splitWaybillPdf(pdfBuffer, batchId, orders) {
     catch (e) { console.error('[pdf-split] text extraction:', e.message); }
 
     for (let i = 0; i < numPages; i++) {
-      const single = await PDFDocument.create();
-      const [pg]   = await single.copyPages(pdfDoc, [i]);
-      single.addPage(pg);
-      const buf = Buffer.from(await single.save());
+      const buf = pageBufs[i];
 
       let assignedOrder = null;
 
@@ -7605,6 +7697,17 @@ async function mergedLabelPdf(ref) {
 }
 
 async function renderPdfPageToPng(buffer, pageIndex = 0, scale = 3) {
+  // The worker renders when it can; a render ERROR there is the same null the
+  // in-process version returns (logged), only a dead worker falls through.
+  if (pdfPool.available() && (pdfPool.caps ? pdfPool.caps.renderAvailable : LABEL_OCR_RENDER_AVAILABLE)) {
+    try { return await pdfPool.render(buffer, pageIndex, scale); }
+    catch (e) {
+      if (!/worker unavailable|pdf worker/.test(e.message)) { console.error('[pdf-render] page', pageIndex, e.message); return null; }
+    }
+  }
+  return renderPdfPageToPngInProcess(buffer, pageIndex, scale);
+}
+async function renderPdfPageToPngInProcess(buffer, pageIndex = 0, scale = 3) {
   if (!LABEL_OCR_RENDER_AVAILABLE) return null;
   let doc = null;
   try {
@@ -8000,8 +8103,11 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
   const importDir = path.join(LABEL_IMPORT_DIR, importId);
   fs.mkdirSync(importDir, { recursive: true });
 
-  const pdfDoc   = await PDFDocument.load(buffer);
-  const numPages = pdfDoc.getPageCount();
+  // One single-page PDF per page, split on the worker thread when it is up
+  // (a 29-page AWB is seconds of pdf-lib work); the in-process split is the
+  // fallback and produces byte-identical pages.
+  const pageBufs = await splitPdfPagesOffThread(buffer);
+  const numPages = pageBufs.length;
 
   const matchIndex = buildLabelMatchIndex();
 
@@ -8037,10 +8143,7 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
   catch (e) { parseError = true; console.error('[label-import] text extraction:', e.message); }
 
   for (let i = 0; i < numPages; i++) {
-    const single  = await PDFDocument.create();
-    const [pg]    = await single.copyPages(pdfDoc, [i]);
-    single.addPage(pg);
-    const pageBuf  = Buffer.from(await single.save());
+    const pageBuf  = pageBufs[i];
     const pageFile = `page_${i + 1}.pdf`;
     fs.writeFileSync(path.join(importDir, pageFile), pageBuf);
 
@@ -9527,6 +9630,9 @@ app.get('/api/version', (req, res) => {
     // very first boot. uncleanStops counts them over the marker's lifetime.
     lastStopClean: PERSISTENCE.lastStopClean,
     uncleanStops:  PERSISTENCE.uncleanStops || 0,
+    // What each db.json write costs the thread, and whether PDF work is off it.
+    db: { ..._dbPersistStats, debounceMs: DB_PERSIST_DEBOUNCE_MS },
+    pdfWorker: pdfPool.snapshot(),
   });
 });
 
@@ -21426,6 +21532,16 @@ app.get('/api/master/connections/health', (req, res) => {
         note: 'Counted since this server last started, for today (SGT). A restart resets it, so it is a floor, not a total.',
       };
     })(),
+    // WHAT THE ONE REQUEST THREAD IS PAYING FOR. "Users are experiencing a lag"
+    // is answered by two numbers, not a feeling: how long each db.json write
+    // holds the thread, and whether PDF work is running on the worker thread
+    // or has fallen back in-process.
+    server: {
+      db: { ..._dbPersistStats, debounceMs: DB_PERSIST_DEBOUNCE_MS,
+        note: 'stringifyMs is how long the last db.json write held the request thread; every user waits for it. coalesced = writes folded into one by the debounce.' },
+      pdfWorker: pdfPool.snapshot(),
+      gzip: true,
+    },
     // THE LABEL BROWSER — whether it can actually run here, and which stores
     // can use it. Reported from the floor as "zort has labels, why can't I
     // pull?": the answer is one of these four facts, and none was readable

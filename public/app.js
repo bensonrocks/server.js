@@ -12725,7 +12725,21 @@
         rows.push(`<div class="hint" style="color:#94a3b8">${esc(lb.note || '')}</div>`);
         return `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">Label browser (ZORT print-page labels)</b><div style="font-size:12px;margin-top:.25rem;display:grid;gap:.2rem">${rows.map(x => `<div>${x}</div>`).join('')}</div></div>`;
       })() : '';
+      // THE REQUEST THREAD IN NUMBERS. "Users are experiencing a lag" is a
+      // db.json write holding the thread, or PDF work that fell back onto it.
+      const sv = h.server;
+      const svRows = sv ? (() => {
+        const d = sv.db || {}, pw = sv.pdfWorker || {};
+        const mb = d.bytes ? (d.bytes / 1048576).toFixed(1) + ' MB' : '—';
+        const slow = (d.stringifyMs || 0) > 300;
+        return `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">Server thread</b><div style="font-size:12px;margin-top:.25rem;display:grid;gap:.2rem">` +
+          `<div>${dot(d.lastAt ? (slow ? A : G) : N)}db.json write: ${d.lastAt ? `${mb}, held the thread ${d.stringifyMs} ms (worst ${d.maxMs} ms) · ${d.writes} write${d.writes === 1 ? '' : 's'} this boot${d.coalesced ? `, ${d.coalesced} folded together` : ''}${slow ? ' — <b>every user waits for this on each scan</b>' : ''}` : 'none yet this boot'}</div>` +
+          `<div>${dot(pw.enabled && pw.caps ? G : (pw.enabled ? N : R))}PDF work: ${pw.enabled ? (pw.caps ? `on a worker thread (render ${pw.caps.renderAvailable ? 'yes' : 'no'}) · ${pw.done || 0} job${pw.done === 1 ? '' : 's'}${pw.avgMs != null ? `, avg ${(pw.avgMs / 1000).toFixed(1)}s` : ''}${pw.failed ? `, ${pw.failed} failed` : ''}${pw.crashes ? `, ${pw.crashes} worker restart${pw.crashes === 1 ? '' : 's'}` : ''}${pw.queued ? `, ${pw.queued} queued` : ''}` : 'worker not yet started') : '<b style="color:#dc2626">on the request thread</b> — the worker could not start, so a label import stalls every user while it runs'}</div>` +
+          `<div>${dot(sv.gzip ? G : A)}Responses ${sv.gzip ? 'gzipped' : 'not compressed'}</div>` +
+          `</div></div>`;
+      })() : '';
       out.innerHTML =
+        svRows +
         mpSection('Lazada — direct', h.lazada) +
         mpSection('Shopee — direct', h.shopee) +
         `<div style="margin-bottom:.7rem"><b style="font-size:.85rem">TikTok</b><div style="font-size:12px;margin-top:.25rem">${dot(N)}${esc(h.tiktok?.note || 'Via the Sales Channel Hub.')}</div></div>` +

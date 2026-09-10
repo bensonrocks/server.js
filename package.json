@@ -15,6 +15,7 @@
     "@napi-rs/canvas": "^1.0.2",
     "better-sqlite3": "^11.10.0",
     "bwip-js": "^4.11.1",
+    "compression": "^1.8.1",
     "csv-parse": "^5.5.3",
     "csv-stringify": "^6.4.4",
     "docxtemplater": "^3.69.0",
@@ -30,11 +31,11 @@
     "pdf-parse": "^1.1.1",
     "pdfjs-dist": "^3.11.174",
     "pizzip": "^3.1.7",
+    "playwright": "^1.61.1",
     "qrcode-generator": "^2.0.4",
     "sharp": "^0.33.5",
     "tesseract.js": "^5.1.1",
     "uuid": "^9.0.0",
-    "xlsx": "^0.18.5",
-    "playwright": "^1.61.1"
+    "xlsx": "^0.18.5"
   }
 }
