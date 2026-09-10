@@ -21368,7 +21368,7 @@ app.get('/api/master/connections/health', (req, res) => {
       }));
       const lastUnusable = (db.auditLog || []).slice(-600).reverse().find(e => e.type === 'sync_label_unusable');
       return {
-        available: a.ok, why: a.why || '', launchTestedAt: a.launchTestedAt || null,
+        available: a.ok, why: a.why || '', launchTestedAt: a.launchTestedAt || null, executable: a.executable || null,
         stores,
         lastUnusableAt: lastUnusable?.at || null, lastUnusableSaid: lastUnusable?.browser || '',
         note: 'ZORT\'s API hands out a link to its own print viewer, never the Lazada label PDF, so a store needs its ZORT WEB login saved and a browser that launches on this server for labels to be fetched automatically.',
@@ -24254,7 +24254,7 @@ async function drainZortOutbox() {
         entry.attempts = (entry.attempts || 0) + 1;
         // Long enough to carry the reason AND which gate stopped the label
         // browser — at 200 the floor read "Print it from th" and nothing after.
-        entry.lastError = String(err.message).slice(0, 700);
+        entry.lastError = String(err.message).slice(0, 1200);
         entry.nextAttemptAt = new Date(now + _zortBackoffMs(entry.attempts)).toISOString();
         if (entry.attempts >= 20 && !entry.stalled) {
           entry.stalled = true;

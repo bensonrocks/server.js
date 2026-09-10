@@ -8705,7 +8705,22 @@ keeps retrying."* Two defects, and the first is why the second was invisible.
   the tap and the health check say "Chromium cannot launch here" BEFORE a
   packer finds out. Fix on Railway: `ZORT_BROWSER_PATH` to an installed
   Chromium, or install its system libraries.
-- **`lastError` was cut at 200 characters** — hence "Print it from th". 700 now.
+- **`lastError` was cut at 200 characters** — hence "Print it from th". 1200 now
+  (the launch reason names every candidate it tried, and the advice comes after).
+- **THE SERVER FINDS CHROMIUM ITSELF.** Asked "how?" about `ZORT_BROWSER_PATH`
+  — the honest answer is that nobody should have to know a nix store path.
+  `_getBrowser` tries, in order: `ZORT_BROWSER_PATH` alone when set (an
+  operator who named a binary wants that binary or an error about it), else
+  Playwright's own download, then every Chromium on PATH or in the usual
+  places (`_systemChromiums`: `command -v chromium|chromium-browser|
+  google-chrome|…`, `/usr/bin/chromium`, …). Which one launched is reported
+  (`executable`) on the health check. **`nixpacks.toml`** adds `chromium` to
+  Railway's build via nix (`nixPkgs = ["...", "chromium"]` — the `...` keeps
+  the Node packages Nixpacks detects), a self-contained build with its own
+  libraries, so the deployment needs NO variable. HONEST LIMIT: the Railway
+  build itself is not verifiable from the sandbox; the proof is the Health
+  Check's "Label browser" line after the deploy, and `ZORT_BROWSER_PATH`
+  stays as the hatch if nix's binary is somewhere unexpected.
 - **STILL FETCHING IS NOT A FAILURE.** The tap holds the screen 8s; the worker
   signs in and waits for ZORT's viewer, which takes longer — and the route
   then quoted the PREVIOUS attempt's error as this one's. `_zortLabelInFlight`

@@ -12679,7 +12679,7 @@
       // are readable without tapping an order.
       const lb = h.labelBrowser;
       const lbRows = lb ? (() => {
-        const rows = [`${dot(lb.available ? G : R)}${lb.available ? `Browser launches on this server${lb.launchTestedAt ? ` (tested ${when(lb.launchTestedAt)})` : ''}` : `<b style="color:#dc2626">Browser cannot run on this server</b> — ${esc(lb.why || '')}`}`];
+        const rows = [`${dot(lb.available ? G : R)}${lb.available ? `Browser launches on this server${lb.launchTestedAt ? ` (tested ${when(lb.launchTestedAt)}${lb.executable ? ` · ${esc(lb.executable)}` : ''})` : ' (not yet tested this boot — no store with a web login, or the probe has not run)'}` : `<b style="color:#dc2626">Browser cannot run on this server</b> — ${esc(lb.why || '')}`}`];
         (lb.stores || []).forEach(s => {
           const what = !s.labelSync ? 'label pull is off' : !s.webLoginSet ? 'no ZORT web login saved — Lazada labels cannot be fetched (store form → 🔑 ZORT web login)'
             : s.loginBreakerTripped ? 'last sign-in FAILED — re-save the web password on the store form' : s.ready ? 'web login set — labels fetched automatically' : 'web login set, but the browser cannot run here';

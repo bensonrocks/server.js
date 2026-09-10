@@ -1,0 +1,16 @@
+# Railway builds this app with Nixpacks. The ZORT label browser
+# (lib/zort-web.js) needs a Chromium that can actually LAUNCH here: the
+# `playwright install chromium` in package.json's postinstall downloads one,
+# but the Nixpacks image lacks the shared libraries it needs (libnss3, libgbm
+# and friends), so every launch failed and Lazada labels were never fetched.
+#
+# The nix `chromium` package is self-contained — every library it needs comes
+# from the nix store — and lands on the PATH of the running service, where
+# lib/zort-web.js finds it by itself (`command -v chromium`). No variable to
+# set. "..." keeps the packages Nixpacks already detects for a Node app.
+#
+# Verify after deploy: Connections → Health Check → "Label browser" should
+# read "Browser launches on this server". If it still does not, set
+# ZORT_BROWSER_PATH on the service to the Chromium binary it names.
+[phases.setup]
+nixPkgs = ["...", "chromium"]
