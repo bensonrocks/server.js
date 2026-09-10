@@ -8334,14 +8334,19 @@ app.get('/api/label-imports/:id/pages/:idx/pdf', requireAuthOrToken, (req, res) 
 // still gets the PDF viewer then, a phone the honest broken icon.
 const LABEL_PNG_SCALES = { thumb: 1.2, full: 2.5 };
 app.get('/api/label-imports/:id/pages/:idx/png', requireAuthOrToken, async (req, res) => {
-  const { id, idx } = req.params;
-  const n = parseInt(idx) + 1;
-  if (!/^[A-Za-z0-9_-]+$/.test(String(id)) || !(n >= 1)) return res.status(400).json({ error: 'Bad page reference' });
-  const pdfPath = path.join(LABEL_IMPORT_DIR, id, `page_${n}.pdf`);
+  const n = parseInt(req.params.idx) + 1;
+  const id = path.basename(String(req.params.id || ''));
+  if (!/^[A-Za-z0-9_-]+$/.test(id) || !(n >= 1)) return res.status(400).json({ error: 'Bad page reference' });
+  // The import id and page index come off the URL, so the paths they name
+  // are RESOLVED and held inside the label-imports directory — a plain
+  // regex on the id is not a guard a reviewer (or CodeQL) can see through.
+  const root = path.resolve(LABEL_IMPORT_DIR) + path.sep;
+  const pdfPath = path.resolve(LABEL_IMPORT_DIR, id, `page_${n}.pdf`);
+  const size = req.query.size === 'full' ? 'full' : 'thumb';
+  const pngPath = path.resolve(LABEL_IMPORT_DIR, id, `page_${n}.${size}.png`);
+  if (!pdfPath.startsWith(root) || !pngPath.startsWith(root)) return res.status(400).json({ error: 'Bad page reference' });
   if (!fs.existsSync(pdfPath)) return res.status(404).json({ error: 'Page not found' });
   if (!LABEL_OCR_RENDER_AVAILABLE) return res.status(503).json({ error: 'Page rendering is not available on this server' });
-  const size = req.query.size === 'full' ? 'full' : 'thumb';
-  const pngPath = path.join(LABEL_IMPORT_DIR, id, `page_${n}.${size}.png`);
   try {
     if (!fs.existsSync(pngPath)) {
       const png = await renderPdfPageToPng(fs.readFileSync(pdfPath), 0, LABEL_PNG_SCALES[size]);
