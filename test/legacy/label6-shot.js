@@ -1,0 +1,23 @@
+const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const BASE = 'http://localhost:4636', ORD = '24944949';
+(async () => {
+  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const ctx = await b.newContext({ viewport: { width: 1400, height: 1000 } });
+  const p = await ctx.newPage();
+  await ctx.addInitScript(() => { window.print = function () {}; });
+  p.on('dialog', d => d.type() === 'prompt' ? d.accept('2') : d.accept());
+  await p.goto(BASE); await p.waitForTimeout(1500);
+  await p.fill('#loginName', 'demo'); await p.fill('#loginIC', 'demo');
+  await p.click('#loginBtn'); await p.waitForTimeout(3000);
+  await p.evaluate(() => document.querySelector('[data-tab="orders"]')?.click()); await p.waitForTimeout(2500);
+  await p.evaluate(() => [...document.querySelectorAll('.filter-chip')].find(c => /^all$/i.test(c.textContent.trim()))?.click());
+  await p.waitForTimeout(2000);
+  await p.evaluate(o => { const tr=[...document.querySelectorAll('tr')].find(t=>new RegExp(o).test(t.textContent)); tr?.querySelector('.btn-scan-now')?.click(); }, ORD);
+  await p.waitForTimeout(3000);
+  await p.click('#preprintCartonLabelsBtn'); await p.waitForTimeout(2500);
+  await p.evaluate(() => { const f=document.getElementById('cartonLabelFrame');
+    f.style.cssText='position:fixed;left:0;top:0;width:820px;height:980px;border:1px solid #ccc;background:#fff;z-index:99999'; });
+  await p.waitForTimeout(500);
+  await p.screenshot({ path: 'preprint.png', clip: { x: 0, y: 0, width: 820, height: 980 } });
+  await b.close(); console.log('shot taken');
+})();

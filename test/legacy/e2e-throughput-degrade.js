@@ -1,0 +1,20 @@
+const B = 'http://localhost:4691', MK = '201432547E';
+const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
+(async () => {
+  const l = await fetch(B + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'demo', password: 'demo' }) }).then(r => r.json());
+  const H = { 'x-auth-token': l.token, 'x-master-key': MK };
+  const r = await fetch(B + '/api/master/report/throughput?from=2020-01-01&to=2030-01-01', { headers: H });
+  ok(r.status === 200, `report still 200 with a record missing uploadedAt (got ${r.status})`);
+  const wb = XLSX.read(Buffer.from(await r.arrayBuffer()), { type: 'buffer' });
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets['Throughput'], { header: 1 }).slice(2);
+  const thr2 = rows.find(r => r[0] === 'THR-2');
+  console.log('  THR-2 row (stripped):', JSON.stringify(thr2));
+  ok(thr2 && thr2[2] === '—', 'Uploaded At degrades to "—", not a crash or a fabricated date');
+  ok(thr2 && thr2[3] !== '—', 'Completed At still populated (endTime independently present)');
+  ok(thr2 && thr2[4] === '—', 'Lead Time text is "—", never a guessed number');
+  ok(thr2 && thr2[5] === '', 'Lead Time (hrs) cell left blank, not zero (zero would falsely mean "instant")');
+  ok(wb.SheetNames.includes('Notes'), 'Notes sheet appears explaining the blank, since at least one row is blank');
+  console.log('\n' + (fails.length ? `${fails.length} FAILED` : 'ALL PASS'));
+  process.exit(fails.length ? 1 : 0);
+})().catch(e => { console.error(e); process.exit(1); });

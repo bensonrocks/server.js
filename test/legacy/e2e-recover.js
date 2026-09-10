@@ -1,0 +1,22 @@
+const B = 'http://localhost:4697', MK = '201432547E';
+const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
+(async () => {
+  const l = await fetch(B + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'demo', password: 'demo' }) }).then(r => r.json());
+  const H = { 'x-auth-token': l.token, 'x-master-key': MK };
+  const r = await fetch(B + '/api/master/report/throughput?from=2020-01-01&to=2030-01-01', { headers: H });
+  ok(r.status === 200, `report 200 (got ${r.status})`);
+  const wb = XLSX.read(Buffer.from(await r.arrayBuffer()), { type: 'buffer' });
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets['Throughput'], { header: 1 }).slice(2);
+  const hist = rows.find(r => r[0] === 'HIST-1');
+  console.log('  HIST-1 row (audit stripped, batch live):', JSON.stringify(hist));
+  ok(hist && hist[2] !== '—', `Uploaded At RECOVERED from the live batch, not blank (got "${hist && hist[2]}")`);
+  ok(hist && hist[4] !== '—', `Lead Time now computed, not "—" (got "${hist && hist[4]}"`);
+  ok(hist && typeof hist[5] === 'number' && hist[5] >= 0, `Lead Time (hrs) is a real number (${hist && hist[5]})`);
+  const notes = wb.SheetNames.includes('Notes') ? XLSX.utils.sheet_to_json(wb.Sheets['Notes'], { header: 1 }) : [];
+  const notesText = notes.map(r => r[0]).join(' | ');
+  console.log('  Notes sheet:', notesText);
+  ok(/recovered/i.test(notesText), 'Notes sheet explains the recovery happened');
+  console.log('\n' + (fails.length ? `${fails.length} FAILED` : 'ALL PASS'));
+  process.exit(fails.length ? 1 : 0);
+})().catch(e => { console.error(e); process.exit(1); });
