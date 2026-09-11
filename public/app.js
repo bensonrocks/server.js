@@ -9283,6 +9283,7 @@
 </html>`;
 
     const w = window.open('', '_blank', 'width=440,height=650');
+    if (!w) { alert('Please allow pop-ups to print the waybill label.'); return; }
     w.document.write(html);
     w.document.close();
     w.focus();
@@ -19604,6 +19605,7 @@
         return `<div class="card"><div class="qr">${svg}</div><div class="bid">${l.location_id}</div><div class="meta">${l.kind === 'bulk' ? 'BULK' : 'PICK FACE'} · ${(l.environment || 'dry').toUpperCase()}${l.capacity ? ' · max ' + l.capacity : ''}</div></div>`;
       }).join('');
       const win = window.open('', '_blank');
+      if (!win) { alert('Please allow pop-ups to print bin labels.'); return; }
       win.document.write(`<html><head><title>Bin Labels</title><style>
         body{font-family:sans-serif;margin:10mm}
         .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8mm}
@@ -20310,6 +20312,7 @@
       const skuCell = p => `${esc(p.sku)}${p.barcode ? `<div style="font-family:monospace;font-weight:400;font-size:.8rem;color:#334155">&#9647; ${esc(p.barcode)}</div>` : ''}`;
       const rows = w.picks.map(p => `<tr><td style="font-family:monospace;font-weight:700;font-size:1.05rem">${esc(binText(p))}</td><td style="font-weight:600">${skuCell(p)}</td><td>${esc(p.description)}</td><td style="text-align:right;font-size:1.15rem;font-weight:700">${p.total_qty}</td><td style="width:2.2rem;border:1px solid #999"></td></tr>`).join('');
       const win = window.open('', '_blank');
+      if (!win) { alert('Please allow pop-ups to print the wave pick sheet.'); return; }
       win.document.write(`<html><head><title>Wave Pick — ${esc(w.name)}</title><style>
         body{font-family:sans-serif;padding:20px} h1{font-size:1.3rem}
         table{width:100%;border-collapse:collapse;margin-top:1rem} th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;font-size:.9rem}

@@ -9050,3 +9050,55 @@ checks on desktop and a Pixel 5 (`br-perf.js`), plus `npm test` 6,
 TEST GOTCHA: `pgrep -f <data-dir>` matches the shell running it — the fourth
 time this file has recorded that trap. Kill a test server by scanning
 `/proc/*/environ` for its `PORT=`.
+
+### TWO ROWS IN SYSTEM OUTAGES — one was noise, one crashed a packer's print
+
+Reported from the floor with both rows open (10 Sep 2026). They are unrelated
+to each other and only one was a fault.
+
+**1. A BLOCKED POP-UP CRASHED THE PRINT BUTTON.** `TypeError: Cannot read
+properties of null (reading 'document')` at `printWaybillLabel`, last user
+PACK3. `window.open` returns **null** when a browser blocks the pop-up, and the
+next line read `.document` off it — so a packer pressed 🖨 at the bench, got no
+label, and got the full-screen tech-error dialog instead.
+
+This is the SAME trap the carton label already documents ("a pop-up outside a
+click handler is blocked by every browser"), which was solved there by moving
+to a hidden iframe. `printWaybillLabel` was never given the same treatment.
+
+- A **census** of every `window.open` in the three client apps (the toLocale
+  discipline) found SIX call sites already guarded in one line and THREE that
+  dereferenced blind: the waybill label (the one that fired), **bin labels**
+  and the **wave pick sheet**. All three now carry the same
+  `if (!w) { alert('Please allow pop-ups to …'); return; }` as their six
+  siblings. The Gmail OAuth pop-up was already safe (`popup?.closed`), and the
+  four `window.open(url)` calls never dereference.
+- **The guard is the one-line alert, not an iframe.** These are all fired from
+  a real click, where a pop-up is allowed unless the person has blocked them
+  deliberately — so the honest answer is to say so, not to re-plumb three
+  working print paths. (The carton label needed the iframe because it
+  auto-prints with nobody pressing anything.)
+
+**2. `BadRequestError: request aborted` on `/api/errors` was never a fault.**
+A browser posted an error report and went away before the body finished
+arriving (closed tab, lost signal, navigation); `raw-body` throws with
+`code: 'ECONNABORTED'`, the Express error middleware filed it as a red office
+outage — and since `/api/errors` IS the reporting route, **the error reporter
+reported its own aborted request.**
+
+- The middleware now detects `ECONNABORTED` / `ECONNRESET` / `request.aborted`
+  and **logs it (`[aborted]`) without recording it**. Same reasoning that
+  already keeps 4xx out of that list: the system working as designed is not an
+  outage, and a red row about a closed tab buries the ones worth reading.
+- **It is an exclusion, not a mute.** A complete error report is still accepted
+  and still recorded (asserted), and a genuine throw still files as before.
+- No reply is attempted when the socket is already gone; `headersSent` still
+  hands back to Express.
+
+Verified 16 checks (`abort-e2e.js`): three aborted POSTs file NO row and leave
+nothing on disk while still being logged, a real report is still recorded, and
+— in a real browser with `window.open` stubbed to null, which is exactly what a
+blocker does — the REAL 🖨 reprint button on a completed order alerts about
+pop-ups, shows NO tech-error dialog and files nothing, on desktop and a Pixel 5.
+**The pre-fix build fails 12 of the 16 and reproduces both screenshots exactly**
+(2 outage rows from the aborts; the dialog shown and `reading 'document'` filed).

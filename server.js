@@ -30712,6 +30712,23 @@ const PORT = process.env.PORT || 3000;
 // every route, which is what makes Express treat it as the error handler.
 app.use((err, req, res, next) => {
   const detail = String(err?.message || err || 'Unknown error').slice(0, 500);
+  // THE CALLER WENT AWAY MID-REQUEST — THAT IS NOT A FAULT OF OURS. A closed
+  // tab, a phone that lost signal, or a navigation while a POST body is still
+  // arriving makes the body parser throw `request aborted` (raw-body sets
+  // ECONNABORTED). Nothing here failed and nobody is left to read a reply.
+  // Recording it filed a RED System Outage row about a browser being closed —
+  // and because `/api/errors` is ITSELF the reporting route, the first one seen
+  // live was the error reporter reporting its own aborted request. Same
+  // reasoning that already keeps 4xx out of that list: the system working as
+  // designed is not an outage. Logged, never filed.
+  const clientWentAway = err?.code === 'ECONNABORTED' || err?.code === 'ECONNRESET'
+    || err?.type === 'request.aborted' || /request aborted/i.test(detail);
+  if (clientWentAway) {
+    console.warn('[aborted]', req.method, req.originalUrl, '— the caller went away before the body finished arriving');
+    if (res.headersSent) return next(err);
+    if (req.destroyed || res.destroyed) return;   // nobody left to answer
+    return res.status(400).json({ error: 'Request aborted.' });
+  }
   console.error('[unhandled]', req.method, req.originalUrl, '—', detail);
   res.locals._errDetail = detail;
   res.locals._errStack  = String(err?.stack || '').slice(0, 4000);
