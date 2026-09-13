@@ -129,6 +129,17 @@ browser suite's Chromium default legitimately lives under `/opt`. Proved by
 putting `label-parcels-e2e` back into `ci` and watching it refuse with exit 2.
 Grepping was never a control. This is.
 
+**AND THE CHECK THAT WOULD HAVE CAUGHT ALL THREE — `npm run test:fresh`.**
+The guard above catches paths; it cannot catch a suite reading a file that is
+simply not committed. Nothing run in the working tree can, because the file is
+sitting right there. So `scripts/verify-fresh.sh` clones HEAD into a temp
+directory — which by construction holds only what is committed — copies
+node_modules (the risk is missing FILES, not missing dependencies) and runs
+the fence and the ci tier there with `TEST_CHROMIUM` pointed at nothing.
+Result on `a068dd3`: **fence 6, ci tier 126, green**. That is evidence a push
+will be green rather than a third assurance that it should be. It is rule 4 of
+the plan now, before every push.
+
 The diagnosis was made without the CI log — this session has no
 code-scanning or Actions access and no `gh`. What settled it was which job
 did NOT fail: `fence` shares `npm ci`, the native rebuild and booting the

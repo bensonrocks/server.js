@@ -7,9 +7,13 @@ Owner of the schedule: the Sunday routine. Owner of the decisions: Benson.
 1. Work ONLY on the next unticked week below. One week per Sunday. Never two.
 2. Branch `claude/ecommerce-order-dashboard-cxMNo`. Never another branch.
 3. Nothing a user sees changes. Every item is a move, a test, or a measurement.
-4. Before pushing: `npm test` green, the boot smoke test green, and every
-   suite listed under the item green. **A red suite means no push** — tick
-   nothing, write what failed in `docs/IMPROVEMENT_LOG.md`, stop.
+4. Before pushing: **`npm run test:fresh`** green — it clones HEAD into a
+   temp directory, so it sees only what is committed, and runs the fence and
+   the ci tier there with no browser available. Running the suites in the
+   working tree cannot catch a suite reading an untracked file, which is what
+   turned the CI suites job red three times on 13 Sep. Then every suite
+   listed under the item green. **A red suite means no push** — tick nothing,
+   write what failed in `docs/IMPROVEMENT_LOG.md`, stop.
 5. One commit per week's item, message starting `Plan W<n>:`. Push with
    `git push -u origin claude/ecommerce-order-dashboard-cxMNo`. Never
    `--no-verify`.
