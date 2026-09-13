@@ -71,3 +71,20 @@ browser even when compression is working.
 `probe.js`, `live*.js`) — they were investigations, not suites. Nothing
 surviving required them; that was checked by grepping every remaining file for
 `require('./<name>')` after the deletion, not before.
+
+## A ci-tier suite may not reach outside the repo — the runner enforces it
+
+Three times on 13 Sep a suite passed here and could not have passed on a
+fresh checkout, each for the same reason and each found by hand: absolute
+paths to the build sandbox, then to the session scratchpad, then to
+`/root/.claude/uploads/<session>/` — files the user had uploaded into the
+session. `test/run-suites.js` refuses to run a `ci`-tier suite whose source
+carries an absolute path under `/root`, `/home`, `/tmp`, `/opt`, `/Users`,
+`/var`, `/mnt` or `/media`, and names the path. Outside the ci tier it is a
+note, because a browser suite's Chromium default legitimately lives in
+`/opt`.
+
+`label-parcels-e2e` is tier `needs-fixtures` for exactly this: it reads two
+REAL customer shipping labels, carrying a name and a delivery address, which
+must never be committed to a repo. It runs here; it cannot run in CI until
+someone synthesises an equivalent two-page label with numbers only.

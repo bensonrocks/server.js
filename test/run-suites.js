@@ -60,6 +60,40 @@ function pick(manifest, argv) {
   return all.filter(s => s.tier === tier);
 }
 
+// A CI SUITE MAY NOT REACH OUTSIDE THE REPO. Three times in one day a suite
+// passed here and could not possibly pass on a fresh checkout, each time for
+// the same reason and each time found by hand: absolute paths to the build
+// sandbox, to the session scratchpad, and finally to /root/.claude/uploads —
+// files the USER had uploaded into the session, which exist on exactly one
+// machine in the world. Grepping for them is not a control; this is.
+//
+// Hard failure for the `ci` tier only. Elsewhere these paths are legitimate
+// (a browser suite's Chromium default lives under /opt), so it is a warning
+// and the suite still runs.
+const OUTSIDE_REPO = /['"](\/(?:root|home|tmp|opt|Users|var|mnt|media)\/[^'"]*)['"]/g;
+function offRepoPaths(file) {
+  let src = '';
+  try { src = fs.readFileSync(path.join(LEGACY, file), 'utf8'); } catch { return []; }
+  const hits = new Set();
+  for (const m of src.matchAll(OUTSIDE_REPO)) hits.add(m[1]);
+  return [...hits];
+}
+
+function preflight(chosen) {
+  const bad = [];
+  for (const s of chosen) {
+    const hits = offRepoPaths(s.file);
+    if (!hits.length) continue;
+    if (s.tier === 'ci') bad.push({ file: s.file, hits });
+    else console.log(`   note: ${s.file} reads outside the repo (${hits[0]}) — fine here, never put it in the ci tier`);
+  }
+  if (!bad.length) return;
+  console.error('\nRefusing to run: a ci-tier suite reaches outside the repo, so it cannot pass on a fresh checkout.');
+  for (const b of bad) console.error(`  ${b.file}\n    ${b.hits.join('\n    ')}`);
+  console.error('Give it a committed fixture, or move it out of the ci tier with a note saying why.');
+  process.exit(2);
+}
+
 function runOne(suite) {
   return new Promise(resolve => {
     const started = Date.now();
@@ -89,6 +123,7 @@ function runOne(suite) {
   const manifest = loadManifest();
   const chosen = pick(manifest, process.argv.slice(2));
   if (!chosen.length) { console.log('No suites selected.'); process.exit(0); }
+  preflight(chosen);
   console.log(`Running ${chosen.length} suite(s)\n`);
   const results = [];
   for (const suite of chosen) {

@@ -34,14 +34,14 @@ repo now and CI runs them.
 
 | | Before | After |
 |---|---|---|
-| Checks running in CI | 6 | **158** |
-| Checks runnable by one command | 6 | **610** (158 CI + 452 browser) |
-| Suites running in CI | 1 | **6** |
+| Checks running in CI | 6 | **126** |
+| Checks runnable by one command | 6 | **610** (126 CI + 452 browser + 32 local-only) |
+| Suites running in CI | 1 | **5** |
 | Suites living in the repo | 1 | **64** |
 | `server.js` lines | 30,700 | 30,780 |
 
-The 6 CI suites, all green, ~1m30s total, and none of them launches a
-browser: `email-off` 12, `gi-backfill` 33, `label-parcels` 32,
+The 5 CI suites, all green, ~1m15s total, none launching a browser and none
+reading anything outside the repo: `email-off` 12, `gi-backfill` 33,
 `onecart-ref` 50, `perf` 25, `perf-ocr` 6.
 
 **The finding this week actually produced, and it was not in the plan.**
@@ -104,9 +104,30 @@ run (`5d1c5fc`). Two faults:
   those two API suites is what dragged a browser install into a job that needs
   none. Both are `browser: true` now and run with the other 14.
 
-**So CI is 6 suites and 158 checks, not 202** — 44 fewer than the first cut
-claimed, and 152 more than ran before this week. Proved browser-free by
-running the tier with `TEST_CHROMIUM=/nonexistent/chromium`: 158 green.
+**AND A THIRD ABSOLUTE-PATH CLASS, found only after that.**
+`label-parcels-e2e` reads two label PDFs from
+`/root/.claude/uploads/<session-id>/` — **files the user uploaded into the
+session**, which exist on exactly one machine in the world. It was in the CI
+tier and could never have passed there. They are real customer shipping
+labels carrying a name and a delivery address, so committing them to a GitHub
+repo is out of the question — the same rule this system already applies to
+label URLs on the audit trail. It is tier `needs-fixtures` now, still run by
+`--tier api` here, with the reason on the suite record. W2 should synthesise
+an equivalent two-page label (numbers only, no person) and put it back.
+
+**So CI is 5 suites and 126 checks, not 202** — 76 fewer than the first cut
+claimed, and 120 more than ran before this week. Proved browser-free by
+running the tier with `TEST_CHROMIUM=/nonexistent/chromium`: 126 green.
+
+**THE GUARD, because three times in one day is a pattern, not bad luck.**
+Sandbox paths, then scratchpad paths, then session uploads — each found by
+hand, each after the previous sweep had "finished". `test/run-suites.js` now
+refuses to run a **ci-tier** suite whose source carries an absolute path
+under `/root`, `/home`, `/tmp`, `/opt`, `/Users`, `/var`, `/mnt` or `/media`,
+naming the path and the file; outside the ci tier it is a note, because a
+browser suite's Chromium default legitimately lives under `/opt`. Proved by
+putting `label-parcels-e2e` back into `ci` and watching it refuse with exit 2.
+Grepping was never a control. This is.
 
 The diagnosis was made without the CI log — this session has no
 code-scanning or Actions access and no `gh`. What settled it was which job
