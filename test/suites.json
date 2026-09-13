@@ -409,9 +409,9 @@
     },
     {
       "file": "lag-e2e.js",
-      "browser": false,
+      "browser": true,
       "selfBoots": true,
-      "tier": "ci",
+      "tier": "candidate",
       "timeoutMs": 420000
     },
     {
@@ -444,9 +444,9 @@
     },
     {
       "file": "web-note-e2e.js",
-      "browser": false,
+      "browser": true,
       "selfBoots": true,
-      "tier": "ci",
+      "tier": "candidate",
       "timeoutMs": 420000
     }
   ]

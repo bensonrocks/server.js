@@ -34,15 +34,15 @@ repo now and CI runs them.
 
 | | Before | After |
 |---|---|---|
-| Checks running in CI | 6 | **202** |
-| Checks runnable by one command | 6 | **610** (202 CI + 408 browser) |
-| Suites running in CI | 1 | **8** |
+| Checks running in CI | 6 | **158** |
+| Checks runnable by one command | 6 | **610** (158 CI + 452 browser) |
+| Suites running in CI | 1 | **6** |
 | Suites living in the repo | 1 | **64** |
 | `server.js` lines | 30,700 | 30,780 |
 
-The 8 CI suites, all green, 4m00s total: `email-off` 12, `gi-backfill` 33,
-`label-parcels` 32, `lag` 25, `onecart-ref` 50, `perf` 25, `perf-ocr` 6,
-`web-note` 19.
+The 6 CI suites, all green, ~1m30s total, and none of them launches a
+browser: `email-off` 12, `gi-backfill` 33, `label-parcels` 32,
+`onecart-ref` 50, `perf` 25, `perf-ocr` 6.
 
 **The finding this week actually produced, and it was not in the plan.**
 Only **22 of the 64 suites boot their own server.** The other **42 were
@@ -56,13 +56,14 @@ to boot a server for them, which is now W2. Until then `--tier api` and
 42 red suites that nobody can act on. `--tier all` still includes them, for
 the session that does the wiring.
 
-**Browser suites are on demand, not in CI.** 14 of them, each needing
-Chromium and taking 15–43s; CI would need a browser image and the job would
-run past 30 minutes. `npm run test:browser` runs them, and all 14 are green:
+**Browser suites are on demand, not in CI.** 16 of them, each needing
+Chromium and taking 15–90s; CI would need a browser image and the job would
+run past 30 minutes. `npm run test:browser` runs them, and all 16 are green:
 `abort-e2e` 16, `br-bulk-print` 32, `br-gi-backfill` 29, `br-gi-scan` 18,
 `br-label-parcels` 20, `br-label-ref` 28, `br-lag` 15, `br-onecart` 39,
 `br-onecart-ref` 31, `br-perf` 10, `br-preview` 23, `bulk-print-e2e` 38,
-`label-ref-e2e` 30, `onecart-e2e` 79 — **408 checks**.
+`label-ref-e2e` 30, `onecart-e2e` 79, `lag-e2e` 25, `web-note-e2e` 19 —
+**452 checks**.
 
 **THREE THINGS THAT ONLY SHOW UP WHEN A SUITE RUNS ON ITS OWN.** Every one of
 these passed in the session that wrote it and would have gone red the first
@@ -86,13 +87,33 @@ time CI ran it, which is the entire argument for doing this week.
    looked for `/home/user/server.js/...`. Rewritten to `__dirname`, so a suite
    keeps its files beside itself and two runs cannot collide.
 
-**And two CI suites needed a real Chromium.** `web-note-e2e` drives the ZORT
+**And two CI suites needed a real Chromium — which I first tried to solve the
+wrong way, and CI said so within the hour.** `web-note-e2e` drives the ZORT
 web-label worker signing in and capturing a PDF, and `lag-e2e`'s tap path
 fetches one the same way; both hard-coded the sandbox's
-`/opt/pw-browsers/chromium`. That path is now `TEST_CHROMIUM` with the sandbox
-as the default (60 files), and the CI job installs Playwright's Chromium and
-points at it. Left alone, those two would have been red in CI while green on
-every developer machine — the fastest way to teach people to ignore a red run.
+`/opt/pw-browsers/chromium`. That path is `TEST_CHROMIUM` now, defaulting to
+the sandbox (60 files). But the first cut then kept both in CI and installed
+Chromium for them, and the `End-to-end suites` job went red on the very first
+run (`5d1c5fc`). Two faults:
+
+- A plain contradiction of my own making: `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD`
+  was set on the same job that then ran `playwright install chromium`, so the
+  install is a no-op and the resolved `executablePath()` points at nothing.
+- The real fault underneath it: **the classification was wrong.** A suite that
+  launches Chromium is a browser suite whatever else it asserts, and calling
+  those two API suites is what dragged a browser install into a job that needs
+  none. Both are `browser: true` now and run with the other 14.
+
+**So CI is 6 suites and 158 checks, not 202** — 44 fewer than the first cut
+claimed, and 152 more than ran before this week. Proved browser-free by
+running the tier with `TEST_CHROMIUM=/nonexistent/chromium`: 158 green.
+
+The diagnosis was made without the CI log — this session has no
+code-scanning or Actions access and no `gh`. What settled it was which job
+did NOT fail: `fence` shares `npm ci`, the native rebuild and booting the
+server, so the fault had to be in what is unique to the suites job. Worth
+remembering as a technique; it is also why CI now does nothing that the
+local run cannot do.
 
 **Not done, stated rather than ticked.**
 - **CodeQL on the W1 commit came back at 182 — exactly where `bb5815b` left

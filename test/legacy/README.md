@@ -40,8 +40,12 @@ if it is green set `tier: "ci"` in `test/suites.json`.
 - `demo/demo` is the login. Some seed a second user `whguy/whpass1` (role
   warehouse) because of one-device-per-user.
 - Chromium comes from `TEST_CHROMIUM`, defaulting to the build sandbox's
-  `/opt/pw-browsers/chromium`. CI installs Playwright's own and sets that
-  variable. Never hard-code a browser path in a new suite.
+  `/opt/pw-browsers/chromium`. Never hard-code a browser path in a new suite.
+- **A suite that launches Chromium is `browser: true`**, whatever else it
+  asserts — `web-note-e2e` and `lag-e2e` drive the ZORT web-label worker and
+  do not touch a page, and classing them as API suites put a browser install
+  into a CI job that needs none, which is how CI first went red. CI runs
+  nothing that needs a browser.
 - A suite keeps its data dir, logs, screenshots and fixtures **beside
   itself** (`__dirname`). It must create everything it reads: `br-onecart`
   once read label PDFs that `onecart-e2e` prints, and passed only when that

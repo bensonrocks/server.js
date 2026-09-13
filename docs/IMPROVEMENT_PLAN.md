@@ -36,7 +36,8 @@ Suites live in `test/` from Week 1 onward. `npm test` runs all of them.
 - [x] **W1 · Tests into the repo.** *(done 13 Sep 2026 — see the log.)*
   Absolute paths rewritten in 119 files, 28 one-off diagnostics deleted,
   `test/suites.json` classifying all 64 suites, `test/run-suites.js`, and
-  `npm run test:suites` in CI as a second job. **202 checks in CI, from 6.**
+  `npm run test:suites` in CI as a second job. **158 checks in CI, from 6**
+  (the first cut claimed 202 and went red — see the log).
   NOT done and carried to W2: 42 of the 64 suites were written against a
   server started BY HAND in the build session and cannot run unattended
   until a harness boots one for them; the 14 self-booting browser suites

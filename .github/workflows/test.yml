@@ -61,13 +61,23 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm rebuild better-sqlite3 sharp
-      # TWO of the CI suites need a REAL Chromium: web-note-e2e drives the
-      # ZORT web-label worker signing in and capturing a PDF, and lag-e2e's
-      # tap path fetches one the same way. They default to the build
-      # sandbox's /opt/pw-browsers/chromium, which does not exist here — so
-      # install Playwright's own and point TEST_CHROMIUM at it. Without this
-      # both go red in CI while being perfectly green locally, which is the
-      # fastest way to teach people to ignore a red run.
-      - run: npx playwright install --with-deps chromium
-      - run: echo "TEST_CHROMIUM=$(node -e "console.log(require('playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
       - run: npm run test:suites
+
+# NOTHING IN THIS FILE LAUNCHES A BROWSER, deliberately.
+#
+# The first cut of the suites job put web-note-e2e and lag-e2e in CI and
+# installed Chromium for them — and it went red, while both were green on
+# every machine here. Two faults, one of them a plain contradiction:
+# PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD was set on the same job that then ran
+# `playwright install chromium`, so the install is a no-op and the resolved
+# executablePath points at nothing.
+#
+# The real fault was the classification. Those two LAUNCH Chromium (the ZORT
+# web-label worker signs in and captures a PDF), so they are browser suites
+# whatever else they assert, and calling them API suites is what dragged a
+# browser install into a job that needs none. They are `browser: true` now
+# and run with the other 14 on `npm run test:browser`.
+#
+# CI is therefore pure Node: 6 suites, 158 checks, no browser, no apt. That
+# is 44 fewer checks than the first cut claimed and 158 more than ran before
+# this week — and unlike 202 it is a number that actually runs.
