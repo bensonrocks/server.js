@@ -95,6 +95,12 @@ points at it. Left alone, those two would have been red in CI while green on
 every developer machine — the fastest way to teach people to ignore a red run.
 
 **Not done, stated rather than ticked.**
+- **CodeQL on the W1 commit came back at 182 — exactly where `bb5815b` left
+  it.** So W1 introduced nothing new, and one thing is now ruled out: the
+  extra alert is **not in any of the 28 deleted scripts**, or deleting them
+  would have taken it back to 181. It is in a file that survived. That
+  narrows the search to the 162 still there and is worth knowing before
+  anyone opens the Security tab.
 - The CodeQL +1 (181 → 182 on `bb5815b`) is **not identified**. This session
   has no code-scanning access and no `gh`, and grepping `test/legacy` for the
   usual medium patterns (URL-substring sanitisation, path expressions from
