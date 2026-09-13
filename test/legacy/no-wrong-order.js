@@ -1,7 +1,7 @@
 // "Don't let this happen again" — every way a label could land on the WRONG
 // order, against the REAL matcher.
 const { normStr, buildLabelMatchIndexFor, matchLabelPage } = require('./_fns.js');
-const { extractLabelFields } = require('/home/user/server.js/lib/label-extract.js');
+const { extractLabelFields } = require(require('path').join(__dirname,'../../lib/label-extract.js'));
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const M = (t, i) => matchLabelPage(t, extractLabelFields(t), i);
 const R = r => !r ? 'none' : r.ambiguous ? 'AMBIGUOUS:' + r.candidates.map(c => c.order).sort().join(',')

@@ -2,7 +2,7 @@
 // Onboard Client → ChaseCo → Portal logins. Flip it on, sign two portal
 // devices in, watch the row read "● in use ×2", flip it back off (asks
 // first) and watch both devices die.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const B = 'http://localhost:4636';
 const CL = 'ChaseCo', UID = 'pu-demo', PW = 'pudemo1';
@@ -10,7 +10,7 @@ const pLogin = () => fetch(`${B}/api/portal/login`, { method: 'POST', headers: {
   body: JSON.stringify({ client: CL, user: UID, password: PW }) });
 
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const ctx = await b.newContext({ viewport: { width: 1400, height: 950 } });
   const p = await ctx.newPage();
   p.on('pageerror', e => console.log('PAGE ERROR:', String(e).slice(0, 200)));

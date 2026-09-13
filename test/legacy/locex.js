@@ -1,7 +1,7 @@
 // locateExistingStock: stock uploaded as on-hand with NO bin (the "Stock OK,
 // no location" case). Applying a SKU+Location sheet must bin the on-hand
 // WITHOUT changing quantities, and never bin beyond on-hand.
-const path = '/home/user/server.js/lib/inventory-store.js';
+const path = require('path').join(__dirname,'../../lib/inventory-store.js');
 const os = require('os'), fs = require('fs');
 process.env.DATA_DIR = fs.mkdtempSync(os.tmpdir() + '/locex-');
 const inv = require(path);

@@ -2,7 +2,7 @@
 // and measured, a shutdown that flushes a pending write — and the reason for
 // all of it: a plain request must not queue behind a label import.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const S = __dirname;
 const PORT = 4801, B = `http://localhost:${PORT}`, DDIR = path.join(S, 'perf-data'), MASTER = process.env.MASTER_KEY || '201432547E';
 const LOG = path.join(S, 'perf-server.log');
@@ -17,7 +17,7 @@ const H = () => ({ 'Content-Type': 'application/json', 'x-auth-token': tok, 'x-m
 async function login() { const d = await J(await fetch(B + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'demo', password: 'demo' }) })); tok = d.token; }
 function xlsxOf(rows) { const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'S'); return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })); }
 const DBP = path.join(DDIR, 'tenants', 'default', 'db.json');
-const boot = async (env = {}) => { const c = spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR, ...env }, LOG); await waitUp(B + '/api/version'); await sleep(2500); await login(); return c; };
+const boot = async (env = {}) => { const c = spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR, ...env }, LOG); await waitUp(B + '/api/version'); await sleep(2500); await login(); return c; };
 const PDF = fs.readFileSync(path.join(S, 'perf-12.pdf'));
 
 // Fire pings every 40ms while `work` runs; report the worst wait.
@@ -54,7 +54,7 @@ async function renderAll(importId) {
   const jsRaw = await fetch(B + '/app.js', { headers: { 'Accept-Encoding': 'identity' } });
   ok(jsRaw.headers.get('content-encoding') == null && Buffer.from(await jsRaw.arrayBuffer()).length === jsBytes, 'a client that cannot take gzip still gets the identical file uncompressed');
   // How much smaller on the wire: gzip it ourselves at the same level compression uses.
-  const zlib = require('zlib'); const gz = zlib.gzipSync(fs.readFileSync('/home/user/server.js/public/app.js')).length;
+  const zlib = require('zlib'); const gz = zlib.gzipSync(fs.readFileSync(require('path').join(__dirname,'../../public/app.js'))).length;
   ok(gz < jsBytes / 3, `app.js on the wire: ${(jsBytes / 1024).toFixed(0)} KB → ~${(gz / 1024).toFixed(0)} KB`);
 
   // Seed 12 orders whose waybills the 12-page PDF prints.

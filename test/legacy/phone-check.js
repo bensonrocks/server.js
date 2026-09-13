@@ -1,8 +1,8 @@
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 (async () => {
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const page = await browser.newPage({ viewport: { width: 393, height: 851 } }); // Pixel 5 width
-  const S = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad/shots';
+  const S = require('path').join(__dirname, 'shots');
 
   await page.goto('http://localhost:4701/');
   await page.waitForSelector('#loginName', { timeout: 15000 });

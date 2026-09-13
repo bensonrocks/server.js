@@ -26,8 +26,8 @@ let tok = '';
 const H = () => ({ 'Content-Type': 'application/json', 'x-auth-token': tok, 'x-master-key': MASTER });
 async function login() { const d = await J(await fetch(B + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'demo', password: 'demo' }) })); tok = d.token; }
 const BASE_ENV = { PORT: String(PORT), ZORT_WEB_BASE: M, ZORT_LABEL_RETRY_MS: '2000', ZORT_BACKOFF_MS: '2000', ZORT_OUTBOX_MS: '3000',
-  ZORT_WEB_PROBE_DELAY_MS: '1500', ZORT_WEB_PDF_WAIT_MS: '1500', ZORT_WEB_NAV_TIMEOUT: '8000', ZORT_BROWSER_PATH: '/opt/pw-browsers/chromium' };
-const SERVER = process.env.SERVER_JS || '/home/user/server.js/server.js';
+  ZORT_WEB_PROBE_DELAY_MS: '1500', ZORT_WEB_PDF_WAIT_MS: '1500', ZORT_WEB_NAV_TIMEOUT: '8000', ZORT_BROWSER_PATH: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') };
+const SERVER = process.env.SERVER_JS || require('path').join(__dirname,'../../server.js');
 async function boot(ddir, extra) {
   fs.rmSync(ddir, { recursive: true, force: true }); fs.mkdirSync(ddir, { recursive: true });
   const c = spawnLogged([SERVER], { ...BASE_ENV, DATA_DIR: ddir, ...extra }, path.join(S, 'lag-server.log'));

@@ -9,7 +9,11 @@
     "audit": "npm audit --omit=dev",
     "audit:report": "npm audit --omit=dev --json > audit-report.json || true",
     "postinstall": "playwright install chromium || echo \"chromium not installed - the ZORT web-label worker will report itself unavailable\"",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:suites": "node test/run-suites.js --tier ci",
+    "test:api": "node test/run-suites.js --tier api",
+    "test:browser": "node test/run-suites.js --tier browser",
+    "test:all": "node test/run-suites.js --tier all"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.2",

@@ -9,9 +9,9 @@
 const fs   = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 
-const S      = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const S      = __dirname;
 const PORT   = 4747, MPORT = 4748;
 const B      = `http://localhost:${PORT}`, M = `http://localhost:${MPORT}`;
 const DDIR   = path.join(S, 'oc-data');
@@ -43,7 +43,7 @@ const orderOf = (db, no) => { for (const b of db.batches || []) { const o = (b.o
 
 async function makePdfs() {
   fs.rmSync(PDFDIR, { recursive: true, force: true }); fs.mkdirSync(PDFDIR, { recursive: true });
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const page = await browser.newPage();
   const specs = { 9001: ['585836014589150279', 'TT9001'], 9002: ['260907ABCDEF01', 'SPXSG0412345678'], 9003: ['172397910455623', 'LZSGD9999'], 9007: ['9007NEWORDER', 'LZSGD7777'] };
   for (const [id, [no, trk]] of Object.entries(specs)) {
@@ -60,7 +60,7 @@ async function makePdfs() {
   fs.rmSync(DDIR, { recursive: true, force: true });
   spawnLogged([path.join(S, 'onecart-mock.js')], { PORT: String(MPORT), OC_KEY: KEY, OC_PDF_DIR: PDFDIR }, path.join(S, 'oc-mock.log'));
   await waitUp(M + '/__ctl/calls');
-  spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'oc-server.log'));
+  spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'oc-server.log'));
   await waitUp(B + '/api/version');
   await sleep(2500);
 
@@ -180,7 +180,7 @@ async function makePdfs() {
   ok(!!stC?.onecart_shipped_at && /ship/i.test(stC.onecart_ship_status || ''), `confirmed shipped only once the channel's status moved (${stC?.onecart_ship_status})`);
   ok((dbC.auditLog || []).some(e => e.type === 'onecart_completion_pushed' && e.order === '260907ABCDEF01' && /ship/i.test(e.hubStatus || '')), 'audited onecart_completion_pushed with the hub status');
   ok(!(dbC.auditLog || []).some(e => e.type === 'onecart_completion_pushed' && e.order !== '260907ABCDEF01'), 'no other order was pushed');
-  const oc = require('/home/user/server.js/lib/onecart.js');
+  const oc = require(require('path').join(__dirname,'../../lib/onecart.js'));
   ok(!oc.isShippedStatus('ready_to_ship') && oc.isShippedStatus('shipped') && oc.isShippedStatus('COMPLETED') && !oc.isShippedStatus('pending'), 'ready_to_ship is NOT read as shipped');
 
   console.log('\n=== 🏷 Get Labels ===');

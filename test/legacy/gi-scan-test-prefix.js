@@ -4,7 +4,7 @@
 // Shapes taken from the real printed picking list (GI-138891 / PT 550983 /
 // Reference "260828 Bundling request: AO-000328 to AO-000329 - Koli") and from
 // the reported Orders screen (18-digit TikTok ids as order_number, no GI).
-const k = require('/home/user/server.js/lib/_keyfields-prefix-tmp.js');
+const k = require(require('path').join(__dirname,'../../lib/_keyfields-prefix-tmp.js'));
 
 const fails = [];
 const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };

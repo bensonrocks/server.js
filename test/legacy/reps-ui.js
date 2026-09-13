@@ -1,11 +1,11 @@
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const BASE = 'http://localhost:4636', MK = '201432547E';
 const J = async (p, o = {}) => (await fetch(BASE + p, { ...o, headers: { 'content-type': 'application/json', 'x-master-key': MK, ...(o.headers || {}) } })).json();
 (async () => {
   await J('/api/master/client-profiles/VisCo/portal-users', { method: 'POST',
     body: JSON.stringify({ id: 'vera', visibility: { overview: true, stock: true, orders: true, inbound: true, send: true, reports: true } }) });
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const p = await (await b.newContext({ viewport: { width: 1400, height: 950 } })).newPage();
   p.on('dialog', d => d.accept().catch(() => {}));
   await p.goto(BASE); await p.waitForTimeout(1500);

@@ -3,7 +3,7 @@
 // tap" (no dialog), and when the label lands in the background the pill and
 // the Label button repaint by themselves, with no reload and no tap.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
+const { chromium, devices } = require('playwright');
 const S = __dirname;
 const PORT = 4793, MPORT = 4794, B = `http://localhost:${PORT}`, M = `http://localhost:${MPORT}`;
 const DDIR = path.join(S, 'lag-br-data'), MASTER = process.env.MASTER_KEY || '201432547E';
@@ -30,8 +30,8 @@ const pillText = page => page.evaluate(() => document.getElementById('scanWaybil
   await waitUp(M + '/_hits');
   // Cap 0: the background never opens the browser, so a label only lands when
   // the harness taps for it — which is what proves the screen's own poll.
-  spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR, ZORT_WEB_BASE: M, ZORT_LABEL_RETRY_MS: '2000', ZORT_BACKOFF_MS: '2000', ZORT_OUTBOX_MS: '3000',
-    ZORT_WEB_PROBE_DELAY_MS: '1500', ZORT_WEB_PDF_WAIT_MS: '1500', ZORT_WEB_NAV_TIMEOUT: '8000', ZORT_BROWSER_PATH: '/opt/pw-browsers/chromium', ZORT_WEB_MAX_PER_PASS: '0', ZORT_WEB_RETRY_MS: '600000' }, path.join(S, 'lag-br-server.log'));
+  spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR, ZORT_WEB_BASE: M, ZORT_LABEL_RETRY_MS: '2000', ZORT_BACKOFF_MS: '2000', ZORT_OUTBOX_MS: '3000',
+    ZORT_WEB_PROBE_DELAY_MS: '1500', ZORT_WEB_PDF_WAIT_MS: '1500', ZORT_WEB_NAV_TIMEOUT: '8000', ZORT_BROWSER_PATH: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium'), ZORT_WEB_MAX_PER_PASS: '0', ZORT_WEB_RETRY_MS: '600000' }, path.join(S, 'lag-br-server.log'));
   await waitUp(B + '/api/version'); await sleep(2500);
   // The API side signs in as a DIFFERENT user — one active device per user,
   // and the browser below is demo.
@@ -45,7 +45,7 @@ const pillText = page => page.evaluate(() => document.getElementById('scanWaybil
   const orders = await J(await fetch(B + '/api/orders?range=all', { headers: H(tok) }));
   ok(Array.isArray(orders) && orders.filter(o => /^LG-/.test(o.order_number)).length === 4, 'seed: four synced orders');
 
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, ctxOpts, tag, openOrder] of [['desktop', { viewport: { width: 1280, height: 900 } }, 'desktop', 'LG-PDF'], ['Pixel 5', { ...devices['Pixel 5'] }, 'pixel5', 'LG-NOPDF3']]) {
     console.log(`\n=== ${label} ===`);
     const ctx = await browser.newContext(ctxOpts); const page = await ctx.newPage();

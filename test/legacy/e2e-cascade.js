@@ -3,7 +3,7 @@
 // Page 2 is CSC-100's real label, with its GI captioned (EXACT).
 // Page 3 names CSC-200 and CSC-300 at once (must attach NOTHING).
 const B = 'http://localhost:4741';
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 
 const PAGES = [
@@ -17,7 +17,7 @@ const PAGES = [
 (async () => {
   // Build a REAL pdf by printing HTML through Chromium — synthetic pdf-lib
   // files are unreadable by this repo's pdf-parse (the documented trap).
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const page = await browser.newPage();
   await page.setContent(PAGES.map((h, i) =>
     `<div style="page-break-after:${i < PAGES.length - 1 ? 'always' : 'auto'};font:16px sans-serif">${h}</div>`).join(''));

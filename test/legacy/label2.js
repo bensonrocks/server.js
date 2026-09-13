@@ -1,10 +1,10 @@
 // The label PRINTS ITSELF when the prompt fires — including carton 1 — and
 // carries a large order reference with the customer on it, plus the quantity.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const BASE = 'http://localhost:4636';
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const ctx = await b.newContext({ viewport: { width: 1400, height: 900 } });
   const p = await ctx.newPage();
   p.on('dialog', d => d.accept().catch(() => {}));

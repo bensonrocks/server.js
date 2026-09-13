@@ -31,7 +31,7 @@ const MK = '201432547E';
   const auditCount = async (type, order) => {
     await new Promise(r => setTimeout(r, 1500));
     const db = JSON.parse(require('fs').readFileSync(
-      '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad/sup/tenants/default/db.json', 'utf8'));
+      require('path').join(__dirname, 'sup/tenants/default/db.json'), 'utf8'));
     return (db.auditLog || []).filter(e => e.type === type && e.at >= T0 && (!order || e.order === order)).length;
   };
 

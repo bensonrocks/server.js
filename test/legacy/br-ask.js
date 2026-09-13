@@ -1,7 +1,7 @@
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails=[]; const ok=(c,m)=>{console.log((c?'PASS':'FAIL')+' - '+m); if(!c) fails.push(m);};
 (async () => {
-  const br = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const br = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const vp of [{w:1440,h:900,n:'desktop'},{w:393,h:851,n:'Pixel 5'}]) {
     const ctx = await br.newContext({ viewport:{width:vp.w,height:vp.h} });
     const p = await ctx.newPage();

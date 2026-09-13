@@ -1,7 +1,7 @@
 // The GI regexes must be linear on hostile input — this text comes off an
 // uploaded PDF / OCR pass, so it is uncontrolled. The FIRST cut of the caption
 // pattern did not finish 2,000 spaces in two minutes.
-const { extractLabelFields } = require('/home/user/server.js/lib/label-extract.js');
+const { extractLabelFields } = require(require('path').join(__dirname,'../../lib/label-extract.js'));
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 
 const BUDGET = 250; // ms — generous; the fixed pattern lands in single digits

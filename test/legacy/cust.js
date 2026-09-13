@@ -1,10 +1,10 @@
 // The customer name on the SCAN screen — the name a packer checks the box
 // against — read at a glance rather than at reference size.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const BASE = 'http://localhost:4636';
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, vp] of [['desktop', { width: 1400, height: 900 }], ['Pixel 5', { width: 393, height: 851 }]]) {
     const p = await (await b.newContext({ viewport: vp })).newPage();
     p.on('dialog', d => d.accept().catch(() => {}));

@@ -2,8 +2,8 @@
 // split-order case at the API level. Mock hub: GetShipmentLabels lists three
 // Pdf rows — box 1, box 2, and box 1 again.
 const http = require('http'); const fs = require('fs');
-const { PDFDocument } = require('/home/user/server.js/node_modules/pdf-lib');
-const zort = require('/home/user/server.js/lib/zort.js');
+const { PDFDocument } = require('pdf-lib');
+const zort = require(require('path').join(__dirname,'../../lib/zort.js'));
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 (async () => {
   const src = await PDFDocument.load(fs.readFileSync('/root/.claude/uploads/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/71fbf9ce-DisplayPdfByUrl_42.pdf'));

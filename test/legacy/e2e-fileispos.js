@@ -1,6 +1,6 @@
 // THE FILE IS THE POSITION. After a supersede, on-hand == the sheet's sum,
 // with no arithmetic left over — including rows that carry NO Location.
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const B='http://localhost:4717', MK='201432547E';
 const fails=[]; const ok=(c,m)=>{console.log((c?'PASS':'FAIL')+' - '+m); if(!c)fails.push(m);};
 (async()=>{

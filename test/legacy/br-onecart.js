@@ -4,9 +4,9 @@
 const fs   = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
+const { chromium, devices } = require('playwright');
 
-const S      = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const S      = __dirname;
 const PORT   = 4749, MPORT = 4750;
 const B      = `http://localhost:${PORT}`, M = `http://localhost:${MPORT}`;
 const DDIR   = path.join(S, 'oc-br-data');
@@ -74,17 +74,37 @@ async function waitStatus(page, re, ms = 20000) {
   return status(page);
 }
 
+// PRINT OUR OWN LABEL FIXTURES. This suite used to read oc-pdfs/ and assume
+// something had filled it — onecart-e2e.js prints them at the top of its own
+// run, so br-onecart passed only when that suite had just been run by hand in
+// the same session. Run on its own it reported "0 of 3 label(s) attached",
+// which reads as a broken Get Labels button and is nothing of the sort. The
+// ids are the mock's own orders (onecart-mock.js serves <id>.pdf).
+async function makePdfs() {
+  fs.rmSync(PDFDIR, { recursive: true, force: true }); fs.mkdirSync(PDFDIR, { recursive: true });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
+  const page = await browser.newPage();
+  const specs = { 9001: ['585836014589150279', 'TT9001'], 9002: ['260907ABCDEF01', 'SPXSG0412345678'], 9003: ['172397910455623', 'LZSGD9999'], 9007: ['9007NEWORDER', 'LZSGD7777'] };
+  for (const [id, [no, trk]] of Object.entries(specs)) {
+    await page.setContent(`<div style="font:18px sans-serif"><h1>SHIPPING LABEL</h1><p>Order No: ${no}</p><p>Tracking: ${trk}</p><p>To: Test Buyer</p></div>`);
+    fs.writeFileSync(path.join(PDFDIR, id + '.pdf'), await page.pdf({ format: 'A5' }));
+  }
+  await browser.close();
+}
+
 (async () => {
+  await makePdfs();
+  ok(fs.existsSync(path.join(PDFDIR, '9001.pdf')), 'label fixtures printed through Chromium');
   for (const [label, ctxOpts, tag] of [['desktop', { viewport: { width: 1280, height: 900 } }, 'desktop'], ['Pixel 5', { ...devices['Pixel 5'] }, 'pixel5']]) {
     fs.rmSync(DDIR, { recursive: true, force: true });
     spawnLogged([path.join(S, 'onecart-mock.js')], { PORT: String(MPORT), OC_KEY: KEY, OC_PDF_DIR: PDFDIR }, path.join(S, 'oc-br-mock.log'));
     await waitUp(M + '/__ctl/calls');
-    spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR, ONECART_BASE: M + '/api/v2' }, path.join(S, 'oc-br-server.log'));
+    spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR, ONECART_BASE: M + '/api/v2' }, path.join(S, 'oc-br-server.log'));
     await waitUp(B + '/api/version'); await sleep(2500);
     await fetch(B + '/api/master/users', { method: 'POST', headers: MH, body: JSON.stringify({ id: 'whguy', name: 'WH', password: 'whguy123', role: 'warehouse' }) });
 
     console.log(`\n=== ${label} ===`);
-    const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+    const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
     const ctx = await browser.newContext(ctxOpts);
     const page = await ctx.newPage();
     await login(page, 'demo', 'demo');
@@ -98,6 +118,14 @@ async function waitStatus(page, re, ms = 20000) {
     ok(await shown(page, '#onecartStoreForm'), 'the connect form opens');
     await page.fill('#ocClient', 'Betime Online');
     await page.fill('#ocKey', KEY);
+    // WORK MODE, chosen deliberately — this suite is the browser pass on the
+    // ORIGINAL work-order behaviour, the same scope onecart-e2e.js declares.
+    // The form now DEFAULTS to reference, where a label must never attach to
+    // a reference copy (the ring fence), so leaving the default made Get
+    // Labels report "0 of 3 attached" — the app behaving correctly and this
+    // suite asserting behaviour that predates reference mode. Reference mode
+    // has its own pass in br-onecart-ref.js.
+    await page.selectOption('#ocMode', 'work');
     await page.selectOption('#ocCompleteAction', 'ship');
     // The auto-label choice ASKS, and backing out puts it back to request-only.
     page.once('dialog', d => d.dismiss());

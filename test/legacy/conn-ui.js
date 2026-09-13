@@ -1,7 +1,7 @@
 // The Connections page: five sections, only the store table open by default,
 // each one remembering whether it was left open. And the probe's fifth question
 // — "is there actually a label?" — reachable from the store row.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const BASE = 'http://localhost:4636', MK = '201432547E', HUB = 'http://localhost:4926';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -25,7 +25,7 @@ const J = async (p, o = {}) => { const r = await fetch(BASE + p, { ...o, headers
   await J('/api/master/zort/stores', { method: 'POST', body: JSON.stringify({
     clientName: 'PbCo', storename: 'hub', apikey: 'k', apisecret: 's', endpoint: HUB, enabled: true, completeAction: 'none' }) });
 
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, vp] of [['desktop', { width: 1440, height: 950 }], ['Pixel 5', { width: 393, height: 851 }]]) {
     const ctx = await b.newContext({ viewport: vp });
     const p = await ctx.newPage();

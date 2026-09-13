@@ -3,7 +3,7 @@
 // carry ⚠ Resend. Resend says so honestly. A row stamped the OLD way heals on
 // read.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const S = __dirname;
 const PORT = 4797, B = `http://localhost:${PORT}`, DDIR = path.join(S, 'email-off-data'), MASTER = process.env.MASTER_KEY || '201432547E';
 const LOG = path.join(S, 'email-off-server.log');
@@ -18,7 +18,7 @@ const H = () => ({ 'Content-Type': 'application/json', 'x-auth-token': tok, 'x-m
 async function login() { const d = await J(await fetch(B + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'demo', password: 'demo' }) })); tok = d.token; }
 function xlsxOf(rows) { const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'S'); return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })); }
 const DBP = path.join(DDIR, 'tenants', 'default', 'db.json');
-const boot = async (env = {}) => { const c = spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR, EMAIL_USER: '', EMAIL_PASS: '', EMAIL_TO: '', ...env }, LOG); await waitUp(B + '/api/version'); await sleep(2500); await login(); return c; };
+const boot = async (env = {}) => { const c = spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR, EMAIL_USER: '', EMAIL_PASS: '', EMAIL_TO: '', ...env }, LOG); await waitUp(B + '/api/version'); await sleep(2500); await login(); return c; };
 
 (async () => {
   fs.rmSync(DDIR, { recursive: true, force: true }); fs.mkdirSync(DDIR, { recursive: true }); fs.rmSync(LOG, { force: true });

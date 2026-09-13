@@ -1,12 +1,12 @@
 // The Reclassify flow through the REAL UI: select completed orders on the
 // Orders tab, press ↺ Reclassify, choose Pending or Cancelled, type the
 // reason and the password, and watch the orders move.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const OUT = __dirname;
 
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const ctx = await b.newContext({ viewport: { width: 1400, height: 950 } });
   const p = await ctx.newPage();
   p.on('pageerror', e => console.log('PAGE ERROR:', String(e).slice(0, 160)));

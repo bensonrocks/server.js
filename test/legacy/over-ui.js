@@ -1,4 +1,4 @@
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const BASE = 'http://localhost:4636';
 // RESET THROUGH THE API, never by writing db.json under a running server —
@@ -15,7 +15,7 @@ const reseed = async () => {
   }
 };
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, vp] of [['Pixel 5', { width: 393, height: 851 }], ['desktop', { width: 1440, height: 950 }]]) {
     await reseed();
     const p = await (await b.newContext({ viewport: vp })).newPage();

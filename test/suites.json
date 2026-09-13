@@ -1,0 +1,453 @@
+{
+  "note": "tier ci = runs on every push. candidate = boots its own server, being verified. needs-harness = written against a server started by hand in the build session; it must boot and seed its own before it can run unattended (see docs/IMPROVEMENT_PLAN.md W1).",
+  "suites": [
+    {
+      "file": "abort-e2e.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-accept.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-ask.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-bulk-print.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-cascade.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-gi-backfill.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-gi-scan.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-identity.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-integration.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-invsup.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-label-parcels.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-label-ref.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-lag.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-locsup.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-nodef-regress.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-onecart-ref.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-onecart.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-perf.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-preview.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-stp-today.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-strep.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "br-thru-quick.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "bulk-print-e2e.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "e2e-applyloc.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-askfirst.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-cascade.js",
+      "browser": true,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "e2e-devdash-4671.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-devdash.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-fileispos.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-identity.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-intake.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-integration.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-invsup.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-loc-4711.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-loc.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-locsup.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-moved.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-newsku.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-nodefault.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-noloc.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-protdata.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-recover.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-shopify-4681.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-shopify.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-spell.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-stp-today.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-strep.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-supersede.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-throughput-4697.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-throughput-degrade.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-throughput.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-thru-regress.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-thru-today.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "e2e-wave.js",
+      "browser": false,
+      "selfBoots": false,
+      "tier": "needs-harness",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "email-off-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "gi-backfill-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "label-parcels-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "label-ref-e2e.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "lag-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "onecart-e2e.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
+      "file": "onecart-ref-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "perf-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "perf-ocr-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 420000
+    },
+    {
+      "file": "web-note-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 420000
+    }
+  ]
+}

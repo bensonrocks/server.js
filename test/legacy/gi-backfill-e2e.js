@@ -8,9 +8,9 @@
 const fs   = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 
-const S     = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const S     = __dirname;
 const PORT  = 4744;
 const B     = `http://localhost:${PORT}`;
 const DDIR  = path.join(S, 'gib');
@@ -23,7 +23,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 let child = null;
 async function boot() {
-  child = spawn('node', ['/home/user/server.js/server.js'], {
+  child = spawn('node', [require('path').join(__dirname,'../../server.js')], {
     env: { ...process.env, PORT: String(PORT), DATA_DIR: DDIR },
     stdio: ['ignore', fs.openSync(path.join(S, 'gib.log'), 'a'), fs.openSync(path.join(S, 'gib.log'), 'a')],
     detached: true,

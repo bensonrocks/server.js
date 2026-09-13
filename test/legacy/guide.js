@@ -1,10 +1,10 @@
 // The Guide has to answer the questions a client will actually have — and the
 // glossary must never say something different from the pills on other tabs.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const BASE = 'http://localhost:4636';
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, vp] of [['desktop', { width: 1100, height: 1000 }], ['Pixel 5', { width: 393, height: 851 }]]) {
     const p = await (await b.newContext({ viewport: vp })).newPage();
     await p.goto(BASE + '/portal'); await p.waitForTimeout(1200);

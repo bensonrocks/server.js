@@ -2,7 +2,7 @@
 // with the shared secret before accepting anything, and can be told to fail so
 // the retry ladder is exercised against a receiver that is genuinely refusing.
 const http = require('http');
-const { verifySignature } = require('/home/user/server.js/lib/integration');
+const { verifySignature } = require(require('path').join(__dirname,'../../lib/integration'));
 
 const PORT = Number(process.env.PORT || 4791);
 const state = { secret: process.env.HOOK_SECRET || '', fail: 0, received: [], badSig: 0 };

@@ -1,8 +1,8 @@
 // BROWSER — Station Throughput on the phone the screenshot was taken on.
 // Four tiles must fit 393px, today must be visibly the odd column out, and the
 // modal must not scroll sideways.
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
-const S = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad/shots';
+const { chromium, devices } = require('playwright');
+const S = require('path').join(__dirname, 'shots');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const sgToday = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
 
@@ -18,7 +18,7 @@ async function openStp(page) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
 
   for (const [label, opts] of [['Pixel 5', { ...devices['Pixel 5'] }], ['desktop', { viewport: { width: 1440, height: 900 } }]]) {
     const ctx = await browser.newContext(opts);

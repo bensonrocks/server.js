@@ -1,5 +1,5 @@
 // resolveBinnedSku: bridge an order SKU to the stocked SKU via case OR barcode.
-const path = '/home/user/server.js/lib/inventory-store.js';
+const path = require('path').join(__dirname,'../../lib/inventory-store.js');
 const os = require('os'), fs = require('fs');
 const DIR = fs.mkdtempSync(os.tmpdir() + '/rbs-');
 process.env.DATA_DIR = DIR;

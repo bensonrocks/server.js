@@ -5,13 +5,13 @@
 //  2. 🏷×N pre-prints the next few labels in one go: sequential carton ids,
 //     each barcoded, each blank until its box is packed — and NO carton is
 //     created, because "+ New Carton" is still what brings a box into being.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const BASE = 'http://localhost:4636';
 const ORD = '24944949';
 
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
 
   // ONE VIEWPORT PER RUN, reset in between: the auto-print CONFIRMS the label,
   // so a second browser on the same order would never see the prompt again.

@@ -1,12 +1,12 @@
 // The last three days on the Overview, with today live.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const BASE = 'http://localhost:4636', MK = '201432547E';
 const sg = n => new Date(Date.now() + n * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
 const fs = require('fs'); const DB = __dirname + '/sup/tenants/default/db.json';
 
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, vp] of [['desktop', { width: 1100, height: 1000 }], ['Pixel 5', { width: 393, height: 851 }]]) {
     const p = await (await b.newContext({ viewport: vp })).newPage();
     await p.goto(BASE + '/portal'); await p.waitForTimeout(1200);

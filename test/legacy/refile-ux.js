@@ -7,12 +7,12 @@
 //   2. the hint under the box counts down live;
 //   3. one more character unlocks it, and the refile then genuinely moves
 //      the order to the other client.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const ORD = 'MP-PLAIN';   // ChaseCo, pending, untracked — safe to move
 
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const ctx = await b.newContext({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true });
   const p = await ctx.newPage();
   p.on('pageerror', e => console.log('PAGE ERROR:', String(e).slice(0, 200)));

@@ -2,7 +2,7 @@
 // Every case that FAILED before the fix is asserted here, plus regressions on
 // the Lazada/Shopee paths that must not have moved.
 const { normStr, buildLabelMatchIndexFor, matchLabelPage } = require('./_fns.js');
-const { extractLabelFields } = require('/home/user/server.js/lib/label-extract.js');
+const { extractLabelFields } = require(require('path').join(__dirname,'../../lib/label-extract.js'));
 
 const fails = [];
 const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };

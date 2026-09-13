@@ -1,11 +1,20 @@
-name: Tests (reference-record fence)
+name: Tests
 
-# The invariants that must never regress, run against the REAL server on every
-# push and pull request. Today that is the reference-record fence: a channel's
-# reference copy (OneCart → Betime Online) is never scanned, cancelled, moved
-# or labelled, and a label filed on one is moved onto the work order at boot.
+# THE INVARIANTS THAT MUST NEVER REGRESS, run against the REAL server on every
+# push and pull request.
+#
+# Two jobs, deliberately:
+#   fence  — the reference-record fence (node:test). Fast, and the one that
+#            most often catches a real regression, so it runs alone and first.
+#   suites — the end-to-end suites in test/legacy that boot their own server
+#            and drive real endpoints (test/suites.json, tier "ci").
+#
 # A red run here blocks nothing by itself — the branch deploys straight to
 # Railway — so treat a failure as "do not deploy", and read the job log.
+#
+# The BROWSER suites (br-*.js) are NOT in CI yet: they need Chromium and each
+# takes minutes. Run them on demand with `npm run test:browser`. Week 1 of
+# docs/IMPROVEMENT_PLAN.md records why, and what is left to wire.
 
 on:
   pull_request: {}
@@ -20,12 +29,13 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  fence:
+    name: Reference-record fence
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # The suite drives the API only; no browser is launched, so the
-      # postinstall Chromium download is skipped to keep the job quick.
+      # Drives the API only; no browser is launched, so the postinstall
+      # Chromium download is skipped to keep the job quick.
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v4
@@ -36,3 +46,28 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm rebuild better-sqlite3 sharp
       - run: npm test
+
+  suites:
+    name: End-to-end suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild better-sqlite3 sharp
+      # TWO of the CI suites need a REAL Chromium: web-note-e2e drives the
+      # ZORT web-label worker signing in and capturing a PDF, and lag-e2e's
+      # tap path fetches one the same way. They default to the build
+      # sandbox's /opt/pw-browsers/chromium, which does not exist here — so
+      # install Playwright's own and point TEST_CHROMIUM at it. Without this
+      # both go red in CI while being perfectly green locally, which is the
+      # fastest way to teach people to ignore a red run.
+      - run: npx playwright install --with-deps chromium
+      - run: echo "TEST_CHROMIUM=$(node -e "console.log(require('playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - run: npm run test:suites

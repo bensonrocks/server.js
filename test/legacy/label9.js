@@ -5,12 +5,12 @@
 // the real UI and complete it, then go to Orders → Completed, tick it, press
 // 🏷 Carton Labels, and get BOTH boxes' labels in one run — final "CTN n / 2",
 // each with its own contents. Cancelling the confirm prints nothing.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const ORD = '24944949';
 
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const ctx = await b.newContext({ viewport: { width: 1400, height: 950 } });
   const p = await ctx.newPage();
   p.on('pageerror', e => console.log('PAGE ERROR:', String(e).slice(0, 200)));

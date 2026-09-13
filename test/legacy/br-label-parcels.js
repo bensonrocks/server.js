@@ -1,8 +1,8 @@
 // On screen: the Orders row and the scan overlay both say ×2 for a split order.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
-const S = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const { chromium, devices } = require('playwright');
+const XLSX = require('xlsx');
+const S = __dirname;
 const UP = '/root/.claude/uploads/c6f7f812-7f43-5071-90d1-eb00f9dd51b6';
 const PORT = 4763, B = `http://localhost:${PORT}`, DDIR = path.join(S, 'lbl-parcel-br-data'), MASTER = process.env.MASTER_KEY || '201432547E';
 const SHOTS = path.join(S, 'lbl-parcel-shots'); fs.mkdirSync(SHOTS, { recursive: true });
@@ -25,7 +25,7 @@ const domClick = (page, sel) => page.evaluate(s => document.querySelector(s).cli
 
 (async () => {
   fs.rmSync(DDIR, { recursive: true, force: true });
-  spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'lbl-parcel-br-server.log'));
+  spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'lbl-parcel-br-server.log'));
   await waitUp(B + '/api/version'); await sleep(2500);
   const tok = await apiLogin('demo', 'demo');
   const fd = new FormData(); fd.append('orderFile', new Blob([xlsxOf([{ 'Order No': ORDER, 'Waybill Ref': T1, 'SKU Code': '8006', 'Quantity': 5 }])]), 'mayer.xlsx'); fd.append('client_name', 'MAYER2026'); fd.append('arrange_delivery', 'no');
@@ -36,7 +36,7 @@ const domClick = (page, sel) => page.evaluate(s => document.querySelector(s).cli
   const o = (await J(await fetch(B + '/api/orders?range=all', { headers: H(tok) }))).find(x => x.order_number === ORDER);
   ok(o && o.label_pages === 2 && (o.waybills || []).length === 2, `seed: both parcels attached (label_pages=${o && o.label_pages}, waybills=${o && (o.waybills || []).length})`);
 
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, ctxOpts, tag] of [['Pixel 5', { ...devices['Pixel 5'] }, 'pixel5'], ['desktop', { viewport: { width: 1280, height: 900 } }, 'desktop']]) {
     console.log(`\n=== ${label} ===`);
     const ctx = await browser.newContext(ctxOpts); const page = await ctx.newPage();

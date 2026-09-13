@@ -13,10 +13,10 @@
 // null, which is exactly what a pop-up blocker does. Both fail on the pre-fix
 // build (IDEALONE_SERVER / IDEALONE_APPJS point the suite at another copy).
 const fs = require('fs'); const path = require('path'); const http = require('http'); const { spawn } = require('child_process');
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const { chromium, devices } = require('playwright');
+const XLSX = require('xlsx');
 const S = __dirname;
-const SERVER = process.env.IDEALONE_SERVER || '/home/user/server.js/server.js';
+const SERVER = process.env.IDEALONE_SERVER || require('path').join(__dirname,'../../server.js');
 const PORT = 4809, B = `http://localhost:${PORT}`, DDIR = path.join(S, 'abort-data'), MASTER = process.env.MASTER_KEY || '201432547E';
 const LOG = path.join(S, 'abort-server.log');
 const DBP = path.join(DDIR, 'tenants', 'default', 'db.json');
@@ -79,7 +79,7 @@ const domClick = (page, sel) => page.evaluate(s => document.querySelector(s).cli
   ok(done.ok === true, 'seed: the order is completed, so the row carries the reprint-label button');
   await sleep(2000);
 
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, ctxOpts] of [['Pixel 5', { ...devices['Pixel 5'] }], ['desktop', { viewport: { width: 1280, height: 900 } }]]) {
     console.log(`\n=== ${label} ===`);
     const ctx = await browser.newContext(ctxOpts);

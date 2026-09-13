@@ -4,10 +4,10 @@
 const fs   = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
+const XLSX = require('xlsx');
+const { chromium, devices } = require('playwright');
 
-const S     = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const S     = __dirname;
 const PORT  = 4746;
 const B     = `http://localhost:${PORT}`;
 const DDIR  = path.join(S, 'gib-scan');
@@ -21,7 +21,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 let child = null;
 async function boot() {
-  child = spawn('node', ['/home/user/server.js/server.js'], {
+  child = spawn('node', [require('path').join(__dirname,'../../server.js')], {
     env: { ...process.env, PORT: String(PORT), DATA_DIR: DDIR },
     stdio: ['ignore', fs.openSync(path.join(S, 'gib-scan.log'), 'a'), fs.openSync(path.join(S, 'gib-scan.log'), 'a')],
     detached: true,
@@ -85,7 +85,7 @@ async function scanBar(page, code) {
   // /api/version answered once raced that write and left no db.json to seed.
   fs.rmSync(DDIR, { recursive: true, force: true });
   await boot(); await sleep(2500); await stop();
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
 
   for (const [label, ctxOpts, tag] of [['desktop', { viewport: { width: 1280, height: 900 } }, 'desktop'], ['Pixel 5', { ...devices['Pixel 5'] }, 'pixel5']]) {
     await stop(); seed(); await boot();

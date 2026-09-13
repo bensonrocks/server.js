@@ -1,11 +1,11 @@
 // BROWSER — the Labels review screen, on the exact reported shape.
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
+const { chromium, devices } = require('playwright');
 const S = __dirname + '/shots';
 require('fs').mkdirSync(S, { recursive: true });
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, opts] of [['desktop', { viewport: { width: 1440, height: 900 } }],
                                ['Pixel 5', { ...devices['Pixel 5'] }]]) {
     const ctx = await browser.newContext(opts);

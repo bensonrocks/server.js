@@ -1,5 +1,5 @@
 // The office sets sections per LOGIN; each person's portal carries only theirs.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const BASE = 'http://localhost:4636', MK = '201432547E';
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const CLIENT = 'VisCo';
@@ -29,7 +29,7 @@ const portalOut = p => p.evaluate(() => fetch('/api/portal/logout', { method: 'P
     body: JSON.stringify({ name: 'Wes', access: 'full', password: 'visco456' }) });
   await setVis('wes', ALL);
 
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
 
   // ── THE OFFICE ──────────────────────────────────────────────────────────
   {

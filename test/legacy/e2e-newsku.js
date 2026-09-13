@@ -2,7 +2,7 @@
 // their quantity, their location, and their description/barcode — not skipped.
 // Built as a real XLSX in the client's own column shape (S/No, SKU, Packing,
 // Description, Location, Barcode, AVailable LHU) so header matching is tested too.
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const B = 'http://localhost:4717', MK = '201432547E';
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 (async () => {

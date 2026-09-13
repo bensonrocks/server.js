@@ -1,7 +1,7 @@
 // The Health Check's new "Server thread" block renders on desktop and a Pixel 5,
 // and the gzipped app still boots and logs in.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
+const { chromium, devices } = require('playwright');
 const S = __dirname, PORT = 4805, B = `http://localhost:${PORT}`, DDIR = path.join(S, 'perf-br-data');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const sleep = ms => new Promise(r => setTimeout(r, ms)); const kids = [];
@@ -11,9 +11,9 @@ async function stopAll() { for (const c of kids) { try { process.kill(-c.pid, 'S
 const domClick = (page, sel) => page.evaluate(s => document.querySelector(s).click(), sel);
 (async () => {
   fs.rmSync(DDIR, { recursive: true, force: true });
-  spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'perf-br-server.log'));
+  spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'perf-br-server.log'));
   await waitUp(B + '/api/version'); await sleep(2500);
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, ctxOpts, tag] of [['Pixel 5', { ...devices['Pixel 5'] }, 'pixel5'], ['desktop', { viewport: { width: 1280, height: 900 } }, 'desktop']]) {
     console.log(`\n=== ${label} ===`);
     const ctx = await browser.newContext(ctxOpts); const page = await ctx.newPage();

@@ -6,7 +6,7 @@
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const B = 'http://localhost:4636';
 const MK = '201432547E';
-const DB = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad/sup/tenants/default/db.json';
+const DB = require('path').join(__dirname, 'sup/tenants/default/db.json');
 
 (async () => {
   const login = await fetch(`${B}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },

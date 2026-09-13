@@ -5,10 +5,10 @@
 const fs   = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const XLSX = require('xlsx');
+const { chromium } = require('playwright');
 
-const S      = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const S      = __dirname;
 const PORT   = 4767, MPORT = 4768;
 const B      = `http://localhost:${PORT}`, M = `http://localhost:${MPORT}`;
 const DDIR   = path.join(S, 'lbl-ref-data');
@@ -31,7 +31,7 @@ async function stopKid(c) { try { process.kill(-c.pid, 'SIGTERM'); } catch {} tr
 async function stopAll() { for (const c of kids) await stopKid(c); kids = []; await sleep(1500); }
 let serverKid = null;
 async function bootServer() {
-  serverKid = spawnLogged([process.env.SERVER_JS || '/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'lbl-ref-server.log'));
+  serverKid = spawnLogged([process.env.SERVER_JS || require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'lbl-ref-server.log'));
   await waitUp(B + '/api/version'); await sleep(2500);
 }
 const MH = tok => ({ 'Content-Type': 'application/json', 'x-master-key': MASTER, 'x-auth-token': tok });
@@ -57,7 +57,7 @@ const getImport = async (tok, id) => J(await fetch(B + `/api/label-imports/${id}
 async function scan(tok, orderNumber, sku) { return J(await fetch(B + '/api/scan/increment', { method: 'POST', headers: MH(tok), body: JSON.stringify({ orderNumber, sku, eventId: 'ev-' + Math.random().toString(36).slice(2) }) })); }
 async function complete(tok, orderNumber) { const r = await fetch(B + '/api/scan/complete', { method: 'POST', headers: MH(tok), body: JSON.stringify({ orderNumber, startTime: new Date(Date.now() - 60000).toISOString(), endTime: new Date().toISOString(), operator: 'demo' }) }); return { status: r.status, body: await J(r) }; }
 async function pdfOf(pages) {
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const page = await browser.newPage();
   await page.setContent(pages.map((h, i) => `<div style="page-break-after:${i < pages.length - 1 ? 'always' : 'auto'};font:16px sans-serif">${h}</div>`).join(''));
   const pdf = await page.pdf({ format: 'A4' }); await browser.close(); return pdf;

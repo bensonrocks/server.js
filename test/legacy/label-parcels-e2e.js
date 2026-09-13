@@ -2,9 +2,9 @@
 // print (two parcels, two tracking numbers, one order number) through the real
 // upload + label-import + OCR + print endpoints.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
-const { PDFDocument } = require('/home/user/server.js/node_modules/pdf-lib');
-const S = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const XLSX = require('xlsx');
+const { PDFDocument } = require('pdf-lib');
+const S = __dirname;
 const UP = '/root/.claude/uploads/c6f7f812-7f43-5071-90d1-eb00f9dd51b6';
 const PORT = 4761, B = `http://localhost:${PORT}`, DDIR = path.join(S, 'lbl-parcel-data'), DBP = path.join(DDIR, 'tenants', 'default', 'db.json');
 const MASTER = process.env.MASTER_KEY || '201432547E';
@@ -30,7 +30,7 @@ async function pdfPages(buf) { return (await PDFDocument.load(buf)).getPageCount
 
 (async () => {
   fs.rmSync(DDIR, { recursive: true, force: true });
-  spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'lbl-parcel-server.log'));
+  spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'lbl-parcel-server.log'));
   await waitUp(B + '/api/version'); await sleep(2500);
   const tok = await login('demo', 'demo');
 

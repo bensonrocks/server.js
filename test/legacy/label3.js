@@ -1,10 +1,10 @@
 // The label with a PACKED carton — contents listed, quantity real — plus the
 // hand-write fallback still standing when printing cannot happen.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const BASE = 'http://localhost:4636';
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const ctx = await b.newContext({ viewport: { width: 1400, height: 900 } });
   await ctx.addInitScript(() => { window.print = function () { try { window.top.__printed = true; } catch (e) {} }; });
   const p = await ctx.newPage();

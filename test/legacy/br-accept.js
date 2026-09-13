@@ -1,8 +1,8 @@
 // Accepting the confirm really moves the stock, on screen, with no reload.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails=[]; const ok=(c,m)=>{console.log((c?'PASS':'FAIL')+' - '+m); if(!c) fails.push(m);};
 (async () => {
-  const br = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const br = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const p = await br.newPage({ viewport: { width: 1440, height: 900 } });
   p.on('dialog', async d => { await d.accept(); });
   await p.goto('http://localhost:4712', { waitUntil: 'domcontentloaded' });

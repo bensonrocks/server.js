@@ -33,23 +33,32 @@ Suites live in `test/` from Week 1 onward. `npm test` runs all of them.
 
 ## Phase 0 — make it safe to change
 
-- [ ] **W1 · Tests into the repo.** Copy every `*-e2e.js`, `br-*.js` and
-  their mocks/fixtures from the session scratchpad into `test/e2e/` and
-  `test/browser/`, rewrite absolute paths to `path.join(__dirname, …)`,
-  give each its own port and data dir, and add an `npm run test:e2e` and
-  `npm run test:browser` script. Add both to `.github/workflows/test.yml`.
-  Delete the one-off diagnostics named in `test/legacy/README.md`. Adding
-  `test/legacy/` raised CodeQL on PR #15 by ONE medium alert (181 → 182,
-  commit `bb5815b`) — it is in a test or mock script; find it on the PR's
-  Security tab and fix or delete that script while wiring. Done when: CI
-  runs the suites and is green, and CodeQL is back at the 181 baseline.
-- [ ] **W2 · Boot smoke test + size guard.** `test/smoke.test.js`: boot on a
-  scratch dir, log in as demo, hit 25 core routes (orders, upload preview,
-  scan increment/complete, inbound list, putaway queue, labels list,
-  transport, reports list, portal login, driver login, health check,
-  version), assert 2xx/expected. Add `scripts/size-guard.js` that fails CI
-  when `server.js` has MORE lines than the committed baseline in
-  `.size-baseline`. Done when: both run in CI.
+- [x] **W1 · Tests into the repo.** *(done 13 Sep 2026 — see the log.)*
+  Absolute paths rewritten in 119 files, 28 one-off diagnostics deleted,
+  `test/suites.json` classifying all 64 suites, `test/run-suites.js`, and
+  `npm run test:suites` in CI as a second job. **202 checks in CI, from 6.**
+  NOT done and carried to W2: 42 of the 64 suites were written against a
+  server started BY HAND in the build session and cannot run unattended
+  until a harness boots one for them; the 14 self-booting browser suites
+  are `npm run test:browser`, on demand, not in CI; and the CodeQL +1 was
+  not identified (no code-scanning access from the session — read the PR's
+  Security tab).
+- [ ] **W2 · Boot smoke test + size guard + the suite harness.**
+  `test/smoke.test.js`: boot on a scratch dir, log in as demo, hit 25 core
+  routes (orders, upload preview, scan increment/complete, inbound list,
+  putaway queue, labels list, transport, reports list, portal login, driver
+  login, health check, version), assert 2xx/expected. Add
+  `scripts/size-guard.js` that fails CI when `server.js` has MORE lines than
+  the committed baseline in `.size-baseline`.
+  ALSO, carried from W1: `test/harness.js` — boot a server on a free port
+  with its own DATA_DIR, wait for `/api/version`, hand back `{base, token,
+  stop}`, and kill by scanning `/proc/*/environ` for the port (the standing
+  `pgrep` trap). The runner passes `PORT`/`DATA_DIR`/`IDEALONE_BASE` to a
+  `needs-harness` suite so the 42 suites written against a hand-started
+  server can run unattended. Promote them to `tier: ci` in batches as each
+  goes green; a suite that stays red is logged, not forced.
+  Done when: smoke + size guard run in CI, and the harness runs at least
+  one previously `needs-harness` suite green.
 
 ## Phase 1 — split server.js by domain, behaviour unchanged
 

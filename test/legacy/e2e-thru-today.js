@@ -4,7 +4,7 @@
 // sheet's shape (header always on row 2) never changes; and the no-default
 // guard still refuses a missing date.
 const B = 'http://localhost:4731', MK = '201432547E';
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const sg = d => (d || new Date()).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
 

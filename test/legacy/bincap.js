@@ -2,7 +2,7 @@
 // reconcileBinOverage + the adjust() hook.
 const os = require('os'), fs = require('fs');
 process.env.DATA_DIR = fs.mkdtempSync(os.tmpdir() + '/bincap-');
-const inv = require('/home/user/server.js/lib/inventory-store.js');
+const inv = require(require('path').join(__dirname,'../../lib/inventory-store.js'));
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 (async () => {
   await inv.init();

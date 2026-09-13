@@ -3,12 +3,12 @@
 //    order of 3 ctns — carton #01 will be printed when user scans a few
 //    products then opens another carton #. until the last, user will complete
 //    the order, final carton label will be out as # of #"
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const ORD = '24944949';
 
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const ctx = await b.newContext({ viewport: { width: 1400, height: 950 } });
   const p = await ctx.newPage();
   p.on('pageerror', e => console.log('PAGE ERROR:', String(e).slice(0, 200)));

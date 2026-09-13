@@ -3,7 +3,7 @@
 // took whichever row it saw LAST, so a SKU in three bins came out holding one
 // bin's figure, and every SKU the sheet omitted stayed standing — which is how
 // a 1,244-pc file landed on 661. After the fix the file IS the position.
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const B = 'http://localhost:4717', MK = '201432547E';
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 (async () => {

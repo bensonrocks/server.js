@@ -1,7 +1,7 @@
 // resolveBinnedFor: the pick-list bridge must fold CLIENT case as well as SKU
 // case and barcode — the live shape: bins under "Mayer2026", wave batch says
 // "MAYER2026". And it must never bridge two genuinely different client names.
-const path = '/home/user/server.js/lib/inventory-store.js';
+const path = require('path').join(__dirname,'../../lib/inventory-store.js');
 const os = require('os'), fs = require('fs');
 process.env.DATA_DIR = fs.mkdtempSync(os.tmpdir() + '/rbf-');
 const inv = require(path);

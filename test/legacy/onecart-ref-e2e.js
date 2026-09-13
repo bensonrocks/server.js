@@ -6,9 +6,9 @@
 const fs   = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 
-const S      = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const S      = __dirname;
 const PORT   = 4751, MPORT = 4752;
 const B      = `http://localhost:${PORT}`, M = `http://localhost:${MPORT}`;
 const DDIR   = path.join(S, 'oc-ref-data');
@@ -29,7 +29,7 @@ function spawnLogged(args, env, log) {
 async function waitUp(url) { for (let i = 0; i < 40; i++) { try { if ((await fetch(url)).status < 500) return; } catch {} await sleep(500); } throw new Error('not up: ' + url); }
 async function stopAll() { for (const c of kids) { try { process.kill(-c.pid, 'SIGTERM'); } catch {} try { process.kill(c.pid, 'SIGTERM'); } catch {} } kids = []; await sleep(1500); }
 async function bootServer() {
-  spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'oc-ref-server.log'));
+  spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'oc-ref-server.log'));
   await waitUp(B + '/api/version'); await sleep(2500);
 }
 

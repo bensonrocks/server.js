@@ -1,5 +1,5 @@
 // Every figure on the client's Overview opens the rows behind it.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const BASE = 'http://localhost:4636', MK = '201432547E', CLIENT = 'VisCo';
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const J = async (p, o = {}) => {
@@ -12,7 +12,7 @@ const ALL = { overview: true, stock: true, orders: true, inbound: true, send: tr
   await J(`/api/master/client-profiles/${CLIENT}/portal-users`, { method: 'POST',
     body: JSON.stringify({ id: 'vera', visibility: ALL }) });
 
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, vp] of [['desktop', { width: 1280, height: 900 }], ['Pixel 5', { width: 393, height: 851 }]]) {
     const p = await (await b.newContext({ viewport: vp })).newPage();
     await p.goto(BASE + '/portal'); await p.waitForTimeout(1200);

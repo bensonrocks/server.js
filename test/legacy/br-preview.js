@@ -4,7 +4,7 @@
 // render. Proven on a Pixel 5 and a desktop, plus the fallback by forcing the
 // PNG route to 503 from the browser side.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
+const { chromium, devices } = require('playwright');
 const S = __dirname;
 const PORT = 4795, B = `http://localhost:${PORT}`, DDIR = path.join(S, 'preview-br-data'), MASTER = process.env.MASTER_KEY || '201432547E';
 const SHOTS = path.join(S, 'preview-shots'); fs.mkdirSync(SHOTS, { recursive: true });
@@ -25,7 +25,7 @@ const domClick = (page, sel) => page.evaluate(s => document.querySelector(s).cli
 
 (async () => {
   fs.rmSync(DDIR, { recursive: true, force: true });
-  spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'preview-br-server.log'));
+  spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'preview-br-server.log'));
   await waitUp(B + '/api/version'); await sleep(2500);
   const dtok = await apiLogin('demo', 'demo');
   await fetch(B + '/api/master/users', { method: 'POST', headers: { ...H(dtok), 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'whguy', name: 'Floor', password: 'whpass1', role: 'warehouse' }) });
@@ -51,7 +51,7 @@ const domClick = (page, sel) => page.evaluate(s => document.querySelector(s).cli
   ok((await fetch(B + `/api/label-imports/${li.importId}/pages/99/png`, { headers: H(tok) })).status === 404, 'a page that does not exist is 404');
   ok((await fetch(B + `/api/label-imports/${li.importId}/pages/0/png`)).status === 401, 'no token is refused');
 
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const [label, ctxOpts, tag] of [['Pixel 5', { ...devices['Pixel 5'] }, 'pixel5'], ['desktop', { viewport: { width: 1280, height: 900 } }, 'desktop']]) {
     console.log(`\n=== ${label} ===`);
     const ctx = await browser.newContext(ctxOpts); const page = await ctx.newPage();

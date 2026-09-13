@@ -37,7 +37,7 @@ const T0 = new Date().toISOString();
   await new Promise(r => setTimeout(r, 2500));
 
   const db = JSON.parse(require('fs').readFileSync(
-    '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad/sup/tenants/default/db.json', 'utf8'));
+    require('path').join(__dirname, 'sup/tenants/default/db.json'), 'utf8'));
   const audit = (db.auditLog || []).filter(e => e.at >= T0);
 
   // 1. THE WEIRD-SHAPED PDF ATTACHES.

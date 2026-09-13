@@ -4,16 +4,16 @@
 const fs   = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
-const { PDFDocument } = require('/home/user/server.js/node_modules/pdf-lib');
-const pdfjs = require('/home/user/server.js/node_modules/pdfjs-dist/legacy/build/pdf.js');
+const { chromium } = require('playwright');
+const { PDFDocument } = require('pdf-lib');
+const pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
 
-const S      = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const S      = __dirname;
 const PORT   = 4771, B = `http://localhost:${PORT}`;
 const DDIR   = path.join(S, 'bulk-print-data');
 const DBP    = path.join(DDIR, 'tenants', 'default', 'db.json');
 const MASTER = process.env.MASTER_KEY || '201432547E';
-const SERVER = process.env.SERVER_JS || '/home/user/server.js/server.js';
+const SERVER = process.env.SERVER_JS || require('path').join(__dirname,'../../server.js');
 
 const A = 'GI-200001', WB_A = 'TXSGD03800975';        // carrier label attached (1 parcel)
 const A2 = 'GI-200002', WB_A2a = 'LZSGD1015417357', WB_A2b = 'LZSGD1015417039'; // two parcels
@@ -87,7 +87,7 @@ function seed(db) {
   await boot(); await stopAll();
   fs.writeFileSync(DBP, JSON.stringify(seed(JSON.parse(fs.readFileSync(DBP, 'utf8')))));
   try { fs.unlinkSync(path.join(DDIR, 'tenants', 'default', 'scan-journal.ndjson')); } catch {}
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const impDir = path.join(DDIR, 'label_imports', 'imp-1'); fs.mkdirSync(impDir, { recursive: true });
   fs.writeFileSync(path.join(impDir, 'page_1.pdf'), await pdfOf(browser, [`<h1>CARRIER LABEL ${WB_A}</h1><p>${A}</p>`]));
   fs.writeFileSync(path.join(impDir, 'page_2.pdf'), await pdfOf(browser, [`<h1>CARRIER LABEL ${WB_A2a}</h1><p>${A2} box 1</p>`]));

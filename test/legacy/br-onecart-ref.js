@@ -3,9 +3,9 @@
 // a reference-only number is refused in words; the upload prompt says "carry
 // on?"; the Connections form defaults to Reference ledger.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
-const S = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const { chromium, devices } = require('playwright');
+const XLSX = require('xlsx');
+const S = __dirname;
 const PORT = 4753, MPORT = 4754, B = `http://localhost:${PORT}`, M = `http://localhost:${MPORT}`;
 const DDIR = path.join(S, 'oc-ref-br-data'), MASTER = process.env.MASTER_KEY || '201432547E', KEY = 'oc_test_key_123';
 const SHOTS = path.join(S, 'oc-ref-shots'); fs.mkdirSync(SHOTS, { recursive: true });
@@ -41,7 +41,7 @@ const NO1 = '585836014589150279', NO3 = '172397910455623';
   fs.rmSync(DDIR, { recursive: true, force: true });
   spawnLogged([path.join(S, 'onecart-mock.js')], { PORT: String(MPORT), OC_KEY: KEY, OC_PDF_DIR: path.join(S, 'oc-pdfs') }, path.join(S, 'oc-ref-br-mock.log'));
   await waitUp(M + '/__ctl/calls');
-  spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'oc-ref-br-server.log'));
+  spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'oc-ref-br-server.log'));
   await waitUp(B + '/api/version'); await sleep(2500);
   const tok = await apiLogin('demo', 'demo');
   const st = await J(await fetch(B + '/api/master/onecart/stores', { method: 'POST', headers: MH(tok), body: JSON.stringify({ clientName: 'Betime Online', apiKey: KEY, endpoint: M + '/api/v2', autoPullMinutes: 0, enabled: true }) }));
@@ -52,7 +52,7 @@ const NO1 = '585836014589150279', NO3 = '172397910455623';
   ok(up.status === 200, `seed: BETIME work order for ${NO1} uploaded beside its reference (${up.status})`);
   const FILE2 = path.join(S, 'oc-ref-upload.xlsx'); fs.writeFileSync(FILE2, xlsxOf([{ 'Order No': NO3, 'SKU Code': '8006', 'Quantity': 1 }]));
 
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   // Pixel 5 FIRST: the desktop pass ends by really uploading a work order for
   // one of the references, which changes every count the phone pass reads.
   for (const [label, ctxOpts, tag] of [['Pixel 5', { ...devices['Pixel 5'] }, 'pixel5'], ['desktop', { viewport: { width: 1280, height: 900 } }, 'desktop']]) {

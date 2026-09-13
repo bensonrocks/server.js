@@ -5,7 +5,7 @@
 // order × SKU — and the order-level Lines/Pieces columns are gone, because
 // repeating an order's total on each of its rows makes that column sum to a
 // wrong figure silently.
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const BASE = 'http://localhost:4636', MK = '201432547E';
 // The fixture splits the cases: VisCo has shipped AND cancelled orders, CxCo
 // only cancelled. Run against both — a check with no rows behind it is SKIPPED

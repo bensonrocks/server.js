@@ -2,7 +2,7 @@
 // per-day total row's arithmetic. Phase 1 completes real orders through the
 // real endpoints; phase 2 (after a seeded restart) reads the report back.
 const B = 'http://localhost:4735', MK = '201432547E';
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const sg = d => (d || new Date()).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
 const PHASE = process.argv[2] || '1';

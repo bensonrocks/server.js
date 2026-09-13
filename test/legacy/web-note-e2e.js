@@ -7,7 +7,7 @@
 //   B. no web login on the store — said on the tap; then the breaker tripped;
 //      then the login saved → the browser fetches the label and attaches it.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const S = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const S = __dirname;
 const PORT = 4781, MPORT = 4782, B = `http://localhost:${PORT}`, M = `http://localhost:${MPORT}`;
 const DDIR = path.join(S, 'web-note-data'), DBP = path.join(DDIR, 'tenants', 'default', 'db.json');
 const MASTER = process.env.MASTER_KEY || '201432547E';
@@ -22,7 +22,7 @@ const H = () => ({ 'Content-Type': 'application/json', 'x-auth-token': tok, 'x-m
 async function login() { const d = await J(await fetch(B + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'demo', password: 'demo' }) })); tok = d.token; }
 const readDb = async () => { await sleep(1500); return JSON.parse(fs.readFileSync(DBP, 'utf8')); };
 const BASE_ENV = { PORT: String(PORT), DATA_DIR: DDIR, ZORT_WEB_BASE: M, ZORT_LABEL_RETRY_MS: '2000', ZORT_BACKOFF_MS: '2000', ZORT_OUTBOX_MS: '2000', ZORT_WEB_PROBE_DELAY_MS: '1500', ZORT_WEB_PDF_WAIT_MS: '6000' };
-async function bootServer(extra) { const c = spawnLogged([process.env.SERVER_JS || '/home/user/server.js/server.js'], { ...BASE_ENV, ...extra }, path.join(S, 'web-note-server.log')); await waitUp(B + '/api/version'); await sleep(2500); await login(); return c; }
+async function bootServer(extra) { const c = spawnLogged([process.env.SERVER_JS || require('path').join(__dirname,'../../server.js')], { ...BASE_ENV, ...extra }, path.join(S, 'web-note-server.log')); await waitUp(B + '/api/version'); await sleep(2500); await login(); return c; }
 const tap = async n => J(await fetch(B + `/api/orders/${n}/waybill-now`, { method: 'POST', headers: H(), body: '{}' }));
 const stepsOf = d => (Array.isArray(d.steps) ? d.steps : []).join(' | ');
 const health = async () => J(await fetch(B + '/api/master/connections/health', { headers: H() }));
@@ -69,7 +69,7 @@ const stores = async () => J(await fetch(B + '/api/master/zort/stores', { header
     raw.zortOutbox = (raw.zortOutbox || []).filter(x => x.kind !== 'label');
     fs.writeFileSync(DBP, JSON.stringify(raw));
   }
-  srv = await bootServer({ ZORT_BROWSER_PATH: '/opt/pw-browsers/chromium' });
+  srv = await bootServer({ ZORT_BROWSER_PATH: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   h = await health();
   ok(h.labelBrowser && (h.labelBrowser.stores || []).some(s => s.client === 'WT' && s.webLoginSet === false && s.ready === false), 'health: the store is named as having no web login');
   d = await tap('WT-RTS'); steps = stepsOf(d);
@@ -81,7 +81,7 @@ const stores = async () => J(await fetch(B + '/api/master/zort/stores', { header
     const raw = JSON.parse(fs.readFileSync(DBP, 'utf8'));
     const s = raw.zortStores.find(x => x.id === storeId); s.webEmail = 'wt@example.com'; s.webPassword = 'pw'; s.webLoginFailed = true;
     fs.writeFileSync(DBP, JSON.stringify(raw));
-    srv = await bootServer({ ZORT_BROWSER_PATH: '/opt/pw-browsers/chromium' });
+    srv = await bootServer({ ZORT_BROWSER_PATH: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
     await sleep(4000);   // the boot probe launches Chromium at 1.5s
   }
   h = await health();

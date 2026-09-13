@@ -3,8 +3,8 @@
 // nothing, and the Match-to-Order picker never offers a reference record.
 // Runs on the data label-ref-e2e.js left behind.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
-const S = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const { chromium, devices } = require('playwright');
+const S = __dirname;
 const PORT = 4769, B = `http://localhost:${PORT}`, DDIR = path.join(S, 'lbl-ref-data'), MASTER = process.env.MASTER_KEY || '201432547E';
 const SHOTS = path.join(S, 'lbl-ref-shots'); fs.mkdirSync(SHOTS, { recursive: true });
 const MP2 = '260907ABCDEF01', GI3 = 'GI-141936', MP3 = '172397910455623';
@@ -28,9 +28,9 @@ async function login(page, id, pw) {
 const domClick = (page, sel) => page.evaluate(s => document.querySelector(s).click(), sel);
 
 (async () => {
-  spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'lbl-ref-br-server.log'));
+  spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'lbl-ref-br-server.log'));
   await waitUp(B + '/api/version'); await sleep(2500);
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   // Seed one more label: a Shopee label naming a reference copy that has NO picking list.
   const tok = await apiLogin('demo', 'demo');
   const pdf = await pdfOf(browser, [`<h1>SPXSG0412345678</h1><p>Shopee Xpress</p><p>Order ID: ${MP2}</p><p>RECIPIENT Tan Ah Kow</p>`]);

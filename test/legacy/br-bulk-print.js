@@ -3,8 +3,8 @@
 // PDF go to the print frame. Admin on desktop, WAREHOUSE on a Pixel 5 (the
 // floor prints labels). Runs on the data bulk-print-e2e.js left behind.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
-const S = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad';
+const { chromium, devices } = require('playwright');
+const S = __dirname;
 const PORT = 4773, B = `http://localhost:${PORT}`, DDIR = path.join(S, 'bulk-print-data');
 const SHOTS = path.join(S, 'bulk-print-shots'); fs.mkdirSync(SHOTS, { recursive: true });
 const A = 'GI-200001', C = 'GI-200004', D = 'GI-200005';
@@ -21,9 +21,9 @@ async function login(page, id, pw) {
 const domClick = (page, sel) => page.evaluate(s => { const el = document.querySelector(s); if (!el) throw new Error('no ' + s); el.click(); }, sel);
 
 (async () => {
-  spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'bulk-print-br-server.log'));
+  spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, path.join(S, 'bulk-print-br-server.log'));
   await waitUp(B + '/api/version'); await sleep(2500);
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
 
   for (const [label, ctxOpts, tag, user, pw, role] of [
     ['Pixel 5 / warehouse', { ...devices['Pixel 5'] }, 'pixel5', 'whguy', 'whpass1', 'warehouse'],

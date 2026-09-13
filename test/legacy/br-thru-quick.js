@@ -2,8 +2,8 @@
 // Desktop and a Pixel 5. Asserts the no-default rule still holds, each chip
 // fills the two VISIBLE fields with the right SGT dates, the lit chip clears
 // the moment a date is hand-edited, and the outgoing request carries them.
-const { chromium, devices } = require('/home/user/server.js/node_modules/playwright');
-const S = '/tmp/claude-0/-home-user-server-js/c6f7f812-7f43-5071-90d1-eb00f9dd51b6/scratchpad/shots';
+const { chromium, devices } = require('playwright');
+const S = require('path').join(__dirname, 'shots');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const sg = d => (d || new Date()).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
 
@@ -26,7 +26,7 @@ async function openReports(page) {
 
 (async () => {
   const TODAY = sg(), MONTH = TODAY.slice(0, 7) + '-01', YEAR = TODAY.slice(0, 4) + '-01-01';
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
 
   // ── DESKTOP ──────────────────────────────────────────────────────────────
   {

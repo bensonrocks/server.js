@@ -1,6 +1,6 @@
 // A row with SKU + qty but a BLANK Location, in supersede mode. Their real file
 // has 3 of these (209 uploaded, 206 located). What happens to that SKU?
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const B='http://localhost:4716', MK='201432547E';
 const fails=[]; const ok=(c,m)=>{console.log((c?'PASS':'FAIL')+' - '+m); if(!c)fails.push(m);};
 (async()=>{

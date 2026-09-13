@@ -1,6 +1,6 @@
 // INVESTIGATION ONLY — false-positive surface of the whole-page text scan.
 const { normStr, buildLabelMatchIndexFor, matchLabelPage } = require('./_fns.js');
-const { extractLabelFields } = require('/home/user/server.js/lib/label-extract.js');
+const { extractLabelFields } = require(require('path').join(__dirname,'../../lib/label-extract.js'));
 const show = (t, v) => console.log(String(t).padEnd(60), v);
 const M = (text, idx) => { const h = matchLabelPage(text, extractLabelFields(text), idx); return h ? `${h.hit} via ${h.method}` : 'no match'; };
 

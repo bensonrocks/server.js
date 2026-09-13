@@ -2,7 +2,7 @@
 // arithmetic matches the real clock, the client filter genuinely narrows,
 // and a pre-existing completion with no uploadedAt degrades to "-" honestly.
 const B = 'http://localhost:4731', MK = '201432547E';
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 (async () => {
   const l = await fetch(B + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'demo', password: 'demo' }) }).then(r => r.json());

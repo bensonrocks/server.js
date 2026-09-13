@@ -1,9 +1,9 @@
 // Single-box order: the only label prints at completion, as "1 OF 1".
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const ORD = '24944949';
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const p = await (await b.newContext({ viewport: { width: 1400, height: 950 } })).newPage();
   p.on('dialog', d => d.accept().catch(() => {}));
   await p.context().addInitScript(() => { window.__prints = 0; window.print = function () { try { window.top.__prints++; } catch (e) {} }; });

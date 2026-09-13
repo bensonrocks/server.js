@@ -1,6 +1,6 @@
 // binLocationsBySku: a SKU with binned stock lists its bins; one never put away
 // (on-hand 0) returns []. Mirrors the live Mayer rice-cooker case exactly.
-const path = '/home/user/server.js/lib/inventory-store.js';
+const path = require('path').join(__dirname,'../../lib/inventory-store.js');
 const os = require('os'), fs = require('fs');
 process.env.DATA_DIR = fs.mkdtempSync(os.tmpdir() + '/binloc-');
 const inv = require(path);

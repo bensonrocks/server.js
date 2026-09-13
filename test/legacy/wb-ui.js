@@ -1,9 +1,9 @@
 // The store row has to SAY what it could not fill. A blank waybill with no
 // explanation is what turned this into a support question in the first place.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
+const { chromium } = require('playwright');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const b = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const vp of [{ width: 1400, height: 950, name: 'desktop' }, { width: 393, height: 851, name: 'Pixel 5' }]) {
     console.log(`\n── ${vp.name} ──`);
     const ctx = await b.newContext({ viewport: { width: vp.width, height: vp.height } });

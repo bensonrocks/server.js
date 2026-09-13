@@ -3,7 +3,7 @@
 process.env.DATA_DIR = __dirname + '/ddcap2';
 process.env.ZORT_WEB_BASE = 'http://localhost:4938';
 process.env.ZORT_BROWSER_PATH = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-const zw = require('/home/user/server.js/lib/zort-web.js');
+const zw = require(require('path').join(__dirname,'../../lib/zort-web.js'));
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 (async () => {
   const store = { id: 'sell', webEmail: 'labels@nimbus.test', webPassword: 'webpass123' };

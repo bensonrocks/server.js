@@ -1,7 +1,7 @@
 // The OCR path with the worker: an image-only label PDF (no text layer) must
 // still render (worker) → OCR (Tesseract) → match, exactly as before.
 const fs = require('fs'); const path = require('path'); const { spawn } = require('child_process');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const XLSX = require('xlsx');
 const S = __dirname;
 const PORT = 4803, B = `http://localhost:${PORT}`, DDIR = path.join(S, 'perf-ocr-data'), MASTER = process.env.MASTER_KEY || '201432547E';
 const LOG = path.join(S, 'perf-ocr-server.log');
@@ -17,7 +17,7 @@ async function login() { const d = await J(await fetch(B + '/api/auth/login', { 
 function xlsxOf(rows) { const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'S'); return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })); }
 (async () => {
   fs.rmSync(DDIR, { recursive: true, force: true }); fs.mkdirSync(DDIR, { recursive: true }); fs.rmSync(LOG, { force: true });
-  const srv = spawnLogged(['/home/user/server.js/server.js'], { PORT: String(PORT), DATA_DIR: DDIR }, LOG);
+  const srv = spawnLogged([require('path').join(__dirname,'../../server.js')], { PORT: String(PORT), DATA_DIR: DDIR }, LOG);
   await waitUp(B + '/api/version'); await sleep(2500); await login();
   const fd = new FormData();
   fd.append('orderFile', new Blob([xlsxOf([1, 2, 3].map(i => ({ 'Order No': `PERF-ORD-${String(i).padStart(3, '0')}`, 'Waybill Ref': `LZSGD10${15000000 + i}`, 'SKU Code': 'PERF-SKU', 'Quantity': 1 })))]), 'perf.xlsx');

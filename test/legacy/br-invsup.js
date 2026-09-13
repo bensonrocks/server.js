@@ -2,8 +2,8 @@
 // the file IS the position, the Location picker steps aside (it has nothing
 // left to decide), and the confirm states the file's own sum before anything
 // moves — on a desktop and on a phone.
-const { chromium } = require('/home/user/server.js/node_modules/playwright');
-const XLSX = require('/home/user/server.js/node_modules/xlsx');
+const { chromium } = require('playwright');
+const XLSX = require('xlsx');
 const fails = []; const ok = (c, m) => { console.log((c ? 'PASS' : 'FAIL') + ' - ' + m); if (!c) fails.push(m); };
 const B = 'http://localhost:4717', MK = '201432547E';
 
@@ -35,7 +35,7 @@ const xlsx = rows => {
     { 'S/No': 5, SKU: 'CCC', Location: '',             'AVailable LHU': 504 },
   ]);
 
-  const br = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const br = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   for (const vp of [{ w: 1440, h: 900, n: 'desktop' }, { w: 393, h: 851, n: 'Pixel 5' }]) {
     const ctx = await br.newContext({ viewport: { width: vp.w, height: vp.h } });
     const p = await ctx.newPage();

@@ -2,7 +2,7 @@
 // or only fill in a blank one? locateExistingStock is what it calls.
 const os=require('os'),fs=require('fs');
 process.env.DATA_DIR=fs.mkdtempSync(os.tmpdir()+'/locsup-');
-const inv=require('/home/user/server.js/lib/inventory-store.js');
+const inv=require(require('path').join(__dirname,'../../lib/inventory-store.js'));
 const ok=(c,m)=>console.log((c?'PASS':'FAIL')+' - '+m);
 (async()=>{ await inv.init(); const C='LocCo';
   inv.upsert({sku:'AAA',name:'A',clientId:C,stock_qty:10});

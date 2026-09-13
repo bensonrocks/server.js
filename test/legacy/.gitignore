@@ -1,0 +1,24 @@
+# Run artefacts. Every suite creates its own data dir, log, screenshots and
+# most of its fixtures beside itself; none of that belongs in the repo.
+#
+# THE EXCEPTIONS ARE THE TWO PERF FIXTURES, which ARE committed (see below)
+# because their suites read them and do not create them.
+*-data/
+*-data-*/
+*-shots/
+*shots/
+gib/
+*.log
+*.png
+*.xlsx
+*.pdf
+oc-pdfs/
+
+# …except these two. perf-e2e.js and perf-ocr-e2e.js read them and neither
+# generates one, so a fresh checkout without them is a red CI run. They are
+# printed by mk-multipage.js / mk-scanned.js, which need Chromium — and
+# perf-e2e is an API suite whose whole point is measuring the PDF worker, so
+# making it launch a browser just to build its own input would be backwards.
+# Deterministic, 128 KB the pair, regenerate with the two mk-*.js scripts.
+!perf-12.pdf
+!perf-scan3.pdf

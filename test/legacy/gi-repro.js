@@ -2,7 +2,7 @@
 // buildLabelMatchIndexFor / matchLabelPage (copied verbatim out of server.js)
 // and the REAL lib/label-extract.js against GI-numbered labels.
 const { normStr, buildLabelMatchIndexFor, matchLabelPage } = require('./_fns.js');
-const { extractLabelFields } = require('/home/user/server.js/lib/label-extract.js');
+const { extractLabelFields } = require(require('path').join(__dirname,'../../lib/label-extract.js'));
 
 const show = (t, v) => console.log(String(t).padEnd(58), v);
 
