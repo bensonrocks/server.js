@@ -9025,7 +9025,7 @@
     document.getElementById('inlineCamView').classList.toggle('hidden', tab !== 'camera');
     const folded = document.getElementById('inlineCamPanel')?.classList.contains('cam-collapsed');
     if (tab === 'camera') { if (!folded) startInlineCam(); }
-    else { stopInlineCam(); setTimeout(focusActiveQty, 60); }
+    else { stopInlineCam(); setTimeout(focusScanInput, 60); }
   }
   async function startInlineCam() {
     if (inlineCamStream) return; // already running
@@ -9423,7 +9423,7 @@
     const input = document.getElementById('itemScanInput');
     input.value = '';
     document.getElementById('itemScanFeedback').classList.add('hidden');
-    setTimeout(focusActiveQty, 80);
+    setTimeout(focusScanInput, 80);
   }
 
   // ── Cartons — a big order can take more than one physical box ───────────────
@@ -9607,7 +9607,7 @@
       activeOrder.cartonCount = data.cartonCount;
       updateCartonBadge(activeOrder);
       showFeedback(document.getElementById('itemScanFeedback'), 'success', `\u{1F4E6} Carton ${data.activeCartonNum} started`);
-      focusActiveQty();
+      focusScanInput();
       // ── THE CLOSED BOX'S LABEL PRINTS NOW ──────────────────────────────
       // Per the user, spelled out: "when individual carton closes, label to
       // be out automatically" — carton 1 prints the moment + New Carton
@@ -9660,7 +9660,7 @@
       activeOrder.cartonCount = data.cartonCount;
       updateCartonBadge(activeOrder);
       showFeedback(document.getElementById('itemScanFeedback'), 'success', `\u{1F4E6} Now packing Carton ${data.activeCartonNum}`);
-      focusActiveQty();
+      focusScanInput();
     } catch (err) {
       showFeedback(document.getElementById('itemScanFeedback'), 'error', err.message);
     }
@@ -10458,18 +10458,37 @@
       pager.innerHTML = '';
     }
 
-    focusActiveQty();
+    focusScanInput();
   }
 
-  // Cursor defaults to the qty field of the item being worked on (the one
-  // with the on-screen barcode). Skipped on touch devices where focusing an
-  // input pops the on-screen keyboard over the list.
-  function focusActiveQty() {
+  // THE CURSOR GOES BACK TO THE SCAN BOX AFTER EVERY SCAN. Per the user,
+  // from the bench: "after scan always point cursor to Scan item barcode/SKU
+  // by default."
+  //
+  // SUPERSEDES parking it in the qty field of the active row. That read well
+  // — the cursor sat on the line you were working — but it aimed the caret at
+  // a NUMBER field while the next thing a packer does is fire a gun, and a
+  // gun is a keyboard. What saved it was a timing heuristic: characters
+  // arriving into a qty box faster than QTY_BURST_GAP_MS are assumed to be a
+  // scanner and rerouted (`_qtyBurst` / `_qtyBurstToScan`). A heuristic that
+  // decides between "a quantity" and "a barcode" on typing speed is one a
+  // busy page can get wrong in the expensive direction — a barcode landing in
+  // the qty box as a number is a WRONG COUNT on a real order, and it looks
+  // deliberate afterwards. Focusing the scan box removes the guess from the
+  // common path entirely; the burst detector stays as the net for when
+  // somebody has clicked into a qty field by hand.
+  //
+  // This also makes outbound agree with the other two scan screens — inbound
+  // and wave picking have always returned focus to their own scan input.
+  //
+  // STILL SKIPPED ON TOUCH, deliberately: on a phone, focusing any input pops
+  // the on-screen keyboard over the item list, and the floor works from
+  // phones. The global capture already catches a wedge gun there with focus
+  // on <body>, which is why attachGlobalScanCapture blurs rather than focuses.
+  function focusScanInput() {
     if (window.matchMedia('(pointer: coarse)').matches) return;
-    const inp = document.querySelector('#scanItemsTbody tr.row-active .qty-input')
-             || document.querySelector('#scanItemsTbody tr:not(.row-compact) .qty-input');
+    const inp = document.getElementById('itemScanInput');
     if (inp) { inp.focus(); inp.select(); }
-    else document.getElementById('itemScanInput').focus();
   }
 
   function updateProgress(order) {
@@ -10701,7 +10720,7 @@
     // number…" bar on the Orders tab, then hit Scan → — a gun's characters go
     // into that input, now hidden behind the overlay, and the scan is LOST
     // with no error. Found while auditing scan durability: on a phone nothing
-    // moved focus, because focusActiveQty() skips touch devices on purpose
+    // moved focus, because focusScanInput() skips touch devices on purpose
     // (focusing an input there pops the on-screen keyboard over the list).
     // Blurring is the fix rather than focusing: it DISMISSES the keyboard
     // instead of summoning it, and with focus on <body> the capture's own
@@ -11117,7 +11136,7 @@
       }
     }
     _scanBusy = false;
-    focusActiveQty();
+    focusScanInput();
   }
 
   // ── Teach-on-scan: unknown barcode → packer picks the matching line ────────
@@ -11168,7 +11187,7 @@
             `✓ Learned: ${barcode} = ${data.sku} — counted ${data.scanned_qty}/${data.ordered_qty}`);
           const row = document.querySelector(`#scanItemsTbody tr[data-sku="${CSS.escape(data.sku)}"]`);
           if (row) { row.classList.add('row-flash'); setTimeout(() => row.classList.remove('row-flash'), 450); }
-          focusActiveQty();
+          focusScanInput();
         } catch (err) {
           overlay.classList.add('hidden');
           alert(err.message);

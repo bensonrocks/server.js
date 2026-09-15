@@ -1,0 +1,1 @@
+{"users":[{"id":"demo","name":"Demo","role":"admin","tenant_id":"default","salt":"06084127e8552e839a98e677798dde4e","passwordHash":"a25381c8e3da25aed1e844099e635b3b220a519a1e58d74711213bff8666ca865ad4de10a01ca33e528fb848a68538452addcb57b6b35e6ebb5158a14d37fb9b"}],"sessions":{"demo":"de170804-145c-4058-b63d-e3935bd8ccdf"}}

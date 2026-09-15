@@ -4325,6 +4325,49 @@ reported TypeError and shows the dialog; the fixed code does neither, real
 keystrokes still buffer ("5603"), and a keyless event fired MID-scan leaves the
 scan intact ("56" + stray + "03" = "5603").
 
+## The caret goes back to the SCAN BOX after every scan (`focusScanInput`)
+
+Per the user, from the bench: *"after scan always point cursor to Scan item
+barcode/SKU by default."*
+
+SUPERSEDES `focusActiveQty()`, which parked the caret in the **qty field of the
+active row**. That read well — the cursor sat on the line being worked — but it
+aimed the caret at a NUMBER box while the next thing a packer does is fire a
+gun, and a gun is a keyboard. The only thing standing between that and a wrong
+count was a TIMING HEURISTIC: characters arriving into a qty field faster than
+`QTY_BURST_GAP_MS` (140ms) are assumed to be a scanner and rerouted
+(`_qtyBurst` / `_qtyBurstToScan`). A heuristic deciding "quantity or barcode?"
+on typing speed can be wrong in the expensive direction — **a barcode landing
+in the qty box as a number is a wrong count on a real order, and it looks
+deliberate afterwards.** Focusing the scan box takes the guess off the common
+path; the burst detector stays as the net for somebody who clicks into a qty
+field on purpose (asserted).
+
+- **Outbound was the ODD ONE OUT.** Inbound (`inboundScanInput`) and wave
+  picking (`waveScanInput`) have always returned focus to their own scan input;
+  this only makes the outbound overlay agree with them.
+- **ALL SIX call sites are "about to scan the next item"** — entering the
+  scanner tab, opening the items phase, `+ New Carton`, switching carton, after
+  a counted scan, and after teaching a barcode. None of them is a quantity
+  correction, which is why the change is at the function and not per-site. The
+  function was RENAMED rather than quietly repurposed: the old name would have
+  described the opposite of what it does.
+- **STILL SKIPPED ON TOUCH, deliberately.** On a phone, focusing any input pops
+  the on-screen keyboard over the item list, and the floor works from phones.
+  The global capture already catches a wedge gun there with focus on `<body>`,
+  which is exactly why `attachGlobalScanCapture` BLURS rather than focuses.
+
+Verified 11 browser checks on desktop and a Pixel 5 (`br-scanfocus.js`, a
+two-line order): the overlay opens with the caret in the scan box and not in a
+qty field, it is back there after a scan, a second gun scan therefore counts as
+a scan (1 → 2) with the other line untouched, `+ New Carton` does not strand
+it, a qty field can still be clicked into by hand, and on the phone the scan
+box is NOT auto-focused. **The pre-change build fails 5 of the 11, every one
+reporting focus as `.qty-input`** — so the suite reproduces the report. Note
+which checks PASS pre-change: the gun scans still counted, because the test
+types at 12ms and the burst detector caught them. That is the heuristic doing
+its job, and precisely the thing that stops being load-bearing now.
+
 ## Scan buffer — Enter handler (public/app.js `_globalScanKeydown`/`_scanBuf`)
 
 `_scanBuf` is mirrored from `#itemScanInput`'s value on every keystroke while

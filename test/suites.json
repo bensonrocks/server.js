@@ -135,6 +135,13 @@
       "timeoutMs": 600000
     },
     {
+      "file": "br-scanfocus.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 420000
+    },
+    {
       "file": "br-stp-today.js",
       "browser": true,
       "selfBoots": false,
