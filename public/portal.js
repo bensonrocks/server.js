@@ -898,14 +898,24 @@
         <div><div class="v n" style="color:${cancelled ? 'var(--bad)' : 'var(--muted)'}">${num(cancelled)}</div><div class="l">Cancelled</div></div>
         <div><div class="v n">${num(pcs)}</div><div class="l">Pieces total</div></div>
       </div>
-      <div class="muted" style="text-align:center;font-size:.66rem;margin-top:.3rem">Across the last 90 days</div>
+      <div class="muted" style="text-align:center;font-size:.66rem;margin-top:.3rem">
+        Your ${num(orders.length)} most recent order${orders.length === 1 ? '' : 's'} &middot;
+        search above to find an older one &middot; &#8623; Report for the full year</div>
       ${dayByDayHtml(dayRows)}
     </div>${cancelledNoteHtml(cancelled)}${dayNoteHtml(dayRows)}`;
 
     if (!rows.length) {
+      // NOTHING ON THIS PAGE — so look at the whole history before saying no.
+      // The list above is the newest few hundred orders, and this filter only
+      // ever sees what was downloaded; an older order was unreachable by any
+      // term typed here. Reported as "last week's order cannot be found" on an
+      // account whose own tiles added to exactly the cap. The server search is
+      // asked ONLY at this point, so the everyday view costs nothing extra.
+      if (q.length >= 3) { renderDeepSearch(q); return; }
       $('orList').innerHTML = emptyState('&#128269;', 'Nothing matches', 'Try a different search or filter.');
       return;
     }
+    _deep = { q: '', rows: null, total: 0, state: 'idle' };   // a local hit supersedes any search
     // COMPLETED FIRST in the default view — that is what a client came to see.
     // Newest first within each group, so the ordering is still chronological
     // where it matters. The single-status views keep the server's own order.
@@ -914,7 +924,72 @@
       rows.sort((a2, b2) => rank(a2) - rank(b2)
         || String(orderDay(b2) || '').localeCompare(String(orderDay(a2) || '')));
     }
-    $('orList').innerHTML = rows.map(o => {
+    $('orList').innerHTML = orderCardsHtml(rows);
+    wireOrderCards();
+  }
+
+  // ── LOOKING PAST THE PAGE ─────────────────────────────────────────────────
+  // The everyday list is capped by ROW COUNT server-side, and this screen
+  // filters the array it already holds — so an order older than the cap could
+  // not be found however it was typed. `?q=` asks the server to search the
+  // client's whole history and hands back the SAME row shape, so the result
+  // renders through the same card.
+  //
+  // IT NEVER RUNS ON THE ORDINARY PATH. Only when the local filter finds
+  // nothing, only at 3+ characters, and debounced — so a client scrolling
+  // their orders makes exactly the requests they always did.
+  let _deep = { q: '', rows: null, total: 0, state: 'idle' }; // idle|busy|done|error
+  let _deepTimer = null;
+
+  function renderDeepSearch(q) {
+    if (_deep.q === q && _deep.state === 'done') {
+      if (!_deep.rows.length) {
+        $('orList').innerHTML = emptyState('&#128269;', 'Nothing matches',
+          `No order in your history matches “${esc(q)}”. Searched every order number, waybill, GI, PO and pick ticket.`);
+        return;
+      }
+      const more = _deep.total > _deep.rows.length
+        ? ` Showing the newest ${num(_deep.rows.length)} of ${num(_deep.total)}.` : '';
+      // THE BANNER SAYS WHERE THESE CAME FROM. Rows that are not in the list
+      // above would otherwise read as the page having quietly changed — and
+      // this is also the one place a CANCELLED order surfaces under “All”,
+      // which it must, since finding it is the entire point.
+      $('orList').innerHTML =
+        `<div class="day-note"><span>&#128269; Found <b>${num(_deep.total)}</b> in your full order history —
+          beyond the recent orders shown on this page.${more}</span></div>`
+        + orderCardsHtml(_deep.rows);
+      wireOrderCards();
+      return;
+    }
+    if (_deep.q !== q || _deep.state === 'idle' || _deep.state === 'error') {
+      _deep = { q, rows: null, total: 0, state: 'busy' };
+      clearTimeout(_deepTimer);
+      _deepTimer = setTimeout(async () => {
+        const asked = q;
+        try {
+          const r = await api('/api/portal/orders?q=' + encodeURIComponent(asked));
+          if (!r.ok) throw new Error('search failed');
+          const rows = await r.json();
+          const total = Number(r.headers.get('X-Portal-Search-Total'));
+          if (_deep.q !== asked) return;      // they typed on — this answer is stale
+          _deep = { q: asked, rows, total: Number.isFinite(total) ? total : rows.length, state: 'done' };
+        } catch {
+          if (_deep.q !== asked) return;
+          _deep = { q: asked, rows: [], total: 0, state: 'error' };
+        }
+        renderOrders();
+      }, 350);
+    }
+    $('orList').innerHTML = _deep.state === 'error'
+      ? emptyState('&#9888;', 'Could not search', 'Something went wrong looking through your older orders. Try again in a moment.')
+      : emptyState('&#128269;', 'Looking through your older orders…', 'Nothing on this page matches — checking your full history.');
+  }
+
+  // ONE CARD RENDERER, used by the everyday list AND by a full-history search
+  // result. A second copy would drift, and the first thing to drift would be
+  // whether a cancelled order still shows its reason and its re-placed note.
+  function orderCardsHtml(rows) {
+    return rows.map(o => {
       const s = statusOf(o.status);
       const isOpen = openOrder.has(o.order_number);
       const d = orderDetail.get(o.order_number);
@@ -963,6 +1038,9 @@
         ${isOpen ? `<div class="detail">${d ? orderDetailHtml(d) : '<div class="skel" style="height:58px"></div>'}</div>` : ''}
       </div>`;
     }).join('');
+  }
+
+  function wireOrderCards() {
     // The note is the CLIENT'S record of where the order went — free text
     // because we cannot know, and a dropdown of our guesses would only collect
     // wrong answers. Clicks must not bubble: the row itself is expandable.

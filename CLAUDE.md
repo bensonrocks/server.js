@@ -7583,6 +7583,79 @@ each alert knowing where it leads and saying so, an empty chart day not being a
 link, tapping a live bar opening Orders narrowed to that day with the day-note
 naming it, and the visibility rule holding per login.
 
+## The portal could not find an order older than the page (`?q=` on /api/portal/orders)
+
+Reported live (16 Sep 2026) with a screenshot whose own tiles read
+**6 + 202 + 92 = EXACTLY 300**, and the completion slip for the order in
+question: `172636325960072`, job `IS-260909-18`, completed **9 Sep** — while
+the day table's oldest row was **10 Sep**. One day past the edge.
+
+**THE LIMIT WAS NEVER 90 DAYS.** `/api/portal/orders` applies **no date filter
+at all**: it sorts the client's orders newest-first and ends `slice(0, 300)`.
+The screen's own line said *"Across the last 90 days"* — a hardcoded string in
+`portal.js` stating a rule the server does not follow, which is most of why
+this read as a mystery rather than a cap. At that client's volume 300 orders is
+about **seven days**, so "last week's order cannot be found" was the cap
+exactly. (90 days IS real for **Inbound**, which also caps at 400.)
+
+**AND THE SEARCH COULD NEVER REACH PAST IT**, because `renderOrders` filters
+the array already in the browser. No term could find what was never sent.
+
+- **`?q=` searches the client's WHOLE history**, on the same route — so section
+  visibility is inherited rather than re-implemented (a new path would have
+  needed adding to `portalSectionForPath`, and would have been ungated if
+  forgotten; asserted: a login with Orders switched off is 403 on the SEARCH,
+  not just the list).
+- **Matching runs BEFORE the per-order mapping** (transport job, pickup
+  verdict, stock verdict), so a search is CHEAPER than building the list.
+- Matches **order number, waybill, GI, PO, pick ticket** — partial, plus a
+  leading-zero-tolerant exact match, the same tolerance the office
+  scan-to-find bar has. Deliberately NOT SKUs or customer names: this is "find
+  me this order", and a term matching 300 orders is a browse wearing a
+  search's clothes.
+- **THE SHAPE STAYS A BARE ARRAY.** There is a standing note in this file that
+  this route answers with one; a caller that has not changed must not meet a
+  new shape. The pre-cap count rides on **`X-Portal-Search-Total`** instead.
+- `PORTAL_ORDERS_MAX` (300) and `PORTAL_SEARCH_MAX` (100) are named now — the
+  300 was a bare number inside a slice, which is what made the support question
+  unanswerable from the code.
+
+**THE EVERYDAY VIEW IS UNTOUCHED, and that was the requirement.** The browser
+asks the server **only** when the local filter finds nothing, only at 3+
+characters, and debounced — measured, not assumed: loading the tab makes zero
+search requests, and a term that matches on the page makes zero. The tiles and
+the day table are asserted byte-identical before the search and after clearing
+it; they describe the page, not the result. The found rows render through
+`orderCardsHtml` — **one card renderer**, so a second copy cannot drift on
+whether a cancelled order still shows its reason.
+
+**IT ALSO CLOSES THE SECOND TRAP.** The `All` chip hides cancelled orders (the
+status filter runs BEFORE the search term), so even an order ON the page could
+not be found there. A search result shows it, with its reason — finding it is
+the entire point.
+
+The label now says what is true: *"Your N most recent orders · search above to
+find an older one · ⇩ Report for the full year"*.
+
+MINOR, NOTED NOT FIXED: the completion slip's `Client` row reads
+`ord.client_name` — an ORDER-level field that is normally blank — so a slip
+prints "Client —" while the batch knows the client perfectly well. Cosmetic;
+the portal scopes on `batch.client_name` and is unaffected.
+
+Verified 27 API checks (`portal-search-e2e.js`, a client holding 340 orders:
+the ordinary call still a bare array of exactly 300 with no header; the
+reported order genuinely absent from it; found by number, waybill, GI, PO, a
+partial and a lower-case term; a leading-zero pick ticket; a cancelled order
+found with its reason; an unknown term an empty array not an error; **another
+client holding the SAME order number gets only their own, and cannot reach
+this one by its GI**; the Orders-section gate refusing the search) — **the
+pre-fix build fails 15 of them and reproduces the report exactly**, an exact
+order number returning all 300 rows — plus 32 browser checks on desktop and a
+Pixel 5 (`br-portal-search.js`: no search request on load or on a local hit,
+the reported order found with a banner saying where it came from, the tiles
+and day table unchanged, clearing restoring the list exactly, and no sideways
+scroll).
+
 ## Portal orders — the waybill you can open, and no pill that says nothing
 
 - **A STALE DELIVERY PILL IS WORSE THAN NO PILL.** A collected order was showing

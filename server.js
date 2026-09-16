@@ -5559,6 +5559,21 @@ function portalPickup(state, policy) {
 // reach. Both are enforced SERVER-side, not just in the UI.
 const PORTAL_SCREEN_DAYS = 90;
 const PORTAL_EXPORT_MAX_DAYS = 365;
+// THE EVERYDAY ORDERS LIST IS CAPPED BY ROW COUNT, NOT BY DAYS. Named because
+// it was a bare `300` inside a slice, and that made a real support question
+// unanswerable: a client reported "last week's order cannot be found" on an
+// account whose own tiles read 6 + 202 + 92 = EXACTLY 300 — seven days of
+// their volume. Everything older was never sent to the browser, and the
+// search filters the array already in the page, so no amount of typing could
+// reach it. The cap stays (a client with 40,000 orders must not be handed all
+// of them); what was missing was a way to look PAST it — see `?q=` on
+// /api/portal/orders.
+const PORTAL_ORDERS_MAX = 300;
+// A search reaches the client's whole history and is capped separately: a
+// lookup returns a handful, and anything that returns 100+ rows is a browse,
+// not a search. The count before the cap rides on X-Portal-Search-Total so the
+// screen can say "showing 100 of 240" rather than quietly truncating.
+const PORTAL_SEARCH_MAX = 100;
 // Default "no movement for this long = aging" threshold, in calendar days.
 // Each client can override it for their own view (portal → Stock → Aging).
 const PORTAL_AGING_DAYS_DEFAULT = 15;
@@ -5850,6 +5865,34 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
   // parcel as still sitting here — same reason the office queue does it.
   if (applyAutoPickups(db)) writeDb(db);
   const _pol = pickupPolicy(db);
+  // ── SEARCH THE WHOLE HISTORY, NOT JUST THE PAGE ───────────────────────────
+  // Without `q` this route is byte-for-byte what it was: the newest
+  // PORTAL_ORDERS_MAX rows, a bare array. The everyday screen is untouched.
+  //
+  // WITH `q` it looks at every order the client has, because the reported
+  // fault was precisely that the screen could not: the browser filters the
+  // array it already holds, so an order past the cap was unreachable by any
+  // search term. Matching happens BEFORE the per-order mapping below (which
+  // resolves a transport job, a pickup verdict and a stock verdict each time),
+  // so a search is cheaper than building the list, not dearer.
+  //
+  // It matches the identifiers a person actually quotes off paperwork — the
+  // order number, the waybill, the GI, the PO, the pick ticket — as a partial
+  // match, plus a leading-zero-tolerant exact match, the same tolerance the
+  // office scan-to-find bar has always had. It deliberately does NOT search
+  // SKUs or customer names: this is "find me this order", and a term that
+  // matched 300 orders would be a browse wearing a search's clothes.
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const strip0 = s => String(s || '').trim().toLowerCase().replace(/^0+(?=.)/, '');
+  const qBare = strip0(q);
+  const hit = o => {
+    for (const v of [o.order_number, o.waybill_number, o.issue_no, o.po_number, o.pick_ticket]) {
+      const s = String(v || '').trim().toLowerCase();
+      if (!s) continue;
+      if (s.includes(q) || strip0(s) === qBare) return true;
+    }
+    return false;
+  };
   const out = [];
   for (const b of db.batches || []) {
     if (String(b.client_name || '').trim().toLowerCase() !== client) continue;
@@ -5858,6 +5901,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
       // Cancelled by this client: the record stays for the trail but leaves
       // every everyday screen, theirs included.
       if (isClientCancelled(st)) continue;
+      if (q && !hit(o)) continue;
       // AN ORDER WE CANCELLED IS THE CLIENT'S BUSINESS. They need to see it
       // (and re-place it elsewhere), so `unprocessed` rows are shown with the
       // reason rather than quietly dropped.
@@ -5920,7 +5964,15 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
     }
   }
   out.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
-  res.json(out.slice(0, 300));
+  if (q) {
+    // The shape stays a BARE ARRAY, exactly as the everyday call answers —
+    // there is a standing note in CLAUDE.md that this route answers with one,
+    // and a caller that has not been changed must not meet a new shape. How
+    // many matched before the cap rides on a header instead.
+    res.set('X-Portal-Search-Total', String(out.length));
+    return res.json(out.slice(0, PORTAL_SEARCH_MAX));
+  }
+  res.json(out.slice(0, PORTAL_ORDERS_MAX));
 });
 // Inbound — the client's receipts, incl. discrepancy/damage counts, SLA state
 // and GRN link. On-screen history is capped at PORTAL_SCREEN_DAYS; anything
