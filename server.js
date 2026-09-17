@@ -7672,6 +7672,38 @@ function hasLabelKeyFields(f) {
                 || String(f.orderNumber   || '').trim()
                 || String(f.giNumber      || '').trim()));
 }
+// WHICH PAGES HAVE WE READ WITH EVERYTHING WE HAVE, AND STILL LEARNED NOTHING?
+// That is the honest end-state, and the only one worth alarming on: a page
+// still `unmatched` carrying NO identifier AFTER both the text layer and OCR
+// have been at it. Anything short of that is ordinary pending work —
+// `ambiguous` means we read too MUCH (two candidates, already its own state),
+// and a page whose OCR retry has not run yet is a button press away, not a gap
+// in what we can read.
+const LABEL_UNREADABLE_DAYS = 30;   // the window scheduleLabelAutoRematch sweeps
+function labelPageReadEverything(p) {
+  // OCR has genuinely been attempted under the CURRENT strategy, in any of the
+  // three ways it can be: the text IS OCR text; the fields-retry ran on a
+  // text-bearing page; or OCR ran and produced nothing at all.
+  return p.ocr === true
+      || p.ocrForFieldsStrategy === OCR_LABEL_STRATEGY
+      || (p.ocrFailed && p.ocrStrategy === OCR_LABEL_STRATEGY);
+}
+function labelUnreadableHealth(db) {
+  const cutoff = Date.now() - LABEL_UNREADABLE_DAYS * 24 * 3600 * 1000;
+  let pages = 0;
+  const imports = [];
+  for (const imp of (db.labelImports || [])) {
+    if ((Date.parse(imp.uploadedAt || '') || 0) <= cutoff) continue;
+    const n = (imp.pages || []).filter(p =>
+      p.matchStatus === 'unmatched'
+      && !hasLabelKeyFields(p.extracted)
+      && labelPageReadEverything(p)).length;
+    if (!n) continue;
+    pages += n;
+    if (imports.length < 5) imports.push({ id: imp.id, filename: imp.filename, pages: n });
+  }
+  return { labelPagesUnreadable: pages, labelUnreadableImports: imports };
+}
 function labelPagesOf(ref) { return ref ? [ref, ...(Array.isArray(ref.parcels) ? ref.parcels : [])] : []; }
 function labelHeldTrackings(ref) {
   return new Set(labelPagesOf(ref).map(p => String(p.tracking || '').trim().toUpperCase()).filter(Boolean));
@@ -10183,6 +10215,17 @@ app.get('/api/system-health', (req, res) => {
       try { return inventory.available() ? inventory.unclassifiedMovementTypes() : []; }
       catch (_) { return []; }
     })(),
+    // A LABEL SHAPE NOBODY CAN READ IS THE NEXT TRACXLOGIS, WAITING.
+    // Three times now a label has carried an identifier no reader of ours
+    // could see — a GI with no pattern, a tracking caption typeset in groups,
+    // a caption drawn as a bitmap — and each time the system said nothing and
+    // the FLOOR reported it, weeks later, as "the waybills don't come out".
+    // Enumerating caption shapes in advance cannot close that; the next one
+    // will be a shape nobody has seen. What closes it is making the honest
+    // end-state countable: a page we have read with EVERYTHING we have and
+    // which still yields no identifier. Same reasoning as
+    // unclassifiedMovementTypes above — notice it the day it appears.
+    ...labelUnreadableHealth(db),
   });
 });
 

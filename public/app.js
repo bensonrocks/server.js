@@ -18553,6 +18553,18 @@
     if (h.labelOcrRenderAvailable === false) out.push({ sev: 'warn',
       title: 'Label OCR rendering unavailable',
       text: 'Image-only shipping labels (ones with no text layer) will not auto-match on this deployment. Check the boot log for the @napi-rs/canvas error.' });
+    // A caption shape no reader of ours can see is the next TracXLogis. Three
+    // times it has been the FLOOR that noticed, weeks later. Warn the day it
+    // appears instead — this is the one state that means our extractor has a
+    // gap, as opposed to a page simply waiting for Auto Match.
+    if (h.labelPagesUnreadable > 0) {
+      const where = (h.labelUnreadableImports || []).map(i => i.filename).filter(Boolean);
+      out.push({ sev: 'warn',
+        title: `${h.labelPagesUnreadable} label page(s) carry no identifier we can read`,
+        text: (where.length ? `In: ${where.join(', ')}. ` : '')
+          + 'These have been read by both the text layer and OCR and still yield no tracking, order or GI number — so this is most likely a label shape the extractor does not handle yet, not a page waiting to be re-read. '
+          + 'Match them by hand on the Labels tab to clear the count, and send one of the labels to the tech team so the shape can be added.' });
+    }
     if (h.zortOutboxStalled > 0) out.push({ sev: 'warn',
       title: `Stock sync stalled — ${h.zortOutboxStalled} update(s) failing`,
       text: 'Stock updates are repeatedly failing to reach the connected store. Check the store connection under Connections.' });

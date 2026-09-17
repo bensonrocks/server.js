@@ -58,13 +58,37 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const J = async r => { const t = await r.text(); try { return JSON.parse(t); } catch { return { _raw: t }; } };
 
 let child = null;
+let _bootedAt = null;
 async function boot() {
+  // ANSWER THE QUESTION "IS THIS SERVER MINE?" BEFORE TRUSTING A SINGLE
+  // ASSERTION. A server left behind on this port by another run happily
+  // answers every request from ITS data dir — so the suite goes red with
+  // things like "label import accepted (409)", which reads as an app fault
+  // and is not one. (Cost a confusing run; the standing gotcha in CLAUDE.md
+  // says the harness must assert `bootedAt` MOVED on every boot, and this
+  // suite did not.) Fail loudly here instead of measuring the wrong process.
+  const before = await fetch(B + '/api/version').then(r => r.json()).catch(() => null);
+  if (before) throw new Error(
+    `port ${PORT} is already serving a server this suite did not start `
+    + `(booted ${before.bootedAt}). Stop it before running — otherwise every `
+    + `assertion below measures the wrong process.`);
   child = spawn('node', [SERVER], {
     env: { ...process.env, PORT: String(PORT), DATA_DIR: DDIR },
     stdio: ['ignore', fs.openSync(LOG, 'a'), fs.openSync(LOG, 'a')],
     detached: true,
   });
-  for (let i = 0; i < 60; i++) { try { if ((await fetch(B + '/api/version')).ok) return; } catch {} await sleep(500); }
+  for (let i = 0; i < 60; i++) {
+    try {
+      const v = await fetch(B + '/api/version');
+      if (v.ok) {
+        const { bootedAt } = await v.json();
+        if (bootedAt && bootedAt === _bootedAt) throw new Error('same process — the old server never died');
+        _bootedAt = bootedAt;
+        return;
+      }
+    } catch (e) { if (/never died/.test(e.message)) throw e; }
+    await sleep(500);
+  }
   throw new Error('server did not boot');
 }
 async function stop() {
@@ -212,6 +236,15 @@ const pageOf  = (imp, n) => (imp.pages || []).find(p => p.pageIndex === n - 1);
     ok(!!db2.orderLabels?.[o.n], `${o.n} holds its label on disk, not just in memory`);
   }
 
+  // ── 4b. A RESOLVED IMPORT RAISES NO ALARM ───────────────────────────────
+  // The health signal must be SILENT on a healthy import, or it is noise
+  // people learn to scroll past — which is exactly how the next unreadable
+  // shape would go unnoticed again. Page 2 went through OCR and resolved, so
+  // "read by everything" alone must not be enough to count it.
+  const h1 = await J(await fetch(B + '/api/system-health', { headers: H(tok2) }));
+  ok(h1.labelPagesUnreadable === 0,
+     `a fully-resolved import reports NO unreadable pages (${h1.labelPagesUnreadable})`);
+
   // ── 5. A SECOND PRESS IS A NO-OP ────────────────────────────────────────
   const rm2 = await autoMatch(tok2, impId);
   ok(rm2.data.newMatches === 0, `pressing Auto Match again changes nothing (newMatches=${rm2.data.newMatches})`);
@@ -270,6 +303,60 @@ const pageOf  = (imp, n) => (imp.pages || []).find(p => p.pageIndex === n - 1);
      'a word followed by two numbers is not a tracking number — the head must be letters+digits');
   ok(extractLabelFields('QSP22214\n1513\n').trackingNumber === '',
      'two runs on DIFFERENT LINES are never joined — only a same-line caption is');
+
+  // ── 8. THE NEXT UNREADABLE SHAPE ANNOUNCES ITSELF ───────────────────────
+  // The fix above handles the two shapes that were REPORTED. The next one will
+  // be a shape nobody has seen, so the durable guard is the end-state being
+  // countable: read by the text layer AND by OCR, still no identifier. Seeded
+  // directly, because that is the only way to hold the boundary still — the
+  // point is which pages count and which deliberately do not.
+  await stop();
+  {
+    const db = readDb();
+    const imp = (db.labelImports || []).find(i => i.id === impId2);
+    const p = n => imp.pages.find(x => x.pageIndex === n - 1);
+    // READ BY EVERYTHING, STILL NOTHING → counts.
+    Object.assign(p(1), {
+      matchStatus: 'unmatched', matchedOrderNumber: null, extracted: {},
+      ocrForFieldsStrategy: 'full-page-render-v1',        // the fields retry ran
+    });
+    // NOT YET RE-READ → does NOT count. This is a button press away, not a gap
+    // in what we can read, and counting it would make the signal noise.
+    Object.assign(p(3), {
+      matchStatus: 'unmatched', matchedOrderNumber: null, extracted: {},
+    });
+    delete p(3).ocrForFieldsStrategy; delete p(3).ocr;
+    // AN OLD IMPORT IN THE SAME STATE → aged out, so the count cannot become a
+    // permanent red number nobody can clear.
+    db.labelImports.push({
+      id: 'imp-ancient', filename: 'old-labels.pdf', pageCount: 1,
+      uploadedAt: new Date(Date.now() - 60 * 86400000).toISOString(), uploadedBy: 'demo',
+      pages: [{ pageIndex: 0, matchStatus: 'unmatched', rawText: 'something',
+                extracted: {}, ocrForFieldsStrategy: 'full-page-render-v1' }],
+    });
+    writeDb(db);
+  }
+  await boot();
+  const tok3 = await login('demo', 'demo');
+  const h2 = await J(await fetch(B + '/api/system-health', { headers: H(tok3) }));
+  ok(h2.labelPagesUnreadable === 1,
+     `exactly the page read by everything is counted (${h2.labelPagesUnreadable}) — `
+     + 'not the one still waiting for Auto Match, and not the 60-day-old import');
+  ok((h2.labelUnreadableImports || []).some(i => i.filename === 'TracXLogis_labels.pdf'),
+     'and the alarm NAMES the file, so it can be found');
+  ok(!(h2.labelUnreadableImports || []).some(i => i.id === 'imp-ancient'),
+     'the aged-out import is not named either');
+
+  // Matching it by hand is what clears it — the count follows the real state
+  // rather than needing anyone to dismiss it.
+  const mm = await fetch(`${B}/api/label-imports/${impId2}/pages/0/match`, {
+    method: 'POST', headers: { ...H(tok3), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderNumber: ORDERS[0].n }),
+  });
+  ok(mm.status === 200, `the page is matched by hand (${mm.status})`);
+  const h3 = await J(await fetch(B + '/api/system-health', { headers: H(tok3) }));
+  ok(h3.labelPagesUnreadable === 0,
+     `and the alarm clears itself (${h3.labelPagesUnreadable}) — no dismiss button to forget`);
 
   await stop();
   console.log('\n' + (fails.length ? `${fails.length} FAILED` : 'ALL PASSED'));

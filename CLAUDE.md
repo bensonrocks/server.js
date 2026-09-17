@@ -1332,7 +1332,7 @@ missing. The number was simply unreadable by every path we had.
   Once a page HAS been OCR'd and still has nothing, it says so and points at
   Match to Order.
 
-Verified 45 API checks (`tracx-automatch-e2e.js`, **tier `ci`**) through the
+Verified 51 API checks (`tracx-automatch-e2e.js`, **tier `ci`**) through the
 real endpoints on an import stored exactly as the floor's is — pages unmatched,
 extraction empty — with the orders already present: ONE press of Auto Match
 resolves all three shapes (split caption, image-only caption, plain contiguous
@@ -1346,6 +1346,70 @@ date, the `SG 312139 3104` shape and a cross-line pair all still refused.
 exactly** — pages 1 and 2 `unmatched`, no tracking read, `newMatches=1`, and
 404 at the print route. Regressions: `label-ref-e2e` 30, `label-parcels-e2e`
 32, `bulk-print-e2e` 38, and the CI tier 7 suites / 198 checks.
+
+#### THE NEXT UNREADABLE SHAPE ANNOUNCES ITSELF — `labelPagesUnreadable`
+
+Per the user, once Auto Match cleared the real import: *"make sure it sticks
+and doesnt occur again."* Two different jobs, and only the first is about this
+bug.
+
+**IT STICKS** because `tracx-automatch-e2e.js` is tier `ci` — it runs on every
+push and PR, and it fails against the build that shipped without the fix. A
+change that removes the caption join, the OCR gate or the `ocrForFields`
+wiring turns CI red.
+
+**IT DOES NOT HAPPEN AGAIN** is the harder half, because this was the **THIRD**
+instance of ONE class: a label carries an identifier no reader of ours can see,
+matches nothing, and the FLOOR reports it weeks later. The GI with no pattern,
+the caption typeset in groups, the caption drawn as a bitmap. **Enumerating
+caption shapes in advance cannot close that** — the next one will be a shape
+nobody has seen. What closes it is making the honest end-state COUNTABLE:
+
+> a page still `unmatched`, carrying **no identifier**, **after both the text
+> layer and OCR have been at it**.
+
+- **THAT EXACT STATE, AND NOTHING WEAKER.** A page whose OCR retry has not run
+  yet is a button press away, not a gap in what we can read; `ambiguous` means
+  we read too MUCH and is already its own state. Counting either would make the
+  signal noise, and a noisy alarm is how the next one gets scrolled past —
+  which is the failure this exists to prevent. `labelPageReadEverything(p)`
+  accepts the three ways OCR can genuinely have been tried (the text IS OCR
+  text; the fields-retry ran; OCR ran and produced nothing).
+- **SAME PRECEDENT AS `unclassifiedMovementTypes`**, deliberately: a kind we do
+  not handle yet, surfaced the day it appears rather than the day someone
+  queries a figure.
+- **AMBER, NOT RED**, by computed style. A label shape we cannot read is work
+  for a human plus a gap to close — not an outage. It rides the **System
+  Outages nav badge**, so an admin notices with no top banner (standing rule).
+- **IT CLEARS ITSELF.** Matching the page by hand takes it out of the count;
+  there is no dismiss button to forget. Bounded to a
+  `LABEL_UNREADABLE_DAYS` (30) window — the same one `scheduleLabelAutoRematch`
+  sweeps — so it can never become a permanent red number from one old import.
+  HONEST CONSEQUENCE: a genuinely unreadable page nobody ever hand-matches
+  ages out of the alarm after 30 days. The alarm's job is to catch a NEW shape
+  promptly, not to track a backlog; the review screen still lists the page.
+- The row NAMES the file (up to 5 imports), because "3 pages are unreadable"
+  cannot be acted on and "in NewCarrier_labels.pdf" can.
+
+Verified 6 more API checks in the same suite (a fully-resolved import reports
+ZERO — the silent-on-healthy case, which is the one that keeps it trustworthy;
+the page read by everything counted while the one still awaiting Auto Match is
+not; a 60-day-old import in the same state ignored; the file named; a hand
+match clearing it to 0) plus 14 browser checks on desktop and a Pixel 5
+(`br-label-unreadable.js`: the nav badge carrying it with no banner, the row in
+System Outages stating the count, naming the file, saying both readers were
+tried, amber by computed style, no sideways scroll).
+
+TEST GOTCHA, and it cost a red run that looked like an app fault: this suite
+boots on a FIXED port and data dir, so running it twice at once — here, the
+pre-fix comparison beside the CI tier — makes the second run talk to the FIRST
+run's server, which answers from its own data. The symptom is nonsense that
+reads as a real bug (`label import accepted (409)` — the same-file guard, on a
+file this run had never uploaded). `boot()` now REFUSES to start when the port
+is already answering, and asserts `bootedAt` MOVED, so the suite says "that
+server is not mine" instead of measuring the wrong process. Fourth time a
+stray server has done this; the rule was already written down and this suite
+simply did not have the guard.
 
 FIXTURE: `tracx-fixture.js` prints the 3-page label through headless Chromium
 (a pdf-lib document is unreadable by this repo's pdf-parse — a fixture the

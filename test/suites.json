@@ -86,6 +86,13 @@
       "timeoutMs": 600000
     },
     {
+      "file": "br-label-unreadable.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
       "file": "br-lag.js",
       "browser": true,
       "selfBoots": true,
