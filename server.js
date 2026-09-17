@@ -7662,6 +7662,16 @@ class _NapiCanvasFactory {
 // parcels sit in `parcels[]`. Anything that PRINTS goes through
 // `mergedLabelPdf`, which hands back every parcel's page in one document.
 function labelTrackingOf(page) { return String(page?.extracted?.trackingNumber || '').trim().toUpperCase(); }
+// CAN THIS EXTRACTION MATCH ANYTHING? Only the three IDENTIFIERS can — a
+// recipient name or an address is worth showing on the review row and cannot
+// find an order. So a page carrying an address and no identifier counts as
+// having nothing, which is the honest reading and the one the OCR retry gate
+// below needs.
+function hasLabelKeyFields(f) {
+  return !!(f && (String(f.trackingNumber || '').trim()
+                || String(f.orderNumber   || '').trim()
+                || String(f.giNumber      || '').trim()));
+}
 function labelPagesOf(ref) { return ref ? [ref, ...(Array.isArray(ref.parcels) ? ref.parcels : [])] : []; }
 function labelHeldTrackings(ref) {
   return new Set(labelPagesOf(ref).map(p => String(p.tracking || '').trim().toUpperCase()).filter(Boolean));
@@ -8343,9 +8353,14 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
   // staff upload does. It also used to sit in the route and reference `pages`,
   // which this extraction moved out of scope — leaving it there would have
   // thrown after the response was already sent, silently disabling OCR.
+  // A page with text and NO IDENTIFIER is swept here too — a barcode caption
+  // drawn as an image leaves a page whose text layer is real and useless, and
+  // the old "no text layer at all" test never reached it. One import, right
+  // after an upload that was already the busy moment, so it carries
+  // ocrForFields; the 30-day sweep deliberately does not.
   if (pages.some(p => (p.matchStatus === 'unmatched' || p.matchStatus === 'ambiguous')
-                      && !(p.rawText || '').trim())) {
-    setImmediate(() => rematchLabelImport(importId, false)
+                      && (!(p.rawText || '').trim() || !hasLabelKeyFields(p.extracted)))) {
+    setImmediate(() => rematchLabelImport(importId, false, { ocrForFields: true })
       .catch(e => console.error('[label-ocr-bg]', e.message)));
   }
   // ocrSkipped was being dropped here, so the office screen showed
@@ -8673,7 +8688,15 @@ app.delete('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) =>
 // Core rematch, shared by the Auto Match endpoint and the post-upload
 // background pass. OCRs image-only pages (once — the text is stored) so
 // label PDFs without a text layer can still auto-match.
-async function rematchLabelImport(id, rematchAll) {
+// `ocrForFields` OPENS THE EXPENSIVE HALF, and only a deliberate act does.
+// Re-reading a page that HAS text but yielded no identifier costs a render and
+// an OCR pass each; the 30-day background sweep walks every import with an
+// unmatched page, so turning it on there would make one quiet timer fire a
+// mass OCR burst across months of imports — exactly the CPU contention the
+// floor reported as lag last week. It is on for the Auto Match / Rematch All
+// button (somebody is waiting for it) and for the pass right after an upload
+// (one import, already the busy moment), and off for the sweep.
+async function rematchLabelImport(id, rematchAll, { ocrForFields = false } = {}) {
   const db  = readDb();
   const imp = (db.labelImports || []).find(i => i.id === id);
   if (!imp) return null;
@@ -8736,25 +8759,59 @@ async function rematchLabelImport(id, rematchAll) {
     // times Auto Match / Rematch is clicked, even after the underlying bug is
     // fixed. Bump OCR_LABEL_STRATEGY whenever the OCR approach changes again.
     const staleFailure = page.ocrFailed && page.ocrStrategy !== OCR_LABEL_STRATEGY;
-    if (!rawText.trim() && Tesseract && (!page.ocrFailed || staleFailure) && ocrCount < OCR_PAGE_CAP) {
+    // A PAGE CAN HAVE TEXT AND STILL SAY NOTHING. The gate used to be "no text
+    // layer at all", so a page whose text came off the PDF but yielded NO key
+    // field was never OCR'd — and that is exactly the reported shape: 36
+    // TracXLogis pages reading "No key fields recognized" (the message the
+    // review row shows only when rawText is NON-empty), whose identifiers are
+    // printed inside the barcode block. When that block is drawn as an image
+    // the text layer around it is real and useless, and no amount of pressing
+    // Auto Match could ever reach it. One attempt per page per strategy —
+    // tracked on its OWN marker rather than by bumping OCR_LABEL_STRATEGY,
+    // which would force a re-OCR of every genuinely image-only page too — and
+    // it shares `ocrCount`, so the total work per rematch is still capped.
+    const noKeyFields = !hasLabelKeyFields(page.extracted);
+    const fieldsRetry = ocrForFields && !!rawText.trim() && Tesseract && noKeyFields && !page.ocr
+                        && page.ocrForFieldsStrategy !== OCR_LABEL_STRATEGY;
+    if ((!rawText.trim() ? (Tesseract && (!page.ocrFailed || staleFailure)) : fieldsRetry) && ocrCount < OCR_PAGE_CAP) {
+      const forFields = !!rawText.trim();
       try {
         if (!ocrWorker) ocrWorker = await createOcrWorker();
         const text = await ocrLabelPageFile(path.join(LABEL_IMPORT_DIR, id, page.pageFile), ocrWorker);
         ocrCount++;
-        page.ocrStrategy = OCR_LABEL_STRATEGY;
-        if (text.trim()) {
+        if (forFields) page.ocrForFieldsStrategy = OCR_LABEL_STRATEGY;
+        else           page.ocrStrategy          = OCR_LABEL_STRATEGY;
+        if (text.trim() && forFields) {
+          // KEEP BOTH. The text layer is genuine — it is simply missing the
+          // identifier — so the OCR pass is ADDED to it rather than replacing
+          // it, and the extraction is only taken when it actually found
+          // something the text layer could not. A worse reading must never
+          // displace a good one.
+          const combined = rawText + '\n' + text;
+          const better   = extractLabelFields ? extractLabelFields(combined) : null;
+          if (better && hasLabelKeyFields(better)) {
+            rawText      = combined;
+            page.rawText = combined.slice(0, 4000);
+            page.ocr     = true;
+            page.extracted = better;
+          }
+        } else if (text.trim()) {
           rawText         = text;
           page.rawText    = text.slice(0, 4000);
           page.ocr        = true;
           page.ocrFailed  = false;
           if (extractLabelFields) page.extracted = extractLabelFields(text);
-        } else {
+        } else if (!forFields) {
           page.ocrFailed = true; // don't burn OCR time on this page again — until the strategy next improves
         }
       } catch (e) {
         console.error(`[label-ocr] page ${page.pageIndex + 1}:`, e.message);
-        page.ocrFailed   = true;
-        page.ocrStrategy = OCR_LABEL_STRATEGY;
+        if (forFields) {
+          page.ocrForFieldsStrategy = OCR_LABEL_STRATEGY;
+        } else {
+          page.ocrFailed   = true;
+          page.ocrStrategy = OCR_LABEL_STRATEGY;
+        }
       }
     }
 
@@ -8939,7 +8996,10 @@ function scheduleLabelAutoRematch(trigger) {
 
 app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
   try {
-    const result = await rematchLabelImport(req.params.id, req.body?.all === true);
+    // Somebody pressed the button and is waiting, so this run also re-reads
+    // pages that HAVE text but yielded no identifier (a barcode caption drawn
+    // as an image) — the expensive half, off on the background sweep.
+    const result = await rematchLabelImport(req.params.id, req.body?.all === true, { ocrForFields: true });
     if (!result) return res.status(404).json({ error: 'Import not found' });
     res.json({ ok: true, ...result });
   } catch (err) {

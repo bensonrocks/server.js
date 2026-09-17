@@ -17890,9 +17890,17 @@
              <button class="btn-ghost btn-sm lri-unmatch-btn" data-page="${i}">Unmatch</button>`
           : `<button class="btn-primary btn-sm lri-match-btn" data-page="${i}">&#43; Match to Order</button>`;
         const noText = !(page.rawText || '').trim();
+        // The second line used to end "enlarge the label and use Match to
+        // Order" — which was true when the only OCR was for pages with no text
+        // at all, and is now the opposite of what to do first. A page with
+        // text and no identifier (a barcode caption drawn as an image, or one
+        // typeset in groups) is exactly what Auto Match re-reads, so say so;
+        // matching by hand is the fallback, not the first move.
         const noFieldsHint = noText
           ? 'Image-only label (no text layer) — Auto Match reads it with OCR'
-          : 'No key fields recognized — enlarge the label and use Match to Order';
+          : page.ocr
+            ? 'No key fields recognized, even after OCR — enlarge the label and use Match to Order'
+            : 'No key fields recognized — press Auto Match to re-read it, or use Match to Order';
         return `
           <div class="lri-row" data-page="${i}">
             <div class="lri-thumb-col">

@@ -78,6 +78,10 @@ jobs:
 # browser install into a job that needs none. They are `browser: true` now
 # and run with the other 14 on `npm run test:browser`.
 #
-# CI is therefore pure Node: 6 suites, 158 checks, no browser, no apt. That
-# is 44 fewer checks than the first cut claimed and 158 more than ran before
-# this week — and unlike 202 it is a number that actually runs.
+# CI is therefore pure Node: 7 suites, 198 checks, no browser, no apt — and
+# unlike the first cut's 202 it is a number that actually runs.
+#
+# THE FIXTURE RULE THAT FOLLOWS FROM "no browser": a CI suite may not print
+# its own PDF input. perf-12.pdf, perf-scan3.pdf and tracx-fixture.pdf are
+# committed for exactly that reason (test/legacy/.gitignore says so beside
+# each one); their generator scripts need Chromium and are run by hand.

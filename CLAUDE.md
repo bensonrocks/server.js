@@ -1257,6 +1257,103 @@ TEST GOTCHA, third time in this file: `pkill -f "<pattern>"` matches its OWN
 command line and kills the shell (exit 144). Kill a test server by scanning
 /proc for the pid whose environ carries the port.
 
+#### THE NUMBER WAS PRINTED IN GROUPS — 36 pages nothing could resolve
+
+Reported from the floor (17 Sep 2026) with three screenshots: a 36-page
+**TracXLogis** import where EVERY page read *"unmatched · No key fields
+recognized"*; the enlarged label, whose human-readable caption under the
+barcode reads **`QSP22214 1513`**; and the Match-to-Order picker finding
+**GI-143992 / BETIME ECOM** the moment `1513` was typed — so the order was in
+the system all along, carrying `QSP222141513` as its waybill. Nothing was
+missing. The number was simply unreadable by every path we had.
+
+- **THE CAPTION IS TYPESET IN GROUPS, so the text layer yields TWO RUNS.**
+  Every tracking pattern wants **9+ CONTIGUOUS digits**, so `extractLabelFields`
+  returned a completely empty extraction — which is why the row said "no key
+  fields" rather than naming a wrong number. `matchLabelPage` then had nothing
+  to look up and fell to the blind whole-page scan, which since the wrong-order
+  fix is deliberately **confined to one token** and so could not see it either.
+  Both refusals are individually correct; together they made the page
+  permanently unmatchable, and no amount of pressing ⚡ Auto Match could change
+  that.
+- **THE FIX IS A FIELD, NOT A LOOSER SCAN** — the route the GI fix took, for
+  the same reason. A last-resort join in `extractLabelFields`, consulted **only
+  when the contiguous patterns found nothing**, so no label that already
+  extracts changes by a byte; what it produces resolves by an **EXACT
+  `byWaybill` lookup**, which carries no length floor because it is not a
+  substring test. **THE BLIND SCAN'S FLOOR AND ITS TOKEN RULE ARE UNTOUCHED.**
+- **JOINING TOKENS IS THE MOVE THAT ONCE PUT A LABEL ON THE WRONG BOX**
+  (`Printed 2026-07-16 H` → the recycled order number `20260716-H`), so it is
+  narrow on purpose and each bound is load-bearing:
+  - the HEAD must be **letters IMMEDIATELY followed by digits** — a carrier
+    prefix, `QSP22214`. That one rule refuses a date, a postcode pair, and
+    every "WORD number number" on a label, including `SG 312139 3104`;
+  - **uppercase only**, like the contiguous generic pattern beside it, or
+    ordinary words (`no12 345 678901`) get into the head;
+  - at most two further groups, across **spaces/tabs on the SAME line** —
+    never a newline, which would glue two unrelated fields;
+  - **FEWEST GROUPS WINS**: `QSP22214 1513 2026` is a tracking number followed
+    by something else, and the greedy 13-digit join would be a shape-valid
+    string matching no order that HID the correct one behind it;
+  - the joined result must itself satisfy `^[A-Z]{2,6}\d{9,18}$`.
+  Every quantifier bounded, measured not reasoned about: 24,000 hostile
+  characters in ≤2ms (the standing rule for any new regex on label/OCR text).
+- **A PAGE CAN HAVE TEXT AND STILL SAY NOTHING.** `rematchLabelImport`'s OCR
+  gate was `!rawText.trim()` — *no text layer at all* — so a page whose text
+  came off the PDF but yielded **no identifier** was never OCR'd. That is the
+  other half of the report: when the caption is drawn as an image, the text
+  around it (heading, address, service line) is real and useless. The gate now
+  also fires on a page with text and **no key field** (`hasLabelKeyFields` —
+  tracking / order / GI only; a recipient or an address cannot find an order).
+  - **THE TEXT LAYER IS KEPT.** The OCR is **added** to it and the new
+    extraction is taken **only if it found something the text layer could not**
+    — a worse reading must never displace a good one.
+  - **ONE ATTEMPT PER PAGE PER STRATEGY**, on its own marker
+    (`ocrForFieldsStrategy`) rather than by bumping `OCR_LABEL_STRATEGY`, which
+    would force a re-OCR of every genuinely image-only page too. It shares
+    `ocrCount`, so `OCR_PAGE_CAP` (80) still bounds one rematch.
+  - **AND IT IS OPENED ONLY BY A DELIBERATE ACT** (`rematchLabelImport(…,
+    {ocrForFields})`). Re-reading a text-bearing page costs a render and an OCR
+    pass each, and `scheduleLabelAutoRematch` walks EVERY import with an
+    unmatched page in the last 30 days — so turning it on there would make one
+    quiet timer fire a mass OCR burst across months of imports, which is
+    exactly the CPU contention the floor reported as lag the week before. On
+    for the button (somebody is waiting) and for the pass right after an upload
+    (one import, already the busy moment); **off for the sweep.**
+- **NOTHING IS RE-UPLOADED.** `rematchLabelImport` already re-extracts from
+  `page.rawText` on every run — that is precisely what makes an extractor
+  improvement reach an import already on disk — so ⚡ Auto Match Unmatched is
+  the whole remedy for the 36 pages sitting there now.
+- **AND THE ROW NO LONGER SENDS PEOPLE THE WRONG WAY.** Its hint ended
+  *"enlarge the label and use Match to Order"* — true while the only OCR was
+  for pages with no text at all, and now the opposite of what to do first. A
+  page with text and no identifier is exactly what Auto Match re-reads, so it
+  says that; matching 36 pages by hand is the fallback, not the first move.
+  Once a page HAS been OCR'd and still has nothing, it says so and points at
+  Match to Order.
+
+Verified 45 API checks (`tracx-automatch-e2e.js`, **tier `ci`**) through the
+real endpoints on an import stored exactly as the floor's is — pages unmatched,
+extraction empty — with the orders already present: ONE press of Auto Match
+resolves all three shapes (split caption, image-only caption, plain contiguous
+control), each `via tracking_number` at confidence `exact`, page 1 from its own
+text layer with **no OCR at all** and page 2 flagged `ocr`; all three print at
+the bench and are on disk; a second press changes nothing; the same labels
+uploaded fresh match themselves with nobody pressing anything; and the Lazada,
+Shopee, postal and TXSGD extractions are byte-for-byte what they were, with the
+date, the `SG 312139 3104` shape and a cross-line pair all still refused.
+**The build that shipped fails 19 of the 45 and reproduces the screenshot
+exactly** — pages 1 and 2 `unmatched`, no tracking read, `newMatches=1`, and
+404 at the print route. Regressions: `label-ref-e2e` 30, `label-parcels-e2e`
+32, `bulk-print-e2e` 38, and the CI tier 7 suites / 198 checks.
+
+FIXTURE: `tracx-fixture.js` prints the 3-page label through headless Chromium
+(a pdf-lib document is unreadable by this repo's pdf-parse — a fixture the
+reader chokes on proves nothing about the reader) and the PDF is **committed**,
+like the two perf fixtures, because CI is pure Node and installs no browser.
+Its consignees are invented: a real carrier label carries a customer's name and
+address and is never committed.
+
 ## Live-wave visibility pill + build stamp (server.js `globalOrdersWithState`, public/app.js)
 
 Before a wave had a visible pill, closing the Wave Pick tab left a

@@ -1,8 +1,8 @@
 # Run artefacts. Every suite creates its own data dir, log, screenshots and
 # most of its fixtures beside itself; none of that belongs in the repo.
 #
-# THE EXCEPTIONS ARE THE TWO PERF FIXTURES, which ARE committed (see below)
-# because their suites read them and do not create them.
+# THE EXCEPTIONS ARE THE THREE CI FIXTURES, which ARE committed (see below)
+# because CI installs no browser and cannot print them.
 *-data/
 *-data-*/
 *-shots/
@@ -22,3 +22,10 @@ oc-pdfs/
 # Deterministic, 128 KB the pair, regenerate with the two mk-*.js scripts.
 !perf-12.pdf
 !perf-scan3.pdf
+
+# …and the TracXLogis label fixture, for the same reason: tracx-automatch-e2e
+# is an API suite in CI, and printing its own input would drag a Chromium
+# install into a job that needs none. It carries INVENTED consignees — a real
+# carrier label carries a customer's name and address and is never committed.
+# Regenerate with `node tracx-fixture.js tracx-fixture.pdf`.
+!tracx-fixture.pdf
