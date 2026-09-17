@@ -23177,18 +23177,32 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
   const store = zortStores(db).find(s => s.id === ord.zort_store_id);
   if (!store || !store.enabled) return res.status(400).json({ error: 'The store this order came from is not connected right now.' });
 
-  // A LIGHT RATE LIMIT, not a lock. Opening the order fires this, and a packer
-  // may open the same order twice in a minute; the hub does not need to hear
-  // about it twice in eight seconds. A hand-tapped request says so and is
-  // never silently swallowed — it just reports the cooldown.
+  // A LIGHT RATE LIMIT ON THE HUB CALLS, not a lock on the button. Opening the
+  // order fires this, and a packer may open the same order twice in a minute;
+  // the hub does not need to hear about it twice in eight seconds.
+  //
+  // IT USED TO REFUSE THE TAP AS WELL, AND THAT MADE THE TAP A DEAD BUTTON.
+  // Reported from the floor with the dialog open: opening the scan overlay
+  // fires the AUTO ask, which — since the lag fix — does nothing but make the
+  // label due (no `askedAt`, no drain), and it started this clock. The packer
+  // then tapped the pill inside those eight seconds and got "Asked a moment
+  // ago" — from the ONE path that stamps `askedAt` (the exemption from the
+  // per-pass browser budget) and the ONE path that actually drains. So the
+  // cooldown now guards what it was for — the hub calls — and never the
+  // tap-only work. A repeat AUTO ask still stops here; a TAP skips steps 1
+  // and 2 (the hub was asked a second ago, the answer has not changed) and
+  // goes straight to the label.
   const last = _waybillNowAt.get(orderNumber) || 0;
-  if (Date.now() - last < WAYBILL_NOW_COOLDOWN_MS) {
+  const cooled = Date.now() - last < WAYBILL_NOW_COOLDOWN_MS;
+  if (cooled && auto) {
     steps.push('Asked a moment ago — waiting for that to land.');
     return done({ cooled: true });
   }
-  _waybillNowAt.set(orderNumber, Date.now());
+  if (cooled) steps.push('Asked a moment ago, so the channel is not asked again — going straight for the label.');
+  else _waybillNowAt.set(orderNumber, Date.now());
 
   try {
+   if (!cooled) {
     // 1. PACK IT IF THE HUB HAS NOT. This is what makes the label exist.
     const hubStatus = await zortHubStatus(store, ord.zort_id);
     if (!hubStatus) steps.push('Could not read the order on the hub — trying the label anyway.');
@@ -23231,6 +23245,7 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
         } else steps.push('The channel has not assigned a tracking number yet.');
       } catch (e) { steps.push(`Could not read the tracking number: ${e.message}`); }
     }
+   }
 
     // 3. THE LABEL ITSELF. Queued through the normal outbox entry so a failure
     //    keeps retrying in the background after we answer, then drained at
@@ -23284,7 +23299,12 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
       let pass = null;
       for (;;) {
         if (!pass) pass = drainZortOutbox({ only: orderNumber }).catch(() => {}).then(() => { pass = null; });
-        await Promise.race([pass, new Promise(r => setTimeout(r, 250))]);
+        // ALWAYS WAIT A TICK. A drain that collides with the 30s scheduler's
+        // reentry guard returns INSTANTLY, so racing it against the timer spun
+        // this loop hot for the full eight seconds — re-kicking a call that
+        // could not run, on every turn. The sleep is what lets the background
+        // pass finish so ours gets its turn.
+        await new Promise(r => setTimeout(r, 250));
         const now = readDb();
         if ((now.orderLabels || {})[orderNumber]) break;
         const e = (now.zortOutbox || []).find(x => x.kind === 'label' && x.orderNumber === orderNumber);
@@ -23702,6 +23722,13 @@ const ZORT_WEB_RETRY_MS = Number(process.env.ZORT_WEB_RETRY_MS) || 15 * 60 * 100
 const ZORT_DRAIN_MAX_MS = Number(process.env.ZORT_DRAIN_MAX_MS) || 120 * 1000;
 const ZORT_OUTBOX_MS = Math.max(1000, Number(process.env.ZORT_OUTBOX_MS) || 30000);
 const ZORT_WEB_ASKED_MS = 2 * 60 * 1000;   // how long a tap keeps an entry exempt from the per-pass cap
+// HOW MANY ORDERS ONE 🏷 GET LABELS RUN MAY EXEMPT. The button means "fetch
+// them now", so its orders carry the same exemption a tap does — but exempting
+// FIFTY would run fifty browser sessions back to back and reproduce the lag
+// this budget exists to prevent. Bounded to what the run can realistically
+// fetch inside the 30s it holds the screen; the rest keep their place and go
+// on the ordinary background budget, and the dialog says so.
+const ZORT_WEB_ASKED_MAX = Number(process.env.ZORT_WEB_ASKED_MAX) || 6;
 const _zortWebPass = { used: 0 };          // browser fetches made in the pass under way
 // What the last pass did — on the health check, so "is the browser eating
 // the server?" is a number someone can read rather than a guess.
@@ -25580,14 +25607,32 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
   // Revive existing jobs and queue the missing ones. enqueueZortLabel already
   // clears `stalled` and re-arms an entry it finds, so one call does both.
   const ob = zortOutbox(db);
+  // WHAT EACH ENTRY LOOKED LIKE WHEN WE ARMED IT. The report below is only
+  // honest if it can tell "tried and still waiting" from "never asked" — an
+  // entry whose next-attempt time has not moved was not attempted, and saying
+  // "still queued" about it is reporting our own no-op as the channel's
+  // answer. That is exactly what the floor read as "ZORT has labels, why
+  // can't I pull?".
+  const armedAt = new Map();
+  let exempt = 0;
   for (const w of wanted) {
-    const existing = ob.find(e => e.kind === 'label' && e.storeId === store.id && e.orderNumber === w.orderNumber);
-    if (existing) {
-      existing.stalled = false; existing.attempts = 0; existing.waitedMs = 0;
-      existing.nextAttemptAt = new Date().toISOString();
+    let entry = ob.find(e => e.kind === 'label' && e.storeId === store.id && e.orderNumber === w.orderNumber);
+    if (entry) {
+      entry.stalled = false; entry.attempts = 0; entry.waitedMs = 0;
+      entry.nextAttemptAt = new Date().toISOString();
     } else {
       enqueueZortLabel(db, store.id, w);
+      entry = zortOutbox(db).find(e => e.kind === 'label' && e.storeId === store.id && e.orderNumber === w.orderNumber);
+      if (entry) entry.nextAttemptAt = new Date().toISOString();
     }
+    if (!entry) continue;
+    // THE BUTTON MEANS NOW, so its orders carry the same exemption from the
+    // per-pass browser budget that a tap does. Without this, 🏷 Get Labels —
+    // the one control whose whole purpose is "fetch them all" — was the one
+    // path the 2-per-pass cap always applied to: two went, the rest were held
+    // for the next pass 30s away, and the dialog closed before then.
+    if (exempt < ZORT_WEB_ASKED_MAX) { entry.askedAt = entry.nextAttemptAt; exempt++; }
+    armedAt.set(w.orderNumber, entry.nextAttemptAt);
   }
   // A stalled FILE-endpoint memory would keep the undocumented fallback off;
   // that is deliberate and left alone. What is cleared is the label jobs only.
@@ -25599,14 +25644,28 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
   // Drain until they have all been attempted, bounded so a wedged hub cannot
   // hold the screen. The 30s ceiling is the operator's patience, not a limit
   // on the work — anything left keeps its place and the scheduler carries on.
+  // AND THE DRAIN HAS TO ACTUALLY RUN. `drainZortOutbox` holds a reentry guard
+  // for the 30s scheduler, so every call lands as a silent no-op while a
+  // background pass is in flight — and a browser label fetch can hold that
+  // pass for a minute. The old loop awaited twelve of those no-ops, read the
+  // entries back untouched and reported all of them "still queued", which is
+  // our own collision dressed up as the channel's answer. Keep kicking until
+  // each entry has genuinely been ATTEMPTED (its next-attempt time moves, or
+  // it succeeds and disappears), bounded at the 30s this holds the screen.
   const deadline = Date.now() + 30000;
-  for (let pass = 0; pass < 12 && Date.now() < deadline; pass++) {
-    await drainZortOutbox();
-    const left = zortOutbox(readDb()).filter(e =>
-      e.kind === 'label' && e.storeId === store.id && !e.stalled &&
-      wanted.some(w => w.orderNumber === e.orderNumber));
-    if (!left.length) break;
-    await new Promise(r => setTimeout(r, 400));
+  let pass = null;
+  for (;;) {
+    if (!pass) pass = drainZortOutbox().catch(() => {}).then(() => { pass = null; });
+    // Always a tick — never race the guard's instant return, or this spins hot
+    // and never lets the pass it is waiting on finish.
+    await new Promise(r => setTimeout(r, 300));
+    const cur = zortOutbox(readDb());
+    const untried = wanted.filter(w => {
+      const e = cur.find(x => x.kind === 'label' && x.storeId === store.id && x.orderNumber === w.orderNumber);
+      if (!e) return false;                                  // gone = attached
+      return e.nextAttemptAt === armedAt.get(w.orderNumber); // never attempted
+    });
+    if (!untried.length || Date.now() >= deadline) break;
   }
   const after = readDb();
   const afterLabels = after.orderLabels || {};
@@ -25615,7 +25674,18 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
   for (const w of wanted) {
     if (afterLabels[w.orderNumber]) { got.push(w.orderNumber); continue; }
     const e = afterOb.find(x => x.kind === 'label' && x.storeId === store.id && x.orderNumber === w.orderNumber);
-    const row = { order: w.orderNumber, why: String(e?.lastError || (e ? 'still queued' : 'no job')).slice(0, 200) };
+    // SAY WHICH KIND OF WAITING IT IS. "Still queued" covered three different
+    // situations and a packer could act on none of them. Cut at 800, not 200:
+    // the browser's note names the gate that stopped it, and at 200 the floor
+    // read "Print it from th" and nothing after.
+    const why = e?.lastError ? String(e.lastError)
+      : !e ? 'no job'
+      : e.nextAttemptAt === armedAt.get(w.orderNumber)
+        ? 'not tried yet — the background label pass was still running when this finished; it is next in line and attaches by itself'
+        : e.webDeferredAt
+          ? `held for the next background pass (the label browser fetches ${ZORT_WEB_MAX_PER_PASS} at a time so it does not slow the app down) — it attaches by itself`
+          : 'tried, no answer yet';
+    const row = { order: w.orderNumber, why: why.slice(0, 800) };
     if (e && e.lastDiag) row.diag = e.lastDiag;
     if (e && e.stalled) failed.push(row); else waiting.push(row);
   }
@@ -25631,7 +25701,13 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
     note: (wanted.length
       ? `${got.length} of ${wanted.length} Ready-to-Ship label(s) came in.`
       : 'No Ready-to-Ship orders are waiting for a label.')
-      + (skippedTotal ? ` ${skippedTotal} order(s) skipped — not Ready to Ship in ZORT yet.` : ''),
+      + (skippedTotal ? ` ${skippedTotal} order(s) skipped — not Ready to Ship in ZORT yet.` : '')
+      // A CAP THAT IS NOT STATED READS AS A FAILURE. Anything past the
+      // exemption is not stuck — it is on the ordinary background budget and
+      // lands on its own within a minute or two.
+      + (wanted.length > ZORT_WEB_ASKED_MAX
+        ? ` The first ${ZORT_WEB_ASKED_MAX} were fetched now; the rest are on the background queue and attach by themselves within a minute or two.`
+        : ''),
   });
 });
 

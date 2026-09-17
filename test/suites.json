@@ -401,6 +401,13 @@
       "timeoutMs": 420000
     },
     {
+      "file": "getlabels-e2e.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 600000
+    },
+    {
       "file": "gi-backfill-e2e.js",
       "browser": false,
       "selfBoots": true,
@@ -413,7 +420,7 @@
       "selfBoots": true,
       "tier": "needs-fixtures",
       "timeoutMs": 420000,
-      "note": "Reads two REAL customer label PDFs from /root/.claude/uploads/<session>/ — a name and a delivery address, so they must never be committed. Runs here, cannot run in CI. W2: synthesise an equivalent 2-page label (numbers only) and put it back in the ci tier."
+      "note": "Reads two REAL customer label PDFs from /root/.claude/uploads/<session>/ \u2014 a name and a delivery address, so they must never be committed. Runs here, cannot run in CI. W2: synthesise an equivalent 2-page label (numbers only) and put it back in the ci tier."
     },
     {
       "file": "label-ref-e2e.js",

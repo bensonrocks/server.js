@@ -9010,6 +9010,87 @@ after it reads "Asked a moment ago"; and the API's one-hop HTML probe opens the
 print page once per hub read, so page-open counts are per attempt, not per
 browser session.
 
+#### "ZORT HAS LABELS. WHY I CANT PULL?" — three ways we refused our own button
+
+Reported live (17 Sep 2026) with three screenshots: ZORT's Sell list showing
+four Mayer2026 Lazada orders **Completed, each tagged `Label`**; IdealOne's
+Orders list showing the same four with their waybills and "⏳ Getting label…";
+and the 🏷 Get Labels dialog reading **"0 of 4 Ready-to-Ship label(s) came
+in"** with every row **"still queued"** and nothing after it. Then, on the
+workaround, a fourth: tapping the waybill pill answered **"Asked a moment ago
+— waiting for that to land."**
+
+**A BLANK REASON IS THE WHOLE DIAGNOSIS.** `lastError` is only empty on an
+entry that was never ATTEMPTED — so the channel had refused nothing. Every one
+of these is ours:
+
+- **THE TAP WAS A DEAD BUTTON FOR 8 SECONDS, and it is the only path that
+  works.** Opening the scan overlay fires `/waybill-now` with `auto: true`,
+  which since the lag fix does nothing but make the label due — no `askedAt`,
+  no drain. It still stamped the cooldown, and the cooldown refused the
+  hand TAP that followed: the ONE path that stamps `askedAt` (the exemption
+  from the per-pass browser budget) and the ONE path that drains. The cooldown
+  now guards **what it was for — the hub calls** — and never the tap-only
+  work: a repeat AUTO ask still stops, a TAP inside the window skips steps 1
+  and 2 (the hub was asked a second ago and its answer has not changed) and
+  goes straight for the label. **It costs no extra relay** — asserted, by
+  counting the hub's own calls across the tap.
+- **🏷 GET LABELS REPORTED ITS OWN COLLISION AS THE CHANNEL'S ANSWER.**
+  `drainZortOutbox` opens with a reentry guard for the 30s scheduler, and a
+  browser label fetch can hold a pass for a minute. The old loop awaited
+  **twelve instant no-ops** (~5s in total), read the entries back untouched
+  and called them "still queued". It now keeps kicking until each entry has
+  genuinely been attempted — its `nextAttemptAt` moves, or it succeeds and
+  disappears — bounded at the 30s it holds the screen. Same fix `/waybill-now`
+  already had; this route never got it.
+- **THE BUTTON WAS CAPPED AT 2 BROWSER LABELS A PASS.** `askedAt` was stamped
+  only by a per-order tap, so the one control whose whole purpose is "fetch
+  them all now" was the one path `ZORT_WEB_MAX_PER_PASS` always applied to:
+  two went, the rest were held for a pass 30s away, and the dialog had closed
+  by then. Get Labels stamps it now — **bounded by `ZORT_WEB_ASKED_MAX` (6)**,
+  because exempting fifty would run fifty browser sessions back to back and
+  reproduce the very lag that budget exists to prevent. Anything past the
+  bound is on the ordinary background queue and **the dialog says so**.
+- **"STILL QUEUED" COVERED THREE DIFFERENT SITUATIONS** and a packer could act
+  on none of them. A row now says which: not tried yet (a pass was still
+  running), held for the next pass with the budget named, or the channel's own
+  words. Cut at 800 characters, not 200 — the same truncation that once put
+  "Print it from th" in front of the floor.
+- **ALWAYS WAIT A TICK BEFORE RE-KICKING A DRAIN.** A drain that collides with
+  the guard returns INSTANTLY, so racing it against a timer spins the loop hot
+  for the full window while re-kicking a call that cannot run. The sleep is
+  what lets the pass it is waiting on finish. Fixed in both loops.
+
+THE EVIDENCE WAS ALREADY IN THIS FILE, filed as a test quirk: the lag suite's
+gotcha note reads "an OPEN counts against the route's 8s per-order cooldown,
+so a harness tap right after it reads *Asked a moment ago*". That was not a
+harness quirk — it was the floor's dead button, written down and not
+recognised. **A test working around a behaviour is a report of that
+behaviour.**
+
+Verified 22 API checks (`getlabels-e2e.js` against `getlabels-mock.js` — a
+ZORT that has every label and hands over every one: four RTS'd orders whose
+print viewer really serves the PDF behind the web-login cookie). Opening
+queues and opens no print page; a repeat auto ask is still refused; the TAP
+inside the window is not refused, fetches through the browser and attaches,
+with **no extra GetOrders and no extra GetOrderDetail**; 🏷 Get Labels run
+while a background drain deliberately holds the guard brings in all three
+remaining labels with nothing left "waiting" and no row saying the bare "still
+queued"; and at `ZORT_WEB_ASKED_MAX=2` with one fetch per pass exactly two
+come in while the other two are reported as queued for the next pass.
+**The pre-fix build fails 14 of them and reproduces the screenshots exactly —
+the tap refused, and "0 of 4 came in" with bare "still queued" rows.**
+Regressions: `lag-e2e` 10, `web-note-e2e` 19, `npm test` 6, ci tier 6 suites /
+153 checks.
+
+TEST GOTCHA: the fixture's orders must arrive as **`Waiting`**, not
+`Success` — success/shipping are in `ZORT_IMPORT_SKIP_STATUSES`, so an order
+that already reads Completed is never imported as floor work and the suite
+tests nothing. And the sync HARVESTS each SKU into the catalogue at **zero**,
+which `orderStockStateSrv` reads as "no stock", so Get Labels' stock gate skips
+every order — the fixture has to hold real stock, or the run exercises the skip
+path instead of the fetch path.
+
 #### THE LAST MANUAL STEP, AND WHY IT IS STILL MANUAL
 
 Reported from the floor, as the actual daily routine: *"I RTS in Zort, select
