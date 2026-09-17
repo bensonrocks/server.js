@@ -67,11 +67,22 @@ async function boot() {
   // and is not one. (Cost a confusing run; the standing gotcha in CLAUDE.md
   // says the harness must assert `bootedAt` MOVED on every boot, and this
   // suite did not.) Fail loudly here instead of measuring the wrong process.
-  const before = await fetch(B + '/api/version').then(r => r.json()).catch(() => null);
+  // WAIT FOR THE PORT, THEN JUDGE. The first cut threw the moment the port
+  // answered, which fired on the suite's OWN just-stopped server — the socket
+  // can outlive the SIGTERM by a moment — and crashed a legitimate run at the
+  // second boot(). A flaky guard is worse than the hole it closes. So: give a
+  // dying server a few seconds to go, and only call it foreign if it is STILL
+  // answering after that.
+  let before = null;
+  for (let i = 0; i < 20; i++) {
+    before = await fetch(B + '/api/version').then(r => r.json()).catch(() => null);
+    if (!before) break;
+    await sleep(500);
+  }
   if (before) throw new Error(
-    `port ${PORT} is already serving a server this suite did not start `
-    + `(booted ${before.bootedAt}). Stop it before running — otherwise every `
-    + `assertion below measures the wrong process.`);
+    `port ${PORT} is still serving a server this suite did not start `
+    + `(booted ${before.bootedAt}) after 10s. Stop it before running — otherwise `
+    + `every assertion below measures the wrong process.`);
   child = spawn('node', [SERVER], {
     env: { ...process.env, PORT: String(PORT), DATA_DIR: DDIR },
     stdio: ['ignore', fs.openSync(LOG, 'a'), fs.openSync(LOG, 'a')],

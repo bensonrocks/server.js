@@ -1411,6 +1411,17 @@ server is not mine" instead of measuring the wrong process. Fourth time a
 stray server has done this; the rule was already written down and this suite
 simply did not have the guard.
 
+**AND THE FIRST CUT OF THAT GUARD WAS ITSELF FLAKY** — worth recording,
+because it is the same mistake one level up. It threw the INSTANT the port
+answered, which fires on the suite's OWN just-stopped server: the socket can
+outlive the SIGTERM by a moment, so the second `boot()` crashed a perfectly
+good run (`pass=6 fail=0`, which reads as a pre-fix failure and is not one).
+It was verified against a FOREIGN server (a decoy) and never against the case
+it meets four times per run — its own. **A guard against flakiness that is
+itself flaky is worse than the hole it closes.** It now WAITS up to 10s for a
+dying server to go and only calls the port foreign if it is STILL answering
+after that. Proved by three consecutive runs, not one.
+
 FIXTURE: `tracx-fixture.js` prints the 3-page label through headless Chromium
 (a pdf-lib document is unreadable by this repo's pdf-parse — a fixture the
 reader chokes on proves nothing about the reader) and the PDF is **committed**,
