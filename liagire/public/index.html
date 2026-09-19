@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Liagire Workflow</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="mark">Liagire</span> Workflow</div>
+  <div class="spacer"></div>
+  <button class="btn-sm" id="usersBtn">Users</button>
+  <span class="who" id="whoLabel"></span>
+  <button class="btn-sm" id="signOutBtn">Sign out</button>
+</div>
+
+<div class="container" id="mainView">
+  <div class="tiles" id="tiles"></div>
+
+  <div class="toolbar">
+    <input type="text" id="searchInput" placeholder="Search job code, client, tracking, invoice #" />
+    <button class="btn-primary" id="newJobBtn">+ New quote request</button>
+  </div>
+
+  <div class="chip-row" id="stageChips"></div>
+
+  <div class="job-list" id="jobList"></div>
+  <div class="center-msg hidden" id="jobListEmpty">No jobs match this view.</div>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
