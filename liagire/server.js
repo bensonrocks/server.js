@@ -102,11 +102,21 @@ const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function saveUpload(jobId, file, prefix) {
   if (!ID_RE.test(jobId)) throw jobsLib.httpError(400, 'Invalid job reference');
-  const dir = path.join(UPLOAD_DIR, jobId);
+  // Belt AND braces: the regex above already rules out anything that could
+  // walk the join, but the write path gets the identical containment check
+  // the read path (safeJoinUpload, below) already uses, so the two can
+  // never drift and a static analyzer sees the same recognized shape at
+  // both the read and write sinks.
+  const dir = path.normalize(path.join(UPLOAD_DIR, jobId));
+  if (dir !== UPLOAD_DIR && !dir.startsWith(UPLOAD_DIR + path.sep)) {
+    throw jobsLib.httpError(400, 'Invalid job reference');
+  }
   fs.mkdirSync(dir, { recursive: true });
   const ext = safeExt(file.originalname, file.mimetype);
   const name = `${Date.now()}-${prefix}-${crypto.randomBytes(4).toString('hex')}${ext}`;
-  fs.writeFileSync(path.join(dir, name), file.buffer);
+  const filePath = path.normalize(path.join(dir, name));
+  if (!filePath.startsWith(dir + path.sep)) throw jobsLib.httpError(500, 'Could not resolve upload path');
+  fs.writeFileSync(filePath, file.buffer);
   return `${jobId}/${name}`;
 }
 
