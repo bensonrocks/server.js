@@ -118,7 +118,15 @@ const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function uploadFolderFor(jobId) {
   const row = db.prepare('SELECT rowid AS rid FROM jobs WHERE id = ?').get(jobId);
   if (!row) throw jobsLib.httpError(404, 'Job not found');
-  return String(row.rid);
+  // Explicit numeric validation, not just a cast: a value proven to be a
+  // positive integer cannot carry a path separator once stringified, which
+  // is a narrower and more clearly-founded guarantee than "this came from
+  // a database column" alone.
+  const rid = Number(row.rid);
+  if (!Number.isInteger(rid) || rid <= 0) {
+    throw jobsLib.httpError(500, 'Could not resolve a storage location for this job');
+  }
+  return String(rid);
 }
 
 function saveUpload(jobId, file, prefix) {
