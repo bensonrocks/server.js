@@ -84,12 +84,19 @@ const upload = multer({
   },
 });
 
-function safeExt(originalname, mimetype) {
-  const fromName = path.extname(originalname || '').toLowerCase().replace(/[^a-z0-9.]/g, '');
-  if (fromName) return fromName;
-  const map = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp',
-    'image/heic': '.heic', 'image/heif': '.heif', 'application/pdf': '.pdf' };
-  return map[mimetype] || '';
+// Derived ONLY from file.mimetype — which multer's fileFilter above already
+// restricts to ALLOWED_MIME — and NEVER from file.originalname. The
+// original filename is entirely attacker-controlled (it's a multipart
+// Content-Disposition header the browser sends verbatim from the picked
+// file's name), and letting it feed the extension used to build a
+// server-side storage path was a second, easy-to-miss taint source
+// alongside the job id itself: a client can name a file anything at all.
+const MIME_EXT = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp',
+  'image/heic': '.heic', 'image/heif': '.heif', 'application/pdf': '.pdf',
+};
+function safeExt(mimetype) {
+  return MIME_EXT[mimetype] || '';
 }
 
 // Every job/vendor-cost id we ever hand out is our own crypto.randomUUID()
@@ -114,7 +121,7 @@ function saveUpload(jobId, file, prefix) {
   if (!safeId || safeId !== jobId) throw jobsLib.httpError(400, 'Invalid job reference');
   const dir = path.join(UPLOAD_DIR, safeId);
   fs.mkdirSync(dir, { recursive: true });
-  const ext = safeExt(file.originalname, file.mimetype);
+  const ext = safeExt(file.mimetype);
   const safeName = path.basename(
     `${Date.now()}-${prefix}-${crypto.randomBytes(4).toString('hex')}${ext}`
   );
