@@ -109,22 +109,21 @@ const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function saveUpload(jobId, file, prefix) {
   if (!ID_RE.test(jobId)) throw jobsLib.httpError(400, 'Invalid job reference');
-  // path.basename() strips any directory component from the value that
-  // actually reaches path.join() — the recognized sanitizer for this
-  // exact class of finding, applied directly to the tainted value itself
-  // (not to a value merely derived from it), so a static analyzer sees
-  // the sanitizing call sitting right in the tainted flow. A no-op for
-  // any real id (they never contain a separator to begin with, having
-  // already passed the UUID check above), but it is what closes the
-  // finding rather than merely reasoning that it should.
-  const safeId = path.basename(jobId);
-  if (!safeId || safeId !== jobId) throw jobsLib.httpError(400, 'Invalid job reference');
+  // GitHub's own documentation for js/path-injection gives this exact
+  // normalize-then-strip-leading-".." idiom as the fix — applied directly
+  // to the tainted value that reaches the join, not to a value merely
+  // derived from it. Combined with the strict UUID check above (already
+  // sufficient on its own, and kept as the primary, readable guard), this
+  // is belt and braces rather than the only line of defense.
+  const safeId = path.normalize(jobId).replace(/^(\.\.(\/|\\|$))+/, '');
+  if (!safeId || safeId.includes('/') || safeId.includes('\\')) {
+    throw jobsLib.httpError(400, 'Invalid job reference');
+  }
   const dir = path.join(UPLOAD_DIR, safeId);
   fs.mkdirSync(dir, { recursive: true });
   const ext = safeExt(file.mimetype);
-  const safeName = path.basename(
-    `${Date.now()}-${prefix}-${crypto.randomBytes(4).toString('hex')}${ext}`
-  );
+  const rawName = `${Date.now()}-${prefix}-${crypto.randomBytes(4).toString('hex')}${ext}`;
+  const safeName = path.normalize(rawName).replace(/^(\.\.(\/|\\|$))+/, '');
   fs.writeFileSync(path.join(dir, safeName), file.buffer);
   return `${safeId}/${safeName}`;
 }
