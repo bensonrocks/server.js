@@ -23,6 +23,15 @@ function getToken() {
   return new URLSearchParams(location.search).get('t') || '';
 }
 
+// The token comes straight off the URL query string, so it is attacker
+// controlled. Every place it lands inside an href/src attribute must use
+// this encoded form, never the raw value — encoding once here, at the
+// source, means every downstream template literal is safe by construction
+// rather than by remembering to escape it at each call site.
+function urlSafeToken(raw) {
+  return encodeURIComponent(raw);
+}
+
 function photoStrip(token, photos) {
   if (!photos || !photos.length) return '';
   return `<div class="photo-grid" style="margin-top:8px;">${photos.map(p => `
@@ -84,9 +93,10 @@ async function boot() {
     app.innerHTML = '<div class="center-msg">This link is missing its reference code. Please check the link your contact sent you.</div>';
     return;
   }
+  const safeToken = urlSafeToken(token);
   let view;
   try {
-    const res = await fetch(`/api/public/${encodeURIComponent(token)}`);
+    const res = await fetch(`/api/public/${safeToken}`);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       app.innerHTML = `<div class="center-msg">${esc(data.error || 'We could not find that job.')}</div>`;
@@ -115,10 +125,10 @@ async function boot() {
     <div class="progress-track">${segs}</div>
     <div class="card section">
       <h3 style="margin-top:0;">Status: ${esc(view.stage_label)}</h3>
-      ${timelineHtml(token, view)}
+      ${timelineHtml(safeToken, view)}
     </div>
-    ${invoiceHtml(token, view)}
-    ${view.quote && view.quote.has_document ? `<div class="hint" style="text-align:center;margin-top:10px;"><a href="/api/public/${token}/files/quote" target="_blank">Download quote</a></div>` : ''}
+    ${invoiceHtml(safeToken, view)}
+    ${view.quote && view.quote.has_document ? `<div class="hint" style="text-align:center;margin-top:10px;"><a href="/api/public/${safeToken}/files/quote" target="_blank">Download quote</a></div>` : ''}
   `;
 
   app.querySelectorAll('.photo-thumb').forEach(img => img.addEventListener('click', () => {

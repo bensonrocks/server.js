@@ -2,6 +2,7 @@
 require('dotenv').config();
 const express = require('express');
 const compression = require('compression');
+const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -20,6 +21,26 @@ const app = express();
 app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Every /api/ route gets a general ceiling — the public token-gated routes
+// especially, since they take no login and a client's token is the only
+// thing standing between a request and that one job's data. Login gets a
+// second, much tighter limiter on top, since guessing a password is the
+// one thing worth slowing down hard.
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many sign-in attempts. Please wait a few minutes and try again.' },
+});
+app.use('/api/', apiLimiter);
 
 // ---------------------------------------------------------------------------
 // Boot: seed a first admin account if the database has nobody in it yet, so
@@ -71,7 +92,16 @@ function safeExt(originalname, mimetype) {
   return map[mimetype] || '';
 }
 
+// Every job/vendor-cost id we ever hand out is our own crypto.randomUUID()
+// output, so this shape is never too strict for a legitimate caller — but
+// jobId here can arrive straight from a URL path param, so it must be
+// checked BEFORE it is joined into a filesystem path. Skipping this (or
+// only checking existence in the database afterward) leaves the join
+// itself walkable with ../ sequences.
+const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function saveUpload(jobId, file, prefix) {
+  if (!ID_RE.test(jobId)) throw jobsLib.httpError(400, 'Invalid job reference');
   const dir = path.join(UPLOAD_DIR, jobId);
   fs.mkdirSync(dir, { recursive: true });
   const ext = safeExt(file.originalname, file.mimetype);
@@ -80,9 +110,27 @@ function saveUpload(jobId, file, prefix) {
   return `${jobId}/${name}`;
 }
 
+// A form/query field can arrive as an array instead of a string simply by
+// repeating its name (multer parses duplicate multipart fields that way;
+// qs does the same for repeated query keys) — nothing here ever means to
+// send one, so a caller doing it is either a mistake or HTTP parameter
+// pollution. Collapsing to the last value at this ONE choke point (every
+// route goes through wrap()) means no field anywhere downstream can reach
+// a DB write or a path join as an array/object when a string was assumed.
+function flattenArrayFields(obj) {
+  if (!obj || typeof obj !== 'object') return;
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (Array.isArray(v)) obj[k] = v.length ? String(v[v.length - 1]) : '';
+    else if (v && typeof v === 'object') obj[k] = '';
+  }
+}
+
 function wrap(fn) {
   return (req, res) => {
     try {
+      flattenArrayFields(req.body);
+      flattenArrayFields(req.query);
       const result = fn(req, res);
       if (result && typeof result.then === 'function') {
         result.then(v => { if (!res.headersSent) res.json(v); }).catch(err => onError(err, res));
@@ -104,7 +152,7 @@ function onError(err, res) {
 // ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
-app.post('/api/auth/login', wrap((req) => {
+app.post('/api/auth/login', loginLimiter, wrap((req) => {
   const { username, password } = req.body || {};
   if (!username || !password) throw jobsLib.httpError(400, 'Username and password are required');
   const user = db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(String(username).trim());
