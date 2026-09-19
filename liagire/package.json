@@ -1,0 +1,22 @@
+{
+  "name": "liagire-workflow",
+  "version": "1.0.0",
+  "description": "Quote-to-cash workflow tracker for Liagire: quote request -> quote sent -> acceptance proof -> collection proof -> shipment tracking -> delivery proof -> client invoice/payment, with vendor cost invoices tracked against each job.",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "compression": "^1.8.1",
+    "dotenv": "^17.4.2",
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.7.0",
+    "multer": "^2.2.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
