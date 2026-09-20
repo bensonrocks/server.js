@@ -7996,7 +7996,7 @@ const _strip0 = s => String(s || '').replace(/^0+(?=.)/, '');
 //     picking one (see matchLabelPage). A guess that names two orders is not
 //     a match, and picking the first is how a coin flip gets recorded as a
 //     fact.
-const _TOKEN_BREAK = ' ';   // never appears in a key: keys are [A-Z0-9]
+const _TOKEN_BREAK = '';   // never appears in a key: keys are [A-Z0-9]
 function _normIndexed(s) {
   return String(s || '')
     .toUpperCase()
@@ -9733,6 +9733,7 @@ const AUTH_PUBLIC = new Set([
   '/api/stats',
   // '/api/public/orders' REMOVED from the public list — it leaked every order's
   // customer PII to unauthenticated callers. It now requires auth (see below).
+  '/api/public/health',
   '/api/public/config',
   '/api/driver/login',
   '/api/lazada/callback', // Lazada Open Platform push mechanism (external caller)
@@ -18677,6 +18678,16 @@ app.put('/api/profile/printer', requireAuth, (req, res) => {
 app.get('/api/public/orders', requireAuth, (_req, res) => res.json(globalOrdersWithState()));
 
 // Public: non-sensitive config (default recipient address only — no credentials)
+// Public: cheap liveness for Railway / load balancers — no auth, no DB dump, no secrets.
+app.get('/api/public/health', (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    app: 'IDEALONE',
+    ts: new Date().toISOString(),
+    commit: process.env.RAILWAY_GIT_COMMIT_SHA || null,
+  });
+});
+
 app.get('/api/public/config', (_req, res) => {
   const conf = readEmailConfig();
   res.json({ default_email: conf.to_email || '' });
