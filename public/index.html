@@ -2646,6 +2646,16 @@
             <label style="margin-top:.5rem">Label endpoint <span class="hint-inline">(only if the default 404s)</span></label>
             <input type="text" id="zfLabelPath" placeholder="Order/GetShipmentLabelFile?id={id} (default — leave blank)" />
           </div>
+          <div class="form-group" style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:.6rem .8rem">
+            <label style="margin:0"><b>&#127381; A client new to the hub</b></label>
+            <select id="zfNewClientFromChannel">
+              <option value="">Decide automatically (recommended)</option>
+              <option value="1">Always &mdash; file under the sales channel name</option>
+              <option value="0">Never &mdash; file under this store's own name</option>
+            </select>
+            <div class="hint" style="margin:.3rem 0 0">When an order's SKUs match no item master <i>and</i> its sales channel has no mapping below &mdash; which is every order from a client who has just gone live &mdash; it has to be filed under <i>some</i> name. Filing it under this store's own name pools every such client into one bin where their stock, billing and portal visibility sit against the wrong account. Filing it under the <b>sales channel</b> (e.g. <code>ShopeeSmilefam</code>) keeps each client apart and visible, and &#128260;&nbsp;Refile moves them &mdash; stock and all &mdash; once you know where they belong.</div>
+            <div class="hint" id="zfNewClientFromChannelAuto" style="margin:.3rem 0 0"></div>
+          </div>
           <div class="form-group" style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:.6rem .8rem">
             <label style="margin:0"><b>&#9003; Do NOT import orders for these clients</b></label>
             <input type="text" id="zfSkipClients" placeholder="e.g. AnotherClient — comma separated, leave blank for none" />

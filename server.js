@@ -22122,6 +22122,10 @@ function zortStorePublic(s, db) {
     skipClients: s.skipClients || [],
     recordOnlyClients: s.recordOnlyClients || [],
     channelClients: s.channelClients || {},
+    // Absent means "decide from the channel map" — the form shows the resolved
+    // answer, not a blank, so nobody has to guess which way an unset store runs.
+    newClientFromChannel: s.newClientFromChannel ?? null,
+    newClientFromChannelEffective: zortNewClientFromChannel(s),
     autoPullMinutes: s.autoPullMinutes || 0,
     completeAction: s.completeAction || 'none',
     completeStatusCode: s.completeStatusCode ?? 1,
@@ -22551,6 +22555,7 @@ async function pullZortStore(db, store, opts = {}) {
   let mpCancelled = 0; const mpCancelConflicts = [];
   const skippedByStatus = {}; const skippedHandledSample = [];
   let skippedClientOrders = 0; const skippedClientSample = [];
+  const unmappedChannels = new Set();   // sales channels seen with no client mapping
   // Clients this store must not bring in at all — they fulfil their own orders.
   const skipClients = new Set((store.skipClients || [])
     .map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
@@ -22697,6 +22702,11 @@ async function pullZortStore(db, store, opts = {}) {
       // the user) no SKU is shared between them, so the products on the order
       // say whose order it is. Specific beats coarse, so SKU leads.
       const channel = String(o.saleschannel || o.channel || '').trim();
+      // A CHANNEL WITH NO MAPPING IS USUALLY A CLIENT NOBODY HAS SET UP YET.
+      // Reported by name on the store row so a new shop appearing on the hub is
+      // something somebody sees, rather than something noticed weeks later when
+      // a client asks why their stock and billing are wrong.
+      if (channel && !(store.channelClients || {})[channel]) unmappedChannels.add(channel);
       const att = attributeSyncClient(skuOwners, lines, channel, store);
       const clientForOrder = att.client;
       // A CLIENT WE ARE NOT FULFILLING. Per the user: "we don't have stock, and
@@ -22996,7 +23006,11 @@ async function pullZortStore(db, store, opts = {}) {
                        marketplaceCancelConflicts: mpCancelConflicts.slice(0, 25),
                        skippedByStatus, skippedHandledSample,
                        skippedClientOrders, skippedClientSample, recordOnlyOrders,
-                       clients: batchClients, needsAttribution: unsure.slice(0, 50) };
+                       clients: batchClients, needsAttribution: unsure.slice(0, 50),
+                       // Channels carrying orders that no channel→client mapping
+                       // covers — where a client new to the hub shows up first.
+                       unmappedChannels: [...unmappedChannels].slice(0, 25),
+                       newClientFromChannel: zortNewClientFromChannel(store) };
   if (only.length) store.lastWebhookResult = _result;   // kept apart from the sweep's own row
   else store.lastResult = _result;
   if (unsure.length) {
@@ -23081,6 +23095,37 @@ function buildSkuOwnerIndex(db) {
   return idx;
 }
 
+// WHICH NAME AN ORDER NOBODY COULD PLACE GETS FILED UNDER.
+// `store.clientName` is documented as "account label / default client", and on
+// a HUB account — one ZORT login housing many fulfilment clients' shops — it is
+// the LABEL, nobody's account. Filing every unplaceable order there pools
+// different clients' work into one bin where its stock, billing and portal
+// visibility all sit against the wrong account, in silence. A BRAND-NEW client
+// is exactly the case that lands there: no item master loaded yet, so the SKU
+// step cannot place them, and no channel mapping made yet, so the channel step
+// cannot either. Their first orders disappear into IDEALONEMAIN on day one.
+// The SALES CHANNEL is per client, so it at least keeps them apart and NAMES
+// them — "ShopeeSmilefam" is a client you can see on the Orders tab, refile and
+// map; the store label is a bin you cannot.
+//
+// NOT A BLANKET RULE, because a SINGLE-CLIENT store is the opposite case:
+// there `clientName` IS the client, and using the channel would mint a phantom
+// account beside a client that was filing correctly. Nothing in the data tells
+// the two apart, so the STORE says which it is: `channelClients` carrying any
+// entry is the operator declaring "this account houses several clients", and
+// that is the default. `store.newClientFromChannel` overrides it either way.
+function zortNewClientFromChannel(store) {
+  if (store && store.newClientFromChannel !== undefined && store.newClientFromChannel !== null) {
+    return !!store.newClientFromChannel;
+  }
+  return Object.keys((store && store.channelClients) || {}).length > 0;
+}
+
+function zortFallbackClient(store, channel) {
+  if (channel && zortNewClientFromChannel(store)) return channel;
+  return (store && store.clientName) || channel || 'ZORT';
+}
+
 // Resolve one order's client. Returns what it decided AND how, so an order
 // nobody could place is visible rather than quietly filed under the store.
 function attributeSyncClient(skuOwners, lines, channel, store) {
@@ -23116,13 +23161,20 @@ function attributeSyncClient(skuOwners, lines, channel, store) {
     const clash = owners.size === 1 && [...owners][0] !== mapped;
     return { client: mapped, via: 'channel', unsure: clash ? `SKUs suggest ${[...owners][0]}` : null };
   }
+  const fb = zortFallbackClient(store, channel);
+  // Say WHICH bin it landed in, because the two mean different things to
+  // whoever reads the row: the store label is a pool shared with every other
+  // unplaceable order, the channel name is this client's own.
+  const where = (channel && fb === channel)
+    ? ` — filed under the sales channel "${channel}"; map the channel or load their item master to place it properly`
+    : ` — filed under the store's own name "${fb}"`;
   if (owners.size > 1) {
-    return { client: store.clientName || channel || 'ZORT', via: 'unresolved', hint,
-             unsure: `lines span ${owners.size} clients: ${[...owners].join(', ')}` };
+    return { client: fb, via: 'unresolved', hint,
+             unsure: `lines span ${owners.size} clients: ${[...owners].join(', ')}${where}` };
   }
-  return { client: store.clientName || channel || 'ZORT', via: 'default', hint,
-           unsure: ambiguous ? `a SKU is registered to more than one client: ${dupDetails.slice(0, 3).join('; ')}`
-                             : 'no SKU on this order is in any client item master' };
+  return { client: fb, via: 'default', hint,
+           unsure: (ambiguous ? `a SKU is registered to more than one client: ${dupDetails.slice(0, 3).join('; ')}`
+                              : 'no SKU on this order is in any client item master') + where };
 }
 
 // ── ZORT outbox — durable, retrying up/down message queue ───────────────────
@@ -24843,6 +24895,23 @@ app.post('/api/master/zort/stores', (req, res) => {
       if (key && val) map[key] = val;
     }
     store.channelClients = map;
+  }
+  // A client new to the hub gets their own account named after their sales
+  // channel, instead of pooling into the store's own label. Tri-state: absent
+  // follows the channel map (see zortNewClientFromChannel), '' clears it back
+  // to that, true/false pin it. Audited when it changes — it decides which
+  // account a client's stock, billing and portal visibility sit against.
+  if (b.newClientFromChannel !== undefined) {
+    const want = (b.newClientFromChannel === '' || b.newClientFromChannel === null)
+      ? null : !!b.newClientFromChannel;
+    if (want !== (store.newClientFromChannel ?? null)) {
+      store.newClientFromChannel = want;
+      logAudit('zort_new_client_from_channel_changed', {
+        storeId: store.id, client: store.clientName || '',
+        setting: want === null ? 'auto' : want, effective: zortNewClientFromChannel(store),
+        by: req.userId || _tokenUserId(req) || '',
+      });
+    }
   }
   store.autoPullMinutes = Math.max(0, Math.min(1440, parseInt(b.autoPullMinutes, 10) || 0));
   if (['none', 'status', 'pack', 'readytoship'].includes(b.completeAction)) store.completeAction = b.completeAction;

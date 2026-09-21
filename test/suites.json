@@ -444,6 +444,13 @@
       "timeoutMs": 420000
     },
     {
+      "file": "newclient-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 420000
+    },
+    {
       "file": "onecart-e2e.js",
       "browser": true,
       "selfBoots": true,

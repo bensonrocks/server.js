@@ -1650,6 +1650,82 @@ base `https://open-api.zortout.com/v4`; lib/zort.js `zortRequest`).
   order files to AlphaCo, the BBB-1 order to BetaCo, a SKU nobody owns falls
   back to the store AND is the only one flagged, and the pull splits into one
   batch per client.
+
+#### A CLIENT NEW TO THE HUB HAD NOWHERE TO LAND BUT THE STORE'S OWN LABEL
+
+Asked from a screenshot of the hub's Sell list (21 Sep 2026): a new client,
+**SmileFam**, selling on a channel called `ShopeeSmilefam`, with a Pending
+order on it — *"will this order flow into IdealOne? if no, make it flow in
+bearing the same Channel Name. likewise for all future new clients."*
+
+It DID flow in. It landed under **IDEALONEHUB**. `attributeSyncClient` ended
+`store.clientName || channel || 'ZORT'`, and on a hub account `clientName` is
+the account **LABEL**, nobody's account — so a client on their first day, with
+no item master loaded and no channel mapping made, is EXACTLY the case that
+falls through both steps. Their orders pool in one bin shared with every other
+unplaceable client, where their stock, billing and portal visibility sit
+against the wrong account, in silence. The very thing the SKU rule above was
+written to stop, arriving from the one direction it cannot cover.
+
+- **THE FALLBACK IS THE SALES CHANNEL** (`zortFallbackClient`). Per client,
+  named, visible on the Orders tab, and **🔄 Refile** moves it — stock and all
+  — once somebody knows where it belongs. The store's label is a bin you cannot
+  take anything out of.
+- **NOT A BLANKET RULE**, because a **SINGLE-CLIENT store** is the opposite
+  case: there `clientName` IS the client, and the channel name would mint a
+  phantom account beside a client that was filing correctly. Nothing in the
+  data tells the two apart — the code comment has always called `clientName`
+  "account label / default client" and meant both — so the STORE says which:
+  `channelClients` carrying **any** entry is the operator declaring "this login
+  houses several clients", and that is the default.
+  **`store.newClientFromChannel`** pins it either way (tri-state; `''` clears
+  back to automatic), audited `zort_new_client_from_channel_changed` with what
+  it resolves to, because it decides which account a client's stock and billing
+  sit against. The form shows the resolved answer rather than a blank —
+  a setting whose effect you cannot read is one nobody trusts.
+- **A MAPPING STILL WINS, AND SO DOES A SKU.** Nothing that already worked
+  moves: this is only the last resort, so filing under a channel is a
+  **waypoint, not a new kind of wrong** — load that client's item master (or
+  map the channel) and the next order files under their real name by itself.
+  Asserted both ways.
+- **THE CHANNEL-PLACEHOLDER CLIENT CANNOT POISON ATTRIBUTION**, because
+  `buildSkuOwnerIndex` already ignores `learned_from_orders` rows for
+  ownership — the fix for exactly this self-reinforcing loop when orders were
+  misfiled under "LAZADA". Without that earlier fix this change would have been
+  unsafe.
+- **THE NEW CHANNEL ANNOUNCES ITSELF**: `lastResult.unmappedChannels` names
+  every channel that carried orders and is mapped to nobody, shown on the store
+  row in violet ("🎁 1 channel(s) not mapped to a client: ShopeeSmilefam"), and
+  the `needsAttribution` reason now says WHERE the order went and what to do
+  ("filed under the sales channel … map the channel or load their item master").
+  A count nobody can act on is noise.
+- HONEST CONSEQUENCE, stated rather than hidden: a channel name is not an
+  account name. `Lazada20082026Mayer` is not `Mayer2026`. This keeps clients
+  **apart and visible**; it does not name them correctly. Naming them is the
+  Channels editor or their item master, and until then the row says so.
+- NOT CHANGED: `skipClients`/`recordOnlyClients` are still matched on the
+  RESOLVED client, so an entry keyed on the store label no longer catches
+  orders that now file under a channel. Deliberate — those orders becoming
+  visible is the point — but worth knowing if such an entry exists.
+
+Verified 28 API checks (`newclient-e2e.js`, **tier `ci`**, against a mock hub
+serving two accounts): the reported order imports and files under
+`ShopeeSmilefam` and not `IDEALONEHUB`; the mapped Mayer channel still wins;
+the Success order is still not imported; the store row names the unmapped
+channel and not the mapped one; the reason says where it went and what to do;
+loading SmileFam's item master makes the NEXT order file under `SmileFam`
+while the one already filed stays put; a single-client store still files under
+its own client; pinning ON/OFF/automatic each takes effect and is on the trail.
+**The build that shipped fails 14 of the 28 and reproduces the screenshot
+exactly** (`SF-1001 … got IDEALONEHUB`, no unmapped channel reported).
+Regressions: the CI tier 8 suites / 232 checks, and `npm test` 6.
+
+TEST GOTCHA: re-using a SKU the FIRST pull already imported proves nothing —
+`harvestCatalogueFromOrders` learned it into that client's catalogue, so the
+SKU step places the next order and the fallback never runs (which is correct,
+and not what the check was about). Each fallback check needs a SKU nothing
+knows.
+
 - **AND WHEN IT LANDS WRONG ANYWAY — `POST /api/orders/:orderNumber/refile`.**
   Reported live as *"this order exists in Zort but not in IdealOne"*. It was in
   IdealOne all along: its SKUs were registered in TWO item masters, so
