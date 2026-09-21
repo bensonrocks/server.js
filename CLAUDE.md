@@ -1707,18 +1707,35 @@ written to stop, arriving from the one direction it cannot cover.
   RESOLVED client, so an entry keyed on the store label no longer catches
   orders that now file under a channel. Deliberate — those orders becoming
   visible is the point — but worth knowing if such an entry exists.
+- **A CHANNEL NAMED LIKE AN OBJECT PROPERTY SILENTLY ATE THE REST OF THE
+  PULL** — found by reviewing the line above rather than from a report, and
+  MEASURED, not reasoned about. The channel name comes off the hub's reply and
+  was used as a raw property name (`(store.channelClients || {})[channel]`), so
+  `constructor` / `toString` answered with something INHERITED and truthy: the
+  order read as mapped, `client` came back a **Function**, and against the
+  build that shipped this fix the order — **and every order after it in that
+  pull** — never imported at all. `zortChannelClient(store, channel)` is the
+  one reader and takes own properties only; the save route drops
+  `__proto__`/`constructor`/`prototype` as map KEYS, with the literal
+  comparisons repeated at the assignment because CodeQL only recognises them
+  as a sanitiser in the same function as the write (the lesson `safeLabelKey`
+  already paid for). HONEST NOTE: the `__proto__`-as-a-key check passes against
+  the old build too — assigning a string to `__proto__` is a silent no-op — so
+  that one is a guard, not a regression test. The `constructor` checks are the
+  real coverage, and they fail 2 of 2 against the previous commit.
 
-Verified 28 API checks (`newclient-e2e.js`, **tier `ci`**, against a mock hub
+Verified 32 API checks (`newclient-e2e.js`, **tier `ci`**, against a mock hub
 serving two accounts): the reported order imports and files under
 `ShopeeSmilefam` and not `IDEALONEHUB`; the mapped Mayer channel still wins;
 the Success order is still not imported; the store row names the unmapped
 channel and not the mapped one; the reason says where it went and what to do;
 loading SmileFam's item master makes the NEXT order file under `SmileFam`
 while the one already filed stays put; a single-client store still files under
-its own client; pinning ON/OFF/automatic each takes effect and is on the trail.
-**The build that shipped fails 14 of the 28 and reproduces the screenshot
-exactly** (`SF-1001 … got IDEALONEHUB`, no unmapped channel reported).
-Regressions: the CI tier 8 suites / 232 checks, and `npm test` 6.
+its own client; pinning ON/OFF/automatic each takes effect and is on the trail;
+a channel named `constructor` is neither mistaken for a mapped one nor allowed
+to swallow the pull. **The build that shipped fails 14 of them and reproduces
+the screenshot exactly** (`SF-1001 … got IDEALONEHUB`, no unmapped channel
+reported). Regressions: the CI tier 8 suites / 236 checks, and `npm test` 6.
 
 TEST GOTCHA: re-using a SKU the FIRST pull already imported proves nothing —
 `harvestCatalogueFromOrders` learned it into that client's catalogue, so the

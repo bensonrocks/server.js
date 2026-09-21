@@ -22706,7 +22706,7 @@ async function pullZortStore(db, store, opts = {}) {
       // Reported by name on the store row so a new shop appearing on the hub is
       // something somebody sees, rather than something noticed weeks later when
       // a client asks why their stock and billing are wrong.
-      if (channel && !(store.channelClients || {})[channel]) unmappedChannels.add(channel);
+      if (channel && !zortChannelClient(store, channel)) unmappedChannels.add(channel);
       const att = attributeSyncClient(skuOwners, lines, channel, store);
       const clientForOrder = att.client;
       // A CLIENT WE ARE NOT FULFILLING. Per the user: "we don't have stock, and
@@ -23126,6 +23126,18 @@ function zortFallbackClient(store, channel) {
   return (store && store.clientName) || channel || 'ZORT';
 }
 
+// THE CHANNEL NAME COMES OFF THE HUB'S REPLY, so it is external data used as a
+// property name — a plain `map[channel]` answers `constructor` / `toString`
+// with something inherited and TRUTHY, which would read as "this channel is
+// mapped" and, worse, hand a Function back as the client an order is filed
+// under. One reader, own-properties only. Same discipline as `safeLabelKey`.
+function zortChannelClient(store, channel) {
+  const map = (store && store.channelClients) || {};
+  if (!channel || !Object.prototype.hasOwnProperty.call(map, channel)) return '';
+  const v = map[channel];
+  return typeof v === 'string' ? v : '';
+}
+
 // Resolve one order's client. Returns what it decided AND how, so an order
 // nobody could place is visible rather than quietly filed under the store.
 function attributeSyncClient(skuOwners, lines, channel, store) {
@@ -23154,7 +23166,7 @@ function attributeSyncClient(skuOwners, lines, channel, store) {
     if (om && om.size > 1) for (const n of om.values()) dupOwners.add(n);
   }
   const hint = [...new Set([...owners, ...dupOwners])].join(' / ') || null;
-  const mapped = (store.channelClients || {})[channel];
+  const mapped = zortChannelClient(store, channel);
   if (mapped) {
     // Lines pointing at a DIFFERENT client than the channel map is worth
     // knowing about — one of the two is wrong.
@@ -24892,6 +24904,11 @@ app.post('/api/master/zort/stores', (req, res) => {
     const map = {};
     for (const [k, v] of Object.entries(b.channelClients).slice(0, 100)) {
       const key = String(k).slice(0, 80).trim(), val = String(v || '').slice(0, 80).trim();
+      // The key is a request-body property name. The literal comparisons are
+      // repeated HERE, at the assignment, on purpose — CodeQL's
+      // prototype-pollution query only recognises them as a sanitiser in the
+      // same function as the write (measured on the `db.orderLabels` writer).
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
       if (key && val) map[key] = val;
     }
     store.channelClients = map;

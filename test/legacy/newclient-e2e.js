@@ -149,6 +149,26 @@ function clientOf(order) {
   ok(clientOf('SF-1001') === 'ShopeeSmilefam',
      'and the order already filed is left exactly where it was (🔄 Refile moves it, nothing moves it silently)');
 
+  // ── A CHANNEL NAMED LIKE AN OBJECT PROPERTY. The channel name comes off the
+  //    hub's reply, so a plain `map[channel]` answers `constructor` with an
+  //    INHERITED, TRUTHY value — the order would read as mapped and be filed
+  //    under a Function. Own-properties only, measured not reasoned about. ───
+  await addOrder({ acc: 'hub', number: 'SF-1006', channel: 'constructor', sku: 'PROTO-A', name: 'Odd Channel' });
+  await pull(hub); await sleep(2000);
+  ok(clientOf('SF-1006') === 'constructor',
+     `a channel named "constructor" is not mistaken for a mapped one (got ${JSON.stringify(clientOf('SF-1006'))})`);
+  row = await storeById(hub);
+  ok((row.lastResult?.unmappedChannels || []).includes('constructor'),
+     'and it is still reported as unmapped rather than silently swallowed');
+
+  // The same name arriving as a MAP KEY on the save route is refused outright.
+  await J(await fetch(B + '/api/master/zort/stores', { method: 'POST', headers: H(),
+    body: JSON.stringify({ id: hub, channelClients: { '__proto__': 'Evil', 'Lazada20082026Mayer': 'Mayer2026' } }) }));
+  const saved = (await storeById(hub)).channelClients || {};
+  ok(!Object.prototype.hasOwnProperty.call(saved, '__proto__'),
+     'a channelClients key of __proto__ is dropped, never written');
+  ok(saved['Lazada20082026Mayer'] === 'Mayer2026', 'and the real mapping beside it is kept');
+
   // ── THE SINGLE-CLIENT STORE — the regression this is guarded against.
   //    Here `clientName` IS the client, and a channel name would mint a
   //    phantom account beside a client that was filing correctly. ────────────
