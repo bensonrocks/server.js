@@ -11505,7 +11505,7 @@ app.post('/api/waybill-lookup', (req, res) => {
   // "iWMS GINo" column maps it into issue_no instead (detectColumnMap) — so
   // issue_no must be checked here too, or that upload path's GI barcode
   // never resolves to an order.
-  const order = globalOrdersWithState().find(o => {
+  const matches = globalOrdersWithState().filter(o => {
     const on = (o.order_number || '').trim().toLowerCase();
     const pt = (o.pick_ticket  || '').trim().toLowerCase();
     const gi = (o.issue_no     || '').trim().toLowerCase();
@@ -11518,9 +11518,51 @@ app.post('/api/waybill-lookup', (req, res) => {
       (Array.isArray(o.waybills) && o.waybills.some(w => String(w).trim().toLowerCase() === q)) ||
       (o.po_number      && String(o.po_number).trim().toLowerCase() === q);
   });
+  const order = bestScanLookup(matches, q);
   if (!order) return res.status(404).json({ error: `No order for waybill: ${waybill}` });
-  res.json(order);
+  // The others that answer to the same number — a duplicate upload of the
+  // same shipment, usually — so the screen can say what it chose and why.
+  const others = matches.filter(o => o !== order && !o.reference_only).map(o => ({
+    order_number: o.order_number, client_name: o.client_name || '', scan_status: o.scan_status || '',
+    idealscan_code: o.idealscan_code || '',
+  }));
+  res.json(others.length ? { ...order, lookup_others: others } : order);
 });
+
+// ── WHICH ORDER A SCANNED NUMBER OPENS WHEN MORE THAN ONE ANSWERS TO IT ──────
+// Reported from the floor with two screenshots: the same shipment uploaded
+// twice under BETIME — once from the GI Analysis export (order number = the
+// marketplace id, GI in issue_no, picked and completed, labels attached) and
+// once from the picking-list PDF (order number = the GI, untouched). Both
+// answer to the GI barcode, and the finder took whichever came first in batch
+// order — so scanning the GI could open the untouched duplicate for a SECOND
+// pick of a parcel already on the shelf. The order-number duplicate tiers never
+// saw the pair because their order numbers differ.
+//
+// A GI names ONE issue: when a GI is scanned, the copy that has been WORKED
+// (done or in progress) is the truth and an untouched twin is a duplicate. A
+// plain order number is the opposite case — clients RECYCLE those, and the
+// newest LIVE order is the one a packer means, with finished history after it.
+// A cancelled copy never wins over anything, and a channel reference copy is
+// never opened at all (the caller says so in words). Stable sort, so within a
+// rank the existing newest-batch-first order still decides. The client-side
+// instant match in public/app.js (waybillLookupGo) applies the same rule —
+// keep the two in step.
+const GI_SCAN_SHAPE = /^gi-?\d{4,}$/i;
+function scanLookupRank(o, q) {
+  const st = String(o.scan_status || '');
+  let r = 0;
+  if (o.reference_only) r += 1000;
+  if (st === 'unprocessed') r += 100;
+  if (GI_SCAN_SHAPE.test(q)) { if (st !== 'done' && st !== 'processing') r += 10; }
+  else if (st === 'done') r += 10;
+  return r;
+}
+function bestScanLookup(matches, q) {
+  if (!matches || !matches.length) return null;
+  return matches.map((o, i) => ({ o, i, r: scanLookupRank(o, q) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)[0].o;
+}
 
 // ── Order claiming — one packer per order ────────────────────────────────────
 // Every station sees the same summary, so two packers could open the SAME

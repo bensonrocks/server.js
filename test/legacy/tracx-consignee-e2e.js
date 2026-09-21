@@ -137,6 +137,50 @@ async function order(n) {
   const pdf = await fetch(`${B}/api/order-label/${encodeURIComponent(PICK.gi)}/pdf`, { headers: H() });
   ok(pdf.status === 200 && /pdf/i.test(pdf.headers.get('content-type') || ''), `the label is served for ${PICK.gi} (${pdf.status})`);
 
+  // ── 4. THE SAME SHIPMENT UPLOADED TWICE — which copy does the GI barcode open?
+  // Reported live: the GI Analysis export files the shipment under the
+  // MARKETPLACE id (GI in issue_no), the picking-list PDF under the GI itself.
+  // The order-number duplicate tiers cannot see the pair. The floor picked and
+  // completed one copy; scanning the GI then opened whichever came first in
+  // batch order — the untouched twin, on the build that shipped.
+  const JH = { ...H(), 'Content-Type': 'application/json' };
+  for (const l of PICK.lines) {
+    await J(await fetch(B + '/api/scan/increment', { method: 'POST', headers: JH, body: JSON.stringify({ orderNumber: PICK.gi, sku: l.sku }) }));
+  }
+  const done = await J(await fetch(B + '/api/scan/complete', { method: 'POST', headers: JH,
+    body: JSON.stringify({ orderNumber: PICK.gi, startTime: new Date().toISOString(), endTime: new Date().toISOString(), operator: 'demo' }) }));
+  ok(done.ok !== false && !done.error, `the GI copy is picked and completed (${JSON.stringify(done).slice(0, 90)})`);
+  await sleep(1500);
+  const XLSX = require('xlsx');
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['Issue No', 'Reference', 'Consignee', 'SKU', 'Qty'],
+    ['GI-900001', PICK.ref, PICK.waybill, PICK.lines[0].sku, 1],
+    ['GI-900001', PICK.ref, PICK.waybill, PICK.lines[1].sku, 1],
+  ]), 'Sheet1');
+  const fd3 = new FormData();
+  fd3.append('orderFile', new Blob([XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })],
+    { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'GI-900001_export.xlsx');
+  fd3.append('client_name', PICK.account); fd3.append('direction', 'Outbound'); fd3.append('arrange_delivery', 'no');
+  const up3 = await J(await fetch(B + '/api/upload', { method: 'POST', headers: H(), body: fd3 }));
+  ok(!up3.error && !up3.needsOverwriteConfirm && !up3.needsDuplicateConfirm, `the export copy uploads as a SEPARATE order (${up3.error || up3.message || 'ok'})`);
+  await sleep(2500);
+  const twin = await order(PICK.ref);
+  ok(!!twin && twin.scan_status !== 'done', `the twin ${PICK.ref} is on the books, untouched (${twin?.scan_status})`);
+  ok((twin?.issue_no || '') === PICK.gi, `it carries the SAME GI in issue_no (${twin?.issue_no})`);
+  ok((twin?.waybill_number || '') === PICK.waybill, `and the XLSX path now reads the waybill off the Consignee column too (${twin?.waybill_number})`);
+  const look = async v => J(await fetch(B + '/api/waybill-lookup', { method: 'POST', headers: JH, body: JSON.stringify({ waybill: v }) }));
+  const byGi = await look(PICK.gi);
+  ok(byGi.order_number === PICK.gi, `scanning the GI opens the copy that was WORKED — ${PICK.gi}, completed — not the untouched twin (got ${byGi.order_number})`);
+  ok(Array.isArray(byGi.lookup_others) && byGi.lookup_others.some(o => o.order_number === PICK.ref),
+     `and names the twin as another order answering to the same number (${JSON.stringify(byGi.lookup_others || [])})`);
+  const byGiLower = await look(PICK.gi.toLowerCase());
+  ok(byGiLower.order_number === PICK.gi, `case does not matter (${byGiLower.order_number})`);
+  const byRef = await look(PICK.ref);
+  ok(byRef.order_number === PICK.ref, `scanning the marketplace id opens the order carrying it as its number (${byRef.order_number})`);
+  const byWb = await look(PICK.waybill);
+  ok([PICK.gi, PICK.ref].includes(byWb.order_number), `the waybill still resolves (${byWb.order_number})`);
+
   console.log('\n' + (fails.length ? `FAILED ${fails.length}` : 'ALL PASSED'));
   await stop();
   process.exit(fails.length ? 1 : 0);

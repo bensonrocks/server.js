@@ -1486,7 +1486,7 @@ all three parsers, so they cannot disagree about what a waybill looks like:
 
 Verified 7 `node:test` checks (`test/tracx-consignee.test.js`, no server: the
 shape test on the real waybills and on names/ids that must NOT pass, the photo
-parser on the photo's own text, the row mapper both ways) plus 17 API checks
+parser on the photo's own text, the row mapper both ways) plus 27 API checks
 (`test/legacy/tracx-consignee-e2e.js`, **tier `ci`**) through the real
 `/api/upload` and `/api/label-imports` on a Keyfields-shaped picking list: the
 GI order carries the TracX waybill AND the marketplace id as po_number, a
@@ -1498,7 +1498,7 @@ unmatched, and the label prints at the bench. **The build that shipped fails 7
 of the 17 and reproduces the report exactly** — the marketplace id stored as
 the waybill, po_number blank, the waybill page never matching, and the id-only
 page landing only as a `scan` guess. Regressions: `npm test` 13, CI tier 9
-suites / 287 checks.
+suites / 297 checks.
 
 FIXTURES: `tracx-consignee-fixture.js` prints both PDFs through headless
 Chromium and they are committed (`tracx-picklist-fixture.pdf`,
@@ -1514,6 +1514,68 @@ TEST GOTCHA: a label page printing BOTH the waybill and the marketplace id
 resolves via `order_number`, not `tracking_number` — `matchLabelPage` tries the
 order number first, and the id is now an order-number key. To prove the
 tracking route on its own, the page must print the waybill alone.
+
+#### THE SAME SHIPMENT UPLOADED TWICE — and which copy the GI barcode opens
+
+Follow-up from the same afternoon, with three screenshots: the Lazada label
+import read **11 matched**, the Active list showed GI-144374…381 (job
+IS-260921-19, TXSGD waybills, **no 🏷 Label chip**), and the order the pages
+had matched — `173174129789495`, job **IS-260921-20**, `GI: GI-144376`,
+**3/3 scanned, Awaiting collection, 🏷 Label** — was a SECOND copy of the
+same shipment under BETIME. The GI Analysis export files a shipment under the
+MARKETPLACE id (`Reference` outranks the GI for `order_number`; the GI lands
+in `issue_no`); the picking-list PDF files the same shipment under the GI. The
+floor picked and completed the export copy and the labels landed on it,
+correctly. The PDF copies were untouched duplicates sitting in Active with a
+KPI clock running. **The order-number duplicate tiers never saw the pair** —
+`GI-144376` ≠ `173174129789495`.
+
+- **THE LABELS WERE ON THE RIGHT COPY.** Worth recording because the matcher
+  change I first reached for — "an exact tracking-number hit outranks an
+  order-number hit on an order that carries no waybill" — would have moved
+  every label OFF the completed, picked copy and ONTO the unpicked duplicate.
+  The matcher cannot know which of two copies is the real one; a rule that
+  guesses is worse than the duplicate. Not built.
+- **NOT BETIME ONLINE.** The reference twin ("📒 also in Betime Online") is
+  fenced at the index AND at the writer, so a label cannot land on it by any
+  path; the amber "matches no identifier" note (foreign) is itself the tell —
+  a reference twin draws the slate "marketplace number of this shipment" note.
+- **WHICH COPY THE SCAN BAR OPENS IS NO LONGER LUCK** (`bestScanLookup`,
+  server.js beside `/api/waybill-lookup`; the same rule inline in
+  `waybillLookupGo`, public/app.js — keep them in step). Both matched the GI —
+  one by `order_number`, one by `issue_no` — and the finder took whichever
+  came first in batch order, so scanning the GI could open the untouched
+  duplicate for a SECOND pick of a parcel already on the shelf.
+  - **A GI names ONE issue**: when the scanned value is GI-shaped
+    (`/^gi-?\d{4,}$/i`), the copy that has been WORKED (done or processing)
+    wins and an untouched twin is treated as the duplicate it is.
+  - **A plain order number is the opposite case** — clients RECYCLE those (the
+    standing confirmable-duplicate tier), so the newest LIVE order wins there
+    and finished history comes after. Unchanged behaviour for that shape.
+  - **A cancelled copy never wins over anything**; a channel reference copy is
+    never opened at all (the existing "exists only as a reference" wording).
+  - Stable sort, so within a rank the existing newest-batch-first order still
+    decides — nothing that resolved to ONE order before resolves differently.
+  - **THE SCREEN SAYS WHAT ELSE ANSWERED**: the route returns `lookup_others`
+    (number, job code, client, status) and the bar reads "Order … already
+    completed — shown in the Completed tab below. 1 other order answers to
+    this number too — GI-144376 (IS-260921-19, pending) — usually the same
+    shipment uploaded twice." A silent pick between two copies is how this
+    became a support question.
+- **STILL OPEN, said rather than hidden**: nothing at upload time warns that
+  an incoming order's GI or waybill is already held by a live order under a
+  DIFFERENT order number. That is the check that would have stopped
+  IS-260921-19 at the Confirm screen, and it needs the user's yes — it adds a
+  prompt to Betime's daily upload. The primary-key question (GI as the order
+  number on an export that carries one) is likewise not touched.
+
+Verified in the same suite (`tracx-consignee-e2e.js`, now 27 checks): the
+GI copy picked through `/api/scan/increment` and completed; the export copy
+uploaded as a separate order carrying the same GI in `issue_no` (and, with the
+Consignee fix, the waybill); scanning the GI opens the COMPLETED copy and names
+the twin; lower-case too; the marketplace id opens the order carrying it as its
+number; the waybill still resolves. **The build before this (`57f4648`) fails
+the GI-lookup check — it opens the untouched twin, the reported behaviour.**
 
 ## Live-wave visibility pill + build stamp (server.js `globalOrdersWithState`, public/app.js)
 

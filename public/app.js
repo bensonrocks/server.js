@@ -2126,7 +2126,31 @@
     // The WORK order wins; a channel reference record is not something to
     // scan. If the number exists ONLY as a reference, say so rather than open
     // a scan screen on a record that refuses every scan.
-    const directMatch = _matches.find(o => !o.reference_only) || _matches[0];
+    //
+    // WHEN MORE THAN ONE ORDER ANSWERS TO THE NUMBER (the same shipment
+    // uploaded twice — once from the GI Analysis export under the marketplace
+    // id with the GI in issue_no, once from the picking-list PDF under the GI
+    // itself), which one opens must not be luck. A GI names ONE issue, so the
+    // copy that has been WORKED wins and an untouched twin is a duplicate; a
+    // plain order number is recycled by clients, so the newest LIVE order wins
+    // there. A cancelled copy never wins. Same rule as the server's
+    // bestScanLookup (/api/waybill-lookup) — keep the two in step.
+    const giShape = /^gi-?\d{4,}$/i.test(val.trim());
+    const rank = o => {
+      const st = o.scan_status || '';
+      let r = 0;
+      if (o.reference_only) r += 1000;
+      if (st === 'unprocessed') r += 100;
+      if (giShape) { if (st !== 'done' && st !== 'processing') r += 10; }
+      else if (st === 'done') r += 10;
+      return r;
+    };
+    const ranked = _matches.map((o, i) => ({ o, i, r: rank(o) })).sort((a, b) => a.r - b.r || a.i - b.i).map(x => x.o);
+    const directMatch = ranked[0];
+    const others = ranked.slice(1).filter(o => !o.reference_only);
+    const othersNote = others.length
+      ? ` ${others.length} other order(s) answer to this number too — ${others.map(o => `${o.order_number} (${o.idealscan_code || o.client_name || ''}, ${o.scan_status === 'unprocessed' ? 'cancelled' : o.scan_status || 'pending'})`).join(', ')} — usually the same shipment uploaded twice.`
+      : '';
     if (directMatch && directMatch.reference_only) {
       ordersView = 'reference'; renderOrdersList();
       setWaybillMsg(`${directMatch.order_number} exists only as a channel reference record under ${directMatch.client_name || 'the client'} — not a work order. Upload the picking list to process it.`, true);
@@ -2138,10 +2162,10 @@
         ordersView = 'completed'; completedSearch = directMatch.order_number; ordersDateFilter = 'all';
         refreshOrders().then(renderOrdersList);
         renderOrdersList();
-        setWaybillMsg('Order already completed — shown in the Completed tab below.', false);
+        setWaybillMsg(`Order ${directMatch.order_number} already completed — shown in the Completed tab below.${othersNote}`, !!others.length);
         return;
       }
-      setWaybillMsg('', false);
+      setWaybillMsg(othersNote.trim(), !!others.length);
       openScanOverlay(directMatch.order_number);
       return;
     }
@@ -2166,14 +2190,18 @@
         setWaybillMsg(`${ord.order_number} exists only as a channel reference record under ${ord.client_name || 'the client'} — not a work order. Upload the picking list to process it.`, true);
         return;
       }
+      const srvOthers = Array.isArray(data.lookup_others) ? data.lookup_others : [];
+      const srvNote = srvOthers.length
+        ? ` ${srvOthers.length} other order(s) answer to this number too — ${srvOthers.map(o => `${o.order_number} (${o.idealscan_code || o.client_name || ''}, ${o.scan_status === 'unprocessed' ? 'cancelled' : o.scan_status || 'pending'})`).join(', ')} — usually the same shipment uploaded twice.`
+        : '';
       if (ord.scan_status === 'done') {
         ordersView = 'completed'; completedSearch = ord.order_number; ordersDateFilter = 'all';
         refreshOrders().then(renderOrdersList);
         renderOrdersList();
-        setWaybillMsg('Order already completed — shown in the Completed tab below.', false);
+        setWaybillMsg(`Order ${ord.order_number} already completed — shown in the Completed tab below.${srvNote}`, !!srvOthers.length);
         return;
       }
-      setWaybillMsg('', false);
+      setWaybillMsg(srvNote.trim(), !!srvOthers.length);
       openScanOverlay(data.order_number);
     } catch (err) {
       setWaybillMsg('Lookup failed. Try again.', true);
