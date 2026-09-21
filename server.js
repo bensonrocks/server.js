@@ -2650,6 +2650,9 @@ function summarizeOrders(lines) {
       // wording would be silently lost.
       ...(line.source_description ? { source_description: line.source_description } : {}),
       ...(line.barcode ? { barcode: line.barcode } : {}),
+      // The code was MINTED here (a hub line with no SKU imports under
+      // ZORT-P<productid>) — the screen and the store row say so.
+      ...(line.sku_source ? { sku_source: line.sku_source } : {}),
     });
     map[key].total_qty += line.qty;
   }
@@ -22558,6 +22561,12 @@ async function pullZortStore(db, store, opts = {}) {
   const unmappedChannels = new Set();   // sales channels seen with no client mapping
   // The two ways an order could leave this pull with NOTHING said about it.
   const skippedNoLines = []; let skippedNoLinesCount = 0; const skippedNoNumber = [];
+  // Lines the final sku/qty filter would throw away, and lines imported under
+  // a minted ZORT-P<productid> code because the hub listing carries no SKU.
+  const lineIssues = []; const placeholderSku = [];
+  // "Known" orders sitting under a different client than they would file to
+  // today — a filing error a re-pull can never fix, named for 🔄 Refile.
+  const knownUnderOtherClient = []; let knownUnderOtherClientCount = 0;
   // Resolved ONCE: it walks every batch, and doing that per order would make
   // attribution cost O(orders x batches) on an account with a year of history.
   const hubStore = zortNewClientFromChannel(store, db);
@@ -22595,9 +22604,37 @@ async function pullZortStore(db, store, opts = {}) {
       // The original `Number(o.status) === 2` could never match a word, so
       // void handling silently never fired against live data.
       const stw = zortStatusWord(o.status);
+      // Read up front: the "known" branch below needs them too, to say WHICH
+      // client an order it is not importing is actually sitting under.
+      const lines = o.list || o.orderlist || [];
+      const channel = String(o.saleschannel || o.channel || '').trim();
       if (stw === 'voided') { skippedVoid++; handleZortVoid(db, number, o.id, store); continue; }
       if (existing.has(number)) {
         skippedExisting++;
+        // KNOWN — BUT UNDER WHICH CLIENT? "43 already known" is a true count
+        // that can hide a filing error: an order imported under the store's
+        // own label before the fallback rule changed, or under a channel
+        // placeholder before that client's item master arrived, reads as
+        // "known" for ever and never moves (a re-pull skips numbers it holds,
+        // by design). So the holder is compared with where the SAME rules
+        // would file it TODAY, and a difference is named with the 🔄 Refile
+        // pointer — the OneCart `heldElsewhere` lesson, applied here.
+        // A reference copy is an expected twin, not a misfiling. HONEST LIMIT:
+        // a holder whose own LEARNED catalogue claims the SKU resolves to
+        // itself, so an order that taught the wrong client its products is
+        // not caught by this — the Orders-tab hint still is.
+        if (lines.length) {
+          const heldNow = lazadaFindOrder(db, number, '');
+          if (heldNow && heldNow.batch && !isReferenceBatch(heldNow.batch)) {
+            const attNow = attributeSyncClient(skuOwners, lines, channel, store, { newClientFromChannel: hubStore });
+            const holder = String(heldNow.batch.client_name || '').trim();
+            const would = String(attNow.client || '').trim();
+            if (holder && would && holder.toLowerCase() !== would.toLowerCase()) {
+              if (knownUnderOtherClient.length < 25) knownUnderOtherClient.push({ order: number, heldBy: holder, wouldFileTo: would, via: attNow.via });
+              knownUnderOtherClientCount++;
+            }
+          }
+        }
         // THE MARKETPLACE SAYS CANCELLED, whatever ZORT's own status says —
         // see handleMarketplaceCancel. Checked FIRST: an order the channel
         // has cancelled must not be arranged, chased for a label or closed
@@ -22700,12 +22737,11 @@ async function pullZortStore(db, store, opts = {}) {
         if (skippedHandledSample.length < 20) skippedHandledSample.push({ order: number, status: `marketplace: ${zortIntegrationWord(o)}` });
         continue;
       }
-      const lines = o.list || o.orderlist || [];
-      // THE CHANNEL IS READ BEFORE THE LINES CHECK, deliberately. A brand-new
-      // client's first order is exactly the one that can arrive line-less, and
-      // reading the channel afterwards meant their shop was not even named as
-      // unmapped — the one clue that they exist at all.
-      const channel = String(o.saleschannel || o.channel || '').trim();
+      // THE CHANNEL IS READ BEFORE THE LINES CHECK, deliberately (both are
+      // read at the top of the loop now). A brand-new client's first order is
+      // exactly the one that can arrive line-less, and reading the channel
+      // afterwards meant their shop was not even named as unmapped — the one
+      // clue that they exist at all.
       // A CHANNEL WITH NO MAPPING IS USUALLY A CLIENT NOBODY HAS SET UP YET.
       // Reported by name on the store row so a new shop appearing on the hub is
       // something somebody sees, rather than something noticed weeks later when
@@ -22755,13 +22791,20 @@ async function pullZortStore(db, store, opts = {}) {
                            attributed_via: att.via, attribution_unsure: att.unsure || null,
                            attribution_hint: att.hint || null, placed_at: _zortPlacedAt(o) };
       for (const l of lines) {
+        const lr = zortLineRow(l);
+        // A LINE THE FINAL FILTER WILL THROW AWAY IS RECORDED HERE, at the
+        // point it is known — the filter runs after the loop, past every
+        // counter, and that is exactly where an order used to disappear.
+        if (lr.issue) lineIssues.push({ order: number, channel, issue: lr.issue, keys: lr.keys });
+        else if (lr.sku_source) placeholderSku.push({ order: number, channel, sku: lr.sku, name: lr.description });
         rows.push({
           order_number:     number,
           customer_name:    String(o.customername || o.customer_name || o.shippingname || '').trim(),
           client_name:      clientForOrder,
-          sku:              String(l.sku || '').trim(),
-          qty:              Math.max(0, Math.round(Number(l.number) || 0)),
-          description:      String(l.name || '').slice(0, 200),
+          sku:              lr.sku,
+          qty:              lr.qty,
+          description:      lr.description,
+          ...(lr.sku_source ? { sku_source: lr.sku_source } : {}),
           delivery_address: String(o.shippingaddress || o.customeraddress || '').trim(),
           tel:              String(o.shippingphone || o.customerphone || '').trim(),
           carrier:          String(o.shippingchannel || '').trim(),
@@ -22785,6 +22828,22 @@ async function pullZortStore(db, store, opts = {}) {
   const normRows = normalizeOrderRowsToInhouseSku(rows, r => invClientId(r.client_name));
   const explodedRows = explodeBundleRows(normRows, r => invClientId(r.client_name));
   const orders = summarizeOrders(explodedRows.filter(r => r.sku && r.qty > 0));
+  // AN ORDER THAT WENT INTO THAT FILTER AND DID NOT COME OUT. This is the exact
+  // place one used to vanish: fetched, not new, not known, not voided, and
+  // named on no line of the store row. Every such order is reported with the
+  // reason per line and the field names the hub's line actually carried
+  // (names only — a value could be personal data and the trail is emailed).
+  const survived = new Set(orders.map(o => o.order_number));
+  const droppedOrders = Object.keys(zortMeta).filter(n => !survived.has(n)).map(n => ({
+    order: n,
+    channel: (lineIssues.find(x => x.order === n) || {}).channel || '',
+    why: [...new Set(lineIssues.filter(x => x.order === n).map(x => x.issue))],
+    keys: (lineIssues.find(x => x.order === n) || {}).keys || [],
+  }));
+  if (droppedOrders.length) {
+    logAudit('sync_order_dropped_unusable_lines', { storeId: store.id, count: droppedOrders.length,
+      orders: droppedOrders.slice(0, 20) });
+  }
   // summarizeOrders keeps only known fields — re-attach the Zort linkage the
   // completion push needs, and the client each order resolved to
   for (const o of orders) {
@@ -23040,7 +23099,16 @@ async function pullZortStore(db, store, opts = {}) {
                        // answerable from the store row instead of a guess.
                        skippedNoLines, skippedNoLinesCount,
                        skippedNoNumber: skippedNoNumber.slice(0, 25),
-                       skippedNoNumberCount: skippedNoNumber.length };
+                       skippedNoNumberCount: skippedNoNumber.length,
+                       // Orders the sku/qty filter threw away, with the reason
+                       // per line — and orders imported under a minted code
+                       // because the hub listing carries no SKU.
+                       droppedOrders: droppedOrders.slice(0, 25), droppedOrdersCount: droppedOrders.length,
+                       placeholderSkuOrders: placeholderSku.slice(0, 25), placeholderSkuCount: placeholderSku.length,
+                       // Every line the filter threw away, whether or not its
+                       // order survived on its other lines.
+                       unusableLines: lineIssues.slice(0, 25), unusableLinesCount: lineIssues.length,
+                       knownUnderOtherClient, knownUnderOtherClientCount };
   if (only.length) store.lastWebhookResult = _result;   // kept apart from the sweep's own row
   else store.lastResult = _result;
   if (unsure.length) {
@@ -23196,6 +23264,40 @@ function zortChannelClient(store, channel) {
   if (!channel || !Object.prototype.hasOwnProperty.call(map, channel)) return '';
   const v = map[channel];
   return typeof v === 'string' ? v : '';
+}
+
+// ONE READER FOR A HUB ORDER LINE — used by the pull AND by 🔍 Find order, so
+// the tool can never again say "would bring it in" about an order the pull
+// then throws away.
+//
+// THE ORDER THAT WENT NOWHERE. Reported live: a pull reading "45 fetched, 43
+// already known, 1 voided, +0 new" — one order accounted for by nothing —
+// while Find order said it had 1 line and "would bring it in". Both were
+// telling the truth as far as they looked: the line existed, and the pull's
+// final `filter(r => r.sku && r.qty > 0)` then dropped it AFTER every counter,
+// because the line carried NO SKU. A Shopee listing very often has no SKU set,
+// and a client new to the hub is exactly who has not set one yet.
+//
+// Per the v4 docs an OrderProduct carries sku / name / number (qty, Double) /
+// productid / unittext / prices — no barcode. So a SKU-less line's only stable
+// identity is ZORT's own product id, and that is what it imports under:
+// `ZORT-P<productid>`, self-describing and impossible to mistake for a real
+// code, with the product NAME as the description (which is what a packer
+// picks by). The scanner will not match the placeholder — teach-on-scan does,
+// and setting the SKU in ZORT fixes every later order. `sku_source` says the
+// code was minted here, and it is stated on the store row and by Find order.
+// An order with no product id either, or a zero quantity, is still not
+// importable — but it is NAMED now, with the reason and the line's field
+// names, never dropped in silence.
+function zortLineRow(l) {
+  const raw = String((l && l.sku) || '').trim();
+  const pid = l && (l.productid ?? l.productId ?? l.product_id);
+  const sku = raw || (pid !== undefined && pid !== null && String(pid).trim() ? `ZORT-P${String(pid).trim()}` : '');
+  const qty = Math.max(0, Math.round(Number(l && (l.number ?? l.quantity ?? l.qty)) || 0));
+  const issue = !sku ? 'no-sku' : qty <= 0 ? 'zero-qty' : null;
+  return { sku, qty, description: String((l && l.name) || '').slice(0, 200),
+           sku_source: raw ? null : (sku ? 'zort-productid' : null), issue,
+           keys: l && typeof l === 'object' ? Object.keys(l).slice(0, 20) : [] };
 }
 
 // Resolve one order's client. Returns what it decided AND how, so an order
@@ -25638,7 +25740,22 @@ app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) 
     else if (skipClients.has(cn)) would = `import would SKIP it — "${att.client}" is on this store's "do NOT import" list (the amber box on the store form)`;
     else if (recordClients.has(cn)) would = `import would bring it in AS A RECORD ONLY — "${att.client}" is on this store's record-only list, so it arrives already closed and never reaches the floor`;
     else if (!(z.list || z.orderlist || []).length) would = 'the hub returns this order with NO product lines, so there is nothing to import';
-    else would = 'import would bring it in on the next pull';
+    else {
+      // THE SAME LINE READER THE PULL USES. This tool once said "would bring it
+      // in" about an order whose only line carried no SKU — true as far as it
+      // looked (the line existed) and false in effect (the pull's final
+      // filter threw it away). It reads the lines the way the pull does now.
+      const lrs = (z.list || z.orderlist || []).map(zortLineRow);
+      const bad = lrs.filter(x => x.issue);
+      const minted = lrs.filter(x => !x.issue && x.sku_source);
+      if (bad.length === lrs.length) {
+        would = `import would DROP it — ${bad.map(x => x.issue === 'no-sku'
+          ? 'a line has no SKU and no product id on the hub'
+          : 'a line has a zero quantity').join('; ')}. The hub's line carries: ${[...new Set(bad.flatMap(x => x.keys))].join(', ') || '(no fields)'}`;
+      } else if (minted.length) {
+        would = `import would bring it in on the next pull — ${minted.length} line(s) carry NO SKU on the hub listing and will import under a placeholder code (${minted.map(x => x.sku).join(', ')}) with the product name; set the SKU on the product in ZORT so future orders pick and scan cleanly`;
+      } else would = 'import would bring it in on the next pull';
+    }
     return { number: n, apiReturns: true, inIdealOne: !!here, ourStatus: hereStatus,
              zortStatus: stw || String(z.status || ''), zortId: z.id,
              // The MARKETPLACE's own status — a Lazada cancellation lives
@@ -28394,6 +28511,12 @@ function harvestCatalogueFromOrders(db, clientName, orders, source) {
     const hadMaster = clientHasItemMaster(cid);
     const mayCreate = !clientStockTracked(cid);
     let created = 0, healed = 0, barcoded = 0;
+    // What was SAVED, by name — the prompt below is only worth raising if it
+    // can say which products, and "3 products" cannot be checked against a
+    // shelf. `minted` marks a code this system invented (a hub line with no
+    // SKU imports under ZORT-P<productid>), which the person should fix at
+    // the source rather than adopt.
+    const createdSkus = [];
     const seen = new Set();
     for (const o of orders || []) {
       for (const l of (o.lines || o.items || [])) {
@@ -28429,6 +28552,7 @@ function harvestCatalogueFromOrders(db, clientName, orders, source) {
           // these for ownership.
           inventory.upsert({ sku, clientId: cid, name: desc, learned_from_orders: 1, ...(barcode ? { barcode } : {}) });
           created++;
+          if (createdSkus.length < 50) createdSkus.push({ sku, name: desc, minted: l.sku_source === 'zort-productid' });
         }
       }
     }
@@ -28446,7 +28570,27 @@ function harvestCatalogueFromOrders(db, clientName, orders, source) {
         });
       }
     }
-    logAudit('catalogue_learned_from_orders', { client: name, source: source || '', created, healed, barcoded });
+    // THE PERSON IS TOLD. Per the user: a client with no products uploaded can
+    // still have their orders pulled from the hub, and IdealOne learns and
+    // saves the product as the basis — and PROMPTS for it. A sync runs with
+    // nobody at a dialog, so the prompt is a 🔔 New Work poke (the feed the
+    // office already watches, with its badge), naming the client, where the
+    // products came from and the first few by code and name, and opening
+    // Inventory on tap so they can be checked, renamed or given a barcode.
+    // Never a top banner (standing rule). A product minted under a
+    // placeholder code says so, because the fix for that is on the hub.
+    if (created) {
+      addPoke(db, {
+        kind: 'catalogue_learned', client: name, direction: 'catalogue',
+        source: source || '', created, healed,
+        firstProducts: !hadMaster,
+        minted: createdSkus.filter(x => x.minted).length,
+        skus: createdSkus.slice(0, 12),
+      });
+    }
+    logAudit('catalogue_learned_from_orders', { client: name, source: source || '', created, healed, barcoded,
+      minted: createdSkus.filter(x => x.minted).length, skus: createdSkus.slice(0, 20).map(x => x.sku) });
+    return { created, healed, barcoded, createdSkus };
   } catch (e) { console.warn('[catalogue-learn]', e.message); }
 }
 

@@ -231,6 +231,76 @@ function clientOf(order) {
   ok(res3.skippedNoNumberCount === 1, `a row with no order number is counted too (${res3.skippedNoNumberCount})`);
   ok((res3.skippedNoNumber || []).length === 1, 'and its hub id kept, since there is no number to name it by');
 
+  // ── THE ORDER THAT WENT NOWHERE: "45 fetched, 43 known, 1 voided, +0 new".
+  //    Its one line had NO SKU — a Shopee listing that never had one set —
+  //    and the pull's FINAL filter dropped it after every counter, while
+  //    Find order said "1 line, would bring it in". Per the user: a client
+  //    with no products uploaded still gets their order, IdealOne learns and
+  //    saves the product as the basis, and the person is PROMPTED. ─────────
+  const pokesBefore = ((await J(await fetch(B + '/api/pokes', { headers: H() }))).rows || []).length;
+  await addOrder({ acc: 'hub', number: 'SF-4001', channel: 'ShopeeSmilefam', name: 'SmileFam Bottle Warmer', noSku: '1', productid: '777' });
+  await addOrder({ acc: 'hub', number: 'SF-4002', channel: 'ShopeeSmilefam', sku: 'SMILE-Z', name: 'Zero Qty Thing', zeroQty: '1' });
+  const r4 = await pull(hub2); await sleep(2500);
+  const res4 = r4.result || r4;
+  ok(clientOf('SF-4001') === 'ShopeeSmilefam',
+     `the SKU-less order IMPORTS, under its channel (got ${clientOf('SF-4001')})`);
+  const o4 = (await J(await fetch(B + '/api/orders?range=all', { headers: H() })));
+  const sf4 = (Array.isArray(o4) ? o4 : (o4.orders || [])).find(o => o.order_number === 'SF-4001');
+  const ln = (sf4?.lines || sf4?.items || [])[0] || {};
+  ok(ln.sku === 'ZORT-P777', `its line carries the hub's product id as a placeholder code (got ${ln.sku})`);
+  ok(ln.description === 'SmileFam Bottle Warmer', 'with the product NAME as the description — what a packer picks by');
+  ok(ln.sku_source === 'zort-productid', 'and says the code was minted here, not read off the hub');
+  ok(res4.placeholderSkuCount === 1 && (res4.placeholderSkuOrders || [])[0]?.sku === 'ZORT-P777',
+     'the store row names the placeholder line');
+  ok(clientOf('SF-4002') === null, 'a zero-quantity line is still not importable');
+  ok(res4.droppedOrdersCount === 1 && (res4.droppedOrders || [])[0]?.order === 'SF-4002',
+     'but the dropped order is NAMED on the store row now');
+  ok(((res4.droppedOrders || [])[0]?.why || []).includes('zero-qty'), 'with the reason');
+  ok(((res4.droppedOrders || [])[0]?.keys || []).includes('number'), 'and the field names the hub line carried');
+
+  // IT LEARNS. The product is saved into ShopeeSmilefam's catalogue as the
+  // basis, name and all.
+  const inv = await J(await fetch(B + '/api/inventory?clientId=ShopeeSmilefam', { headers: H() }));
+  const invRows = Array.isArray(inv) ? inv : (inv.rows || inv.items || []);
+  const learned = invRows.find(r => r.sku === 'ZORT-P777');
+  ok(!!learned, 'the placeholder product is saved into the client\'s catalogue');
+  ok((learned?.name || '') === 'SmileFam Bottle Warmer', `under its real name (got ${learned?.name})`);
+
+  // AND IT PROMPTS. A 🔔 New Work poke names the client and the product.
+  const pokes = (await J(await fetch(B + '/api/pokes', { headers: H() }))).rows || [];
+  const pk = pokes.find(p => p.kind === 'catalogue_learned' && p.client === 'ShopeeSmilefam'
+                           && (p.skus || []).some(x => x.sku === 'ZORT-P777'));
+  ok(!!pk, 'a New Work prompt says products were learned for ShopeeSmilefam, naming ZORT-P777');
+  ok(pk?.minted === 1, 'and flags that the code was minted, so the SKU gets set on the hub');
+  ok(pokes.length > pokesBefore, 'the prompt is a NEW row on the feed');
+
+  // FIND ORDER AGREES WITH THE PULL — it reads the lines the same way.
+  await addOrder({ acc: 'hub', number: 'SF-4003', channel: 'ShopeeSmilefam', name: 'Another SKU-less', noSku: '1', productid: '778' });
+  await addOrder({ acc: 'hub', number: 'SF-4004', channel: 'ShopeeSmilefam', sku: 'SMILE-Q', name: 'Zero again', zeroQty: '1' });
+  const look = JSON.stringify(await J(await fetch(B + `/api/master/zort/stores/${hub2}/lookup`, {
+    method: 'POST', headers: H(), body: JSON.stringify({ numbers: ['SF-4003', 'SF-4004'] }) })));
+  ok(/ZORT-P778/.test(look) && /placeholder code/i.test(look),
+     'Find order says the SKU-less order imports under a placeholder, naming it');
+  ok(/would DROP it/.test(look) && /zero quantity/.test(look),
+     'and says the zero-quantity order would be dropped, with the reason');
+
+  // ── "KNOWN" CAN HIDE A FILING ERROR. SF-2002 was filed under its channel
+  //    placeholder (ShopeeBrandNew2) because nothing else could place it.
+  //    The client's REAL item master arrives afterwards, under the account
+  //    they actually are. A re-pull skips numbers it holds, by design — so
+  //    the order can never move on its own, and "known" would say nothing.
+  //    The row now names it, with where it sits and where it belongs. ──────
+  await J(await fetch(B + '/api/inventory', { method: 'POST', headers: H(),
+    body: JSON.stringify({ clientId: 'BrandNew Ltd', sku: 'NEW2-A', name: 'Another New Client', stock_qty: 0 }) }));
+  const r5 = await pull(hub2); await sleep(2000);
+  const res5 = r5.result || r5;
+  ok(clientOf('SF-2002') === 'ShopeeBrandNew2', 'the re-pull moves nothing by itself (a held number is skipped, by design)');
+  const kn = (res5.knownUnderOtherClient || []).find(x => x.order === 'SF-2002');
+  ok(!!kn, `but the row names the order as filed under a different client than it would be today (${JSON.stringify(res5.knownUnderOtherClient || [])})`);
+  ok(kn?.heldBy === 'ShopeeBrandNew2' && kn?.wouldFileTo === 'BrandNew Ltd',
+     `saying where it sits and where it belongs (${kn?.heldBy} → ${kn?.wouldFileTo})`);
+  ok(kn?.via === 'sku', 'because the SKU now places it — the real item master beats the learned placeholder');
+
   // ── THE OPERATOR OVERRIDES EITHER WAY. ──────────────────────────────────
   await J(await fetch(B + '/api/master/zort/stores', { method: 'POST', headers: H(),
     body: JSON.stringify({ id: solo, newClientFromChannel: true }) }));

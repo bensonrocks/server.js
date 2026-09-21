@@ -42,7 +42,9 @@ const row = o => ({
   number: o.noNumber ? '' : o.number, id: o.id, status: o.status, saleschannel: o.channel,
   trackingno: o.tracking, updated: TODAY, orderdate: TODAY + ' 09:00:00',
   customername: 'Buyer', shippingaddress: '1 Test Road', shippingphone: '90000000',
-  list: o.noLines ? [] : [{ sku: o.sku, name: o.name, number: 1 }],
+  // The documented OrderProduct shape: sku / name / number / productid.
+  list: o.noLines ? [] : [{ ...(o.noSku ? {} : { sku: o.sku }), name: o.name,
+                            number: o.zeroQty ? 0 : 1, productid: o.productid || 500, unittext: 'pcs' }],
 });
 const accOf = req => ACC[String(req.headers.storename || 'hub').trim()] || [];
 
@@ -61,6 +63,11 @@ http.createServer((req, res) => {
       // number at all — the two shapes that used to vanish without a word.
       noLines: u.searchParams.get('noLines') === '1',
       noNumber: u.searchParams.get('noNumber') === '1',
+      // A line with NO SKU (a Shopee listing that never had one set), and a
+      // line with a zero quantity — the two shapes the final filter drops.
+      noSku: u.searchParams.get('noSku') === '1',
+      zeroQty: u.searchParams.get('zeroQty') === '1',
+      productid: Number(u.searchParams.get('productid') || 0) || undefined,
     });
     return j(res, { ok: true });
   }

@@ -1745,6 +1745,82 @@ written to stop, arriving from the one direction it cannot cover.
   client's first order is exactly the one that can arrive line-less, and
   reading it afterwards meant their shop was not even named as unmapped, the
   one clue that they exist at all.
+- **THE ORDER THAT WENT NOWHERE — a line with NO SKU, dropped AFTER every
+  counter.** The two skips above were real and were not it. Reported with the
+  🔍 Find order dialog and the store row side by side: *"hub status pending,
+  channel ShopeeSmilefam, 1 line(s), import would bring it in on the next
+  pull"* — and the row reading **"45 fetched, 43 already known, 1 voided,
+  +0 new"**. 43 + 1 = 44. One order accounted for by nothing.
+  `summarizeOrders(explodedRows.filter(r => r.sku && r.qty > 0))` runs AFTER
+  the loop, past every counter, and its one line carried no SKU. **A Shopee
+  listing very often has no SKU set, and a client new to the hub is exactly
+  who has not set one yet.** Both tools were truthful as far as they looked:
+  the line existed; the filter threw it away.
+  - Per the v4 docs an `OrderProduct` carries `sku` / `name` / `number`
+    (qty, Double) / `productid` / `unittext` / prices — **no barcode** — so a
+    SKU-less line's only stable identity is ZORT's own product id, and that is
+    what it imports under: **`ZORT-P<productid>`**, self-describing,
+    impossible to mistake for a real code, with the product NAME as the
+    description (what a packer picks by). The scanner will not match the
+    placeholder — teach-on-scan does — and **setting the SKU on the product
+    in ZORT fixes every later order.** `sku_source: 'zort-productid'` rides
+    on the line (`summarizeOrders` keeps it) so the screen can say the code
+    was minted here.
+  - **ONE LINE READER, `zortLineRow(l)`, used by the pull AND by 🔍 Find
+    order** — the tool once said "would bring it in" about an order the pull
+    then dropped, which is the exact class of overclaim this file keeps
+    closing. It now reads the lines the way the pull does: *"import would
+    DROP it — a line has a zero quantity. The hub's line carries: sku, name,
+    number, productid"*, or *"…will import under a placeholder code
+    (ZORT-P778) with the product name; set the SKU in ZORT"*.
+  - A line with no product id either, or a zero quantity, is still not
+    importable — but the ORDER is named on the store row (`droppedOrders`,
+    red) with the reason per line and the **field names** the hub's line
+    carried (names only — a value could be personal data and the trail is
+    emailed), audited `sync_order_dropped_unusable_lines`. A line left out of
+    an order that otherwise imported is named too (`unusableLines`, amber).
+  - **IT LEARNS, AND IT PROMPTS.** Per the user, verbatim: *"clients who
+    doesn't have any product uploaded can still retrieve their order from
+    Zort. then IdealOne will learn and save the product in system as a basis.
+    prompt user for that."* The learning already existed —
+    `harvestCatalogueFromOrders` teaches every batch that enters, the sync
+    included — so the order importing is what unlocked it, and a placeholder
+    line is saved under its real name like any other. The PROMPT is new: a
+    sync runs with nobody at a dialog, so `harvestCatalogueFromOrders` now
+    raises a **🔔 New Work poke** (`kind: 'catalogue_learned'`) whenever it
+    creates a product — naming the client, the source, the first products by
+    code and name, `firstProducts` when the client had no item master at all,
+    and `minted` for codes this system invented (fix those on the hub). It
+    renders on the feed and opens **Inventory** on tap. Never a top banner.
+    The function also RETURNS what it saved (`createdSkus`) instead of
+    nothing, and the audit row names the SKUs.
+  - **"KNOWN" CAN HIDE A FILING ERROR — the last quiet exit.** Per the user:
+    *"what stops a new channel from syncing … we have to stop that once and
+    for all."* Every other way out of the pull now says its name on the store
+    row; "43 already known" was the one count that could still cover a
+    problem. An order imported under the store's own label before the
+    fallback changed, or under a channel placeholder before the client's item
+    master arrived, is skipped by every later pull (a held number is never
+    re-imported, by design) — so it sits under the wrong client for ever and
+    the row reads "known". The known branch now compares the HOLDER with
+    where the same rules would file the order TODAY and names a difference
+    (`knownUnderOtherClient`, violet, with the 🔄 Refile pointer) — the
+    OneCart `heldElsewhere` lesson applied to the hub. A reference copy is an
+    expected twin, never reported. HONEST LIMIT: a holder whose own LEARNED
+    catalogue claims the SKU resolves to itself, so an order that taught the
+    wrong client its products is not caught here; the Orders-tab
+    "SKUs → …" hint still is.
+
+Verified 64 API checks (`newclient-e2e.js`, **tier `ci`**) — the SKU-less
+order imports under its channel with `ZORT-P777` and the real name and
+`sku_source`; the store row names the placeholder line; a zero-quantity order
+is still not imported but is NAMED with the reason and the field names; the
+product is in ShopeeSmilefam's catalogue under its real name; a New Work poke
+names the client and `ZORT-P777` and flags it minted; Find order names the
+placeholder on one order and says DROP with the reason on the other. **The
+build deployed at the time fails 18 of them and reproduces both screenshots
+exactly** — `+0 new`, the order absent, nothing on the row, Find order
+"would bring it in".
 - NOT CHANGED: `skipClients`/`recordOnlyClients` are still matched on the
   RESOLVED client, so an entry keyed on the store label no longer catches
   orders that now file under a channel. Deliberate — those orders becoming
@@ -1766,7 +1842,7 @@ written to stop, arriving from the one direction it cannot cover.
   that one is a guard, not a regression test. The `constructor` checks are the
   real coverage, and they fail 2 of 2 against the previous commit.
 
-Verified 44 API checks (`newclient-e2e.js`, **tier `ci`**, against a mock hub
+Verified 44 API checks at that commit — the suite is 64 now (`newclient-e2e.js`, **tier `ci`**, against a mock hub
 serving two accounts): the reported order imports and files under
 `ShopeeSmilefam` and not `IDEALONEHUB`; the mapped Mayer channel still wins;
 the Success order is still not imported; the store row names the unmapped
@@ -1778,7 +1854,7 @@ a channel named `constructor` is neither mistaken for a mapped one nor allowed
 to swallow the pull. **The build that shipped fails 14 of them and reproduces
 the screenshot exactly** (`SF-1001 … got IDEALONEHUB`, no unmapped channel
 reported; the empty-channel-map hub files its new client under IDEALONEHUB2).
-Regressions: the CI tier 8 suites / 248 checks, and `npm test` 6.
+Regressions: the CI tier 8 suites / 268 checks, and `npm test` 6.
 
 TEST GOTCHA: re-using a SKU the FIRST pull already imported proves nothing —
 `harvestCatalogueFromOrders` learned it into that client's catalogue, so the
