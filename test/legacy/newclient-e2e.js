@@ -284,6 +284,26 @@ function clientOf(order) {
   ok(/would DROP it/.test(look) && /zero quantity/.test(look),
      'and says the zero-quantity order would be dropped, with the reason');
 
+  // ── THE ORDER IS IN. NOW NOTHING ABOUT THE CLIENT BEING NEW MAY ACT ON IT.
+  //    Per the user: "in future new clients, or new channel, always allow the
+  //    order to come into IdealOne first." Their catalogue was LEARNED, at
+  //    zero, with stock_tracking pinned off — which is not a shelf to be short
+  //    of. The row used to paint that red "✗ No stock", and Get Labels skipped
+  //    their labels on the same false verdict. ────────────────────────────
+  {
+    const o5 = await J(await fetch(B + '/api/orders?range=all', { headers: H() }));
+    const sf = (Array.isArray(o5) ? o5 : (o5.orders || [])).find(o => o.order_number === 'SF-4001');
+    const l0 = (sf?.lines || sf?.items || [])[0] || {};
+    ok(l0.stock_onhand === null && l0.stock_free === null,
+       `a learned client's line carries NO stock balance — the row says "not in item master", never "No stock" (onhand=${l0.stock_onhand}, free=${l0.stock_free})`);
+    const sw = await J(await fetch(B + '/api/master/orders/auto-cancel-sweep', {
+      method: 'POST', headers: H(), body: JSON.stringify({ minutes: 0 }) }));
+    const o6 = (await J(await fetch(B + '/api/orders?range=all', { headers: H() })));
+    const sf6 = (Array.isArray(o6) ? o6 : (o6.orders || [])).find(o => o.order_number === 'SF-4001');
+    ok(sf6 && sf6.scan_status !== 'unprocessed',
+       `and an immediate no-stock sweep leaves it standing (${sf6?.scan_status}) — a guard the sweep already honoured, kept so it stays that way`);
+  }
+
   // ── "KNOWN" CAN HIDE A FILING ERROR. SF-2002 was filed under its channel
   //    placeholder (ShopeeBrandNew2) because nothing else could place it.
   //    The client's REAL item master arrives afterwards, under the account

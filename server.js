@@ -2833,7 +2833,32 @@ function _makeBackorderIndex(db) {
   }
   return idx;
 }
+// IS THIS BATCH'S CLIENT'S STOCK ACTUALLY HELD HERE? One answer for every
+// reader of a stock balance. A catalogue row is NOT that answer: the catalogue
+// LEARNS from orders (harvestCatalogueFromOrders) and a learned client's rows
+// stand at zero with `stock_tracking` pinned off — so "a row exists" once
+// painted a brand-new client's very first order red "✗ No stock", and 🏷 Get
+// Labels then skipped their labels on the same verdict, while the auto-cancel
+// sweep (which asked the right question) left it alone. Per the user: a new
+// client's or new channel's order ALWAYS comes into IdealOne first, and
+// nothing about their stock being unknown may act on it afterwards. This is
+// the sweep's own check, extracted, with the same per-call cache — a full
+// SELECT per client, never per order.
+function batchStockTracked(batch, cache) {
+  const cid = (batch && (batch.inventory_client || invClientId(batch.client_name || ''))) || '';
+  if (!cid) return false;
+  if (cache && cache.has(cid)) return cache.get(cid);
+  let v = false;
+  try { v = clientStockTracked(cid); } catch (_) { v = false; }
+  if (cache) cache.set(cid, v);
+  return v;
+}
+
 function orderStockStateSrv(batch, lines, lookup, opts = {}) {
+  // NOT TRACKED HERE IS THE WHOLE ANSWER, before a single line is looked up —
+  // a client whose stock lives in their own system, or one whose catalogue
+  // was merely learned, has no shelf to be short of.
+  if (!batchStockTracked(batch, opts.trackedCache)) return null;
   let tracked = false, shortLines = 0, zeroLines = 0, counted = 0;
   const short = [];
   // What THIS order was short of when it reserved, if anything.
@@ -2915,17 +2940,11 @@ function applyNoStockAutoCancel(db, opts = {}) {
   const now = Date.now();
   const cancelled = [];
   let armed = 0, changed = false;
+  // ONE implementation with every other stock reader (batchStockTracked) —
+  // this check used to live only here, which is why the sweep was right about
+  // a learned client while the Orders row and Get Labels were wrong.
   const trackedCache = new Map();
-  const isTracked = (b) => {
-    const cid = b.inventory_client || invClientId(b.client_name || '');
-    if (!cid) return false;
-    if (!trackedCache.has(cid)) {
-      let v = false;
-      try { v = clientStockTracked(cid); } catch (_) { v = false; }
-      trackedCache.set(cid, v);
-    }
-    return trackedCache.get(cid);
-  };
+  const isTracked = (b) => batchStockTracked(b, trackedCache);
   for (const b of db.batches || []) {
     // THE CLIENT'S STOCK MUST GENUINELY BE TRACKED HERE. A lookup "hit" is not
     // enough: harvestCatalogueFromOrders writes a catalogue row at zero for
@@ -3084,6 +3103,7 @@ function globalOrdersWithState(keep) {
   // a green "Stock OK" on an order the rule is about to cancel is exactly the
   // disagreement that made this reportable.
   const _goBo = _makeBackorderIndex(db);
+  const _goTracked = new Map();   // client → stock held here? (one SELECT per client per call)
   // WORK ORDERS FIRST, reference copies after. A reference batch (a channel's
   // own record — OneCart → Betime Online) may hold the same number as the
   // real upload; the real order must win `seen` whichever arrived later, and
@@ -3147,20 +3167,23 @@ function globalOrdersWithState(keep) {
           // Live balance for the fulfillability pill: PHYSICAL on-hand (the
           // packer's question is "is it on the shelf"; available would read 0
           // for stock this very order correctly reserved). null = not tracked.
-          stock_onhand:    hit.found ? hit.stock     : null,
-          stock_available: hit.found ? hit.available : null,
+          // AND ONLY WHEN THE CLIENT'S STOCK IS HELD HERE. A learned catalogue
+          // row "found" at zero is not a balance — null lets the row say
+          // "not in item master" instead of a false red "No stock".
+          stock_onhand:    hit.found && batchStockTracked(batch, _goTracked) ? hit.stock     : null,
+          stock_available: hit.found && batchStockTracked(batch, _goTracked) ? hit.available : null,
           // WHAT THIS ORDER CAN ACTUALLY HAVE — on-hand capped by what it won
           // at intake. Stock physically present but promised to an earlier
           // order is not stock this one can be picked from, and the pill has
           // to say so or it contradicts the rule that cancels it.
-          stock_free:      hit.found ? (() => {
+          stock_free:      hit.found && batchStockTracked(batch, _goTracked) ? (() => {
             const bo = _goBo.get(ord.order_number)?.get(String(l.sku));
             const need = Number(l.qty) || 0;
             return bo ? Math.min(hit.stock, Math.max(0, (bo.ordered || need) - bo.remaining)) : hit.stock;
           })() : null,
           // WHICH ACCOUNT answered — so the pill can say where it looked
           // instead of leaving "no stock" as an unexplained verdict.
-          stock_owner:     hit.found ? (hit.owner || '') : null,
+          stock_owner:     hit.found && batchStockTracked(batch, _goTracked) ? (hit.owner || '') : null,
         };
       });
       out.push({
@@ -5655,6 +5678,7 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
   const waitingStockSample = [];
   const _ovLookup = _makeSkuLookup();
   const _ovBo = _makeBackorderIndex(db);
+  const _ovTr = new Map();
   const since30 = Date.now() - 30 * 86400000;
 
   for (const b of db.batches || []) {
@@ -5680,7 +5704,7 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
         // goods are not on the shelf is waiting for stock, however it arrived
         // (API or upload), and saying "in progress" of it is a promise we are
         // not keeping.
-        const sk = orderStockStateSrv(b, o.lines, _ovLookup, { orderNumber: o.order_number, backorders: _ovBo });
+        const sk = orderStockStateSrv(b, o.lines, _ovLookup, { orderNumber: o.order_number, backorders: _ovBo, trackedCache: _ovTr });
         if (sk && sk.state !== 'ok') {
           waitingStockOrders++; waitingStockPieces += qty;
           if (waitingStockSample.length < 20) {
@@ -5864,6 +5888,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
   const db = readDb();
   const _lookup = _makeSkuLookup();
   const _poBo = _makeBackorderIndex(db);
+  const _poTr = new Map();
   // Reconcile before answering, so a self-drop day can never show the client a
   // parcel as still sitting here — same reason the office queue does it.
   if (applyAutoPickups(db)) writeDb(db);
@@ -5929,7 +5954,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
       // it is picked and gone, a stock verdict is history and would only
       // confuse. Same computation as the office row, so the two cannot differ.
       const _sk = (st.status === 'done' || st.status === 'unprocessed')
-        ? null : orderStockStateSrv(b, o.lines, _lookup, { orderNumber: o.order_number, backorders: _poBo });
+        ? null : orderStockStateSrv(b, o.lines, _lookup, { orderNumber: o.order_number, backorders: _poBo, trackedCache: _poTr });
       out.push({
         order_number: o.order_number, date: o.date || b.uploaded_at,
         status: st.status || 'pending', total_qty: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
@@ -25930,6 +25955,7 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
   //      call per 100, never one-per-order.
   const _lookup = _makeSkuLookup();
   const _bo = _makeBackorderIndex(db);
+  const _trk = new Map();
   const candidates = [], skippedStock = [];
   for (const b of db.batches || []) {
     for (const o of b.orders || []) {
@@ -25938,7 +25964,7 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
       if (st.status === 'unprocessed') continue;          // cancelled — no label wanted
       if (labels[o.order_number]) continue;               // already has one
       // Our own view of coverage — 'none'/'partial' are not label-ready.
-      const sk = orderStockStateSrv(b, o.lines, _lookup, { orderNumber: o.order_number, backorders: _bo });
+      const sk = orderStockStateSrv(b, o.lines, _lookup, { orderNumber: o.order_number, backorders: _bo, trackedCache: _trk });
       if (sk && (sk.state === 'none' || sk.state === 'partial')) {
         skippedStock.push({ order: o.order_number, why: sk.state === 'none'
           ? 'no stock — not ready to ship' : `short of ${(sk.short || []).slice(0, 3).map(s => s.sku).join(', ')} — not ready to ship` });

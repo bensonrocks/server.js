@@ -1810,8 +1810,38 @@ written to stop, arriving from the one direction it cannot cover.
     catalogue claims the SKU resolves to itself, so an order that taught the
     wrong client its products is not caught here; the Orders-tab
     "SKUs → …" hint still is.
+- **STANDING RULE — A NEW CLIENT'S OR NEW CHANNEL'S ORDER ALWAYS ENTERS
+  FIRST.** Per the user, verbatim: *"in future new clients, or new channel,
+  always allow the order to come into IdealOne first."* Nothing about a client
+  being unknown here may block entry, and nothing about their stock being
+  unknown may act on the order afterwards. What guarantees it, so it is not
+  re-litigated:
+  - **Entry**: an unmapped channel files under its own name (a hub) or the
+    store label (a single-client store) — either way it is IN; a SKU-less line
+    imports under `ZORT-P<productid>`; no item master means the intake gate
+    is skipped (`clientHasItemMaster`), so nothing is reserved and no SKU is
+    invented at zero; a short order on a tracked client reserves what it can
+    and backorders the rest (`reserveIntakeOrders(…, 'wait')`) — the sync
+    never drops on stock. The only orders not imported are ones with nothing
+    to pick (no lines, zero quantity, no identity at all) or already handled
+    on the hub — and every one of those is NAMED on the store row.
+  - **Afterwards**: the auto-cancel sweep asks `clientStockTracked`, which a
+    learned client fails (`stock_tracking` pinned off by the harvest), so it
+    never touches them. **And now every other stock reader asks the same
+    question** — `batchStockTracked(batch, cache)`, the sweep's own check
+    extracted. `orderStockStateSrv` returns null for an untracked client
+    before it looks at a line (the portal's "waiting for stock", the portal
+    pill, and the 🏷 Get Labels stock gate), and `globalOrdersWithState`
+    emits `stock_onhand`/`stock_free`/`stock_owner` as **null** for one, so
+    the office row paints the grey **"● Not in item master"** it already had
+    for exactly that state, never a red "✗ No stock". This closes the
+    found-not-fixed note in the OneCart section ("`orderStockStateSrv` sets
+    `tracked` the moment ANY catalogue row exists and never consults
+    `stock_tracking`") — the same false verdict was also what made Get Labels
+    skip a new client's labels. Per-call cache, one SELECT per client, never
+    per order.
 
-Verified 64 API checks (`newclient-e2e.js`, **tier `ci`**) — the SKU-less
+Verified 66 API checks (`newclient-e2e.js`, **tier `ci`**) — the SKU-less
 order imports under its channel with `ZORT-P777` and the real name and
 `sku_source`; the store row names the placeholder line; a zero-quantity order
 is still not imported but is NAMED with the reason and the field names; the
@@ -1842,7 +1872,7 @@ exactly** — `+0 new`, the order absent, nothing on the row, Find order
   that one is a guard, not a regression test. The `constructor` checks are the
   real coverage, and they fail 2 of 2 against the previous commit.
 
-Verified 44 API checks at that commit — the suite is 64 now (`newclient-e2e.js`, **tier `ci`**, against a mock hub
+Verified 44 API checks at that commit — the suite is 66 now (`newclient-e2e.js`, **tier `ci`**, against a mock hub
 serving two accounts): the reported order imports and files under
 `ShopeeSmilefam` and not `IDEALONEHUB`; the mapped Mayer channel still wins;
 the Success order is still not imported; the store row names the unmapped
@@ -1854,7 +1884,7 @@ a channel named `constructor` is neither mistaken for a mapped one nor allowed
 to swallow the pull. **The build that shipped fails 14 of them and reproduces
 the screenshot exactly** (`SF-1001 … got IDEALONEHUB`, no unmapped channel
 reported; the empty-channel-map hub files its new client under IDEALONEHUB2).
-Regressions: the CI tier 8 suites / 268 checks, and `npm test` 6.
+Regressions: the CI tier 8 suites / 270 checks, and `npm test` 6.
 
 TEST GOTCHA: re-using a SKU the FIRST pull already imported proves nothing —
 `harvestCatalogueFromOrders` learned it into that client's catalogue, so the
