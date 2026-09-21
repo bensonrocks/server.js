@@ -39,10 +39,10 @@ const ACC = {
 const hits = { getorders: 0, detail: 0 };
 const j = (res, b) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(b)); };
 const row = o => ({
-  number: o.number, id: o.id, status: o.status, saleschannel: o.channel,
+  number: o.noNumber ? '' : o.number, id: o.id, status: o.status, saleschannel: o.channel,
   trackingno: o.tracking, updated: TODAY, orderdate: TODAY + ' 09:00:00',
   customername: 'Buyer', shippingaddress: '1 Test Road', shippingphone: '90000000',
-  list: [{ sku: o.sku, name: o.name, number: 1 }],
+  list: o.noLines ? [] : [{ sku: o.sku, name: o.name, number: 1 }],
 });
 const accOf = req => ACC[String(req.headers.storename || 'hub').trim()] || [];
 
@@ -57,6 +57,10 @@ http.createServer((req, res) => {
       number: u.searchParams.get('number'), id: 'x' + ACC[acc].length,
       status: 'Pending', channel: u.searchParams.get('channel'),
       sku: u.searchParams.get('sku'), name: u.searchParams.get('name') || 'Added', tracking: '',
+      // An order the hub returns with NO product lines, or with no order
+      // number at all — the two shapes that used to vanish without a word.
+      noLines: u.searchParams.get('noLines') === '1',
+      noNumber: u.searchParams.get('noNumber') === '1',
     });
     return j(res, { ok: true });
   }

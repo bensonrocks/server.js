@@ -22556,6 +22556,8 @@ async function pullZortStore(db, store, opts = {}) {
   const skippedByStatus = {}; const skippedHandledSample = [];
   let skippedClientOrders = 0; const skippedClientSample = [];
   const unmappedChannels = new Set();   // sales channels seen with no client mapping
+  // The two ways an order could leave this pull with NOTHING said about it.
+  const skippedNoLines = []; let skippedNoLinesCount = 0; const skippedNoNumber = [];
   // Resolved ONCE: it walks every batch, and doing that per order would make
   // attribution cost O(orders x batches) on an account with a year of history.
   const hubStore = zortNewClientFromChannel(store, db);
@@ -22580,7 +22582,11 @@ async function pullZortStore(db, store, opts = {}) {
     fetched += list.length;
     for (const o of list) {
       const number = String(o.number || '').trim();
-      if (!number) continue;
+      // AN ORDER WITH NO USABLE NUMBER. Counted rather than dropped in
+      // silence: every other way an order can be left out of this pull says
+      // so on the store row, and the two that did not were the two that made
+      // "the hub has it and IdealOne does not" unanswerable from the screen.
+      if (!number) { skippedNoNumber.push(String(o.id || '?')); continue; }
       // Zort status 2 = voided/cancelled in their scheme — never import as a
       // new order, but if we ALREADY imported this order, reconcile the
       // cancellation (release its reservation if it hasn't been worked yet).
@@ -22695,7 +22701,27 @@ async function pullZortStore(db, store, opts = {}) {
         continue;
       }
       const lines = o.list || o.orderlist || [];
-      if (!lines.length) continue;
+      // THE CHANNEL IS READ BEFORE THE LINES CHECK, deliberately. A brand-new
+      // client's first order is exactly the one that can arrive line-less, and
+      // reading the channel afterwards meant their shop was not even named as
+      // unmapped — the one clue that they exist at all.
+      const channel = String(o.saleschannel || o.channel || '').trim();
+      // A CHANNEL WITH NO MAPPING IS USUALLY A CLIENT NOBODY HAS SET UP YET.
+      // Reported by name on the store row so a new shop appearing on the hub is
+      // something somebody sees, rather than something noticed weeks later when
+      // a client asks why their stock and billing are wrong.
+      if (channel && !zortChannelClient(store, channel)) unmappedChannels.add(channel);
+      // NO PRODUCT LINES, NO PICK — but NAMED, not dropped in silence. This was
+      // the ONE gate in this loop with no counter (the OneCart module closed
+      // the same hole on day one and this file recorded that it was still open
+      // here). An order the hub returns with an empty `list` simply vanished:
+      // not in "+N new", not in "N known", not in any skip line, so the store
+      // row gave a person hunting for it nothing at all to read.
+      if (!lines.length) {
+        if (skippedNoLines.length < 25) skippedNoLines.push({ order: number, channel });
+        skippedNoLinesCount++;
+        continue;
+      }
       // WHICH CLIENT DOES THIS ORDER BELONG TO?
       // One store account can house many clients selling on the SAME channels,
       // so the channel is too coarse to decide on its own — it was filing every
@@ -22704,12 +22730,8 @@ async function pullZortStore(db, store, opts = {}) {
       // The SKU is the specific evidence: item masters are per client and (per
       // the user) no SKU is shared between them, so the products on the order
       // say whose order it is. Specific beats coarse, so SKU leads.
-      const channel = String(o.saleschannel || o.channel || '').trim();
-      // A CHANNEL WITH NO MAPPING IS USUALLY A CLIENT NOBODY HAS SET UP YET.
-      // Reported by name on the store row so a new shop appearing on the hub is
-      // something somebody sees, rather than something noticed weeks later when
-      // a client asks why their stock and billing are wrong.
-      if (channel && !zortChannelClient(store, channel)) unmappedChannels.add(channel);
+      // (`channel` and the unmapped-channel tally are resolved above, before
+      // the lines check, so a line-less order still names its shop.)
       const att = attributeSyncClient(skuOwners, lines, channel, store, { newClientFromChannel: hubStore });
       const clientForOrder = att.client;
       // A CLIENT WE ARE NOT FULFILLING. Per the user: "we don't have stock, and
@@ -23013,7 +23035,12 @@ async function pullZortStore(db, store, opts = {}) {
                        // Channels carrying orders that no channel→client mapping
                        // covers — where a client new to the hub shows up first.
                        unmappedChannels: [...unmappedChannels].slice(0, 25),
-                       newClientFromChannel: hubStore };
+                       newClientFromChannel: hubStore,
+                       // Named, so "the hub has it and IdealOne does not" is
+                       // answerable from the store row instead of a guess.
+                       skippedNoLines, skippedNoLinesCount,
+                       skippedNoNumber: skippedNoNumber.slice(0, 25),
+                       skippedNoNumberCount: skippedNoNumber.length };
   if (only.length) store.lastWebhookResult = _result;   // kept apart from the sweep's own row
   else store.lastResult = _result;
   if (unsure.length) {

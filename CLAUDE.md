@@ -1726,6 +1726,25 @@ written to stop, arriving from the one direction it cannot cover.
   account name. `Lazada20082026Mayer` is not `Mayer2026`. This keeps clients
   **apart and visible**; it does not name them correctly. Naming them is the
   Channels editor or their item master, and until then the row says so.
+- **THE TWO WAYS AN ORDER COULD LEAVE A PULL WITH NOTHING SAID.** Reported as
+  *"still don't see it"* against a client list whose own figures added up
+  exactly (93+61+44+4 = 202 = All clients), so the order was provably not in
+  IdealOne — and the store row named no reason. Every other skip here is
+  counted (void, already-known, status, marketplace-cancelled, skipClients,
+  record-only); these two were not:
+  - **`if (!lines.length) continue`** — an order the hub returns with an empty
+    `list`. There is genuinely nothing to pick, so NOT importing is right; the
+    fault was doing it in silence. This file already recorded the hole ("the
+    one gate in `pullZortStore` that has no counter", noted when the OneCart
+    module closed the same one on day one) and it stayed open.
+  - **`if (!number) continue`** — a row carrying no order number at all.
+    Counted with its HUB ID, since there is no number to name it by.
+  Both are on `lastResult` (`skippedNoLines` with the order AND its channel,
+  `skippedNoNumber`) and red on the store row with the full list in the
+  tooltip. **The channel is now read BEFORE the lines check** — a brand-new
+  client's first order is exactly the one that can arrive line-less, and
+  reading it afterwards meant their shop was not even named as unmapped, the
+  one clue that they exist at all.
 - NOT CHANGED: `skipClients`/`recordOnlyClients` are still matched on the
   RESOLVED client, so an entry keyed on the store label no longer catches
   orders that now file under a channel. Deliberate — those orders becoming
@@ -1747,7 +1766,7 @@ written to stop, arriving from the one direction it cannot cover.
   that one is a guard, not a regression test. The `constructor` checks are the
   real coverage, and they fail 2 of 2 against the previous commit.
 
-Verified 37 API checks (`newclient-e2e.js`, **tier `ci`**, against a mock hub
+Verified 44 API checks (`newclient-e2e.js`, **tier `ci`**, against a mock hub
 serving two accounts): the reported order imports and files under
 `ShopeeSmilefam` and not `IDEALONEHUB`; the mapped Mayer channel still wins;
 the Success order is still not imported; the store row names the unmapped
@@ -1759,7 +1778,7 @@ a channel named `constructor` is neither mistaken for a mapped one nor allowed
 to swallow the pull. **The build that shipped fails 14 of them and reproduces
 the screenshot exactly** (`SF-1001 … got IDEALONEHUB`, no unmapped channel
 reported; the empty-channel-map hub files its new client under IDEALONEHUB2).
-Regressions: the CI tier 8 suites / 241 checks, and `npm test` 6.
+Regressions: the CI tier 8 suites / 248 checks, and `npm test` 6.
 
 TEST GOTCHA: re-using a SKU the FIRST pull already imported proves nothing —
 `harvestCatalogueFromOrders` learned it into that client's catalogue, so the

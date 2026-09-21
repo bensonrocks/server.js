@@ -212,6 +212,25 @@ function clientOf(order) {
      `a new client lands under its channel with NO mapping made (got ${clientOf('SF-2002')})`);
   ok(clientOf('SF-2002') !== 'IDEALONEHUB2', 'and not in the hub label bin');
 
+  // ── THE TWO WAYS AN ORDER USED TO VANISH WITH NOTHING SAID. ────────────
+  //    Reported as "still don't see it" with a client list whose own numbers
+  //    added up exactly, so the order was provably not in IdealOne — and the
+  //    store row named no reason, because these two skips had no counter.
+  await addOrder({ acc: 'hub', number: 'SF-3001', channel: 'ShopeeGhostShop', sku: 'GHOST-A', noLines: '1' });
+  await addOrder({ acc: 'hub', number: 'SF-3002', channel: 'ShopeeSmilefam', sku: 'SMILE-A', noNumber: '1' });
+  const r3 = await pull(hub2); await sleep(2000);
+  const res3 = r3.result || r3;
+  ok(clientOf('SF-3001') === null, 'a line-less order is still not imported — there is nothing to pick');
+  ok(res3.skippedNoLinesCount === 1, `but it is COUNTED now (${res3.skippedNoLinesCount})`);
+  ok((res3.skippedNoLines || []).some(x => x.order === 'SF-3001'),
+     'and NAMED, so it can be looked up on the hub');
+  ok((res3.skippedNoLines || []).some(x => x.channel === 'ShopeeGhostShop'),
+     'with the channel it came in on');
+  ok((res3.unmappedChannels || []).includes('ShopeeGhostShop'),
+     'a brand-new shop whose first order is line-less STILL names itself — the channel is read before the lines check');
+  ok(res3.skippedNoNumberCount === 1, `a row with no order number is counted too (${res3.skippedNoNumberCount})`);
+  ok((res3.skippedNoNumber || []).length === 1, 'and its hub id kept, since there is no number to name it by');
+
   // ── THE OPERATOR OVERRIDES EITHER WAY. ──────────────────────────────────
   await J(await fetch(B + '/api/master/zort/stores', { method: 'POST', headers: H(),
     body: JSON.stringify({ id: solo, newClientFromChannel: true }) }));
