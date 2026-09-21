@@ -48,7 +48,7 @@ const { validateRows } = require('./lib/validation');
 const integration = require('./lib/integration');
 
 // OCR parser for photo-based picklist upload
-const { parseOcrPicklist } = require('./lib/ocr-parse');
+const { parseOcrPicklist, looksLikeTrackingNumber } = require('./lib/ocr-parse');
 let Tesseract;
 try { Tesseract = require('tesseract.js'); } catch { Tesseract = null; }
 let sharp;
@@ -7940,6 +7940,12 @@ function buildLabelMatchIndexFor(allOrders) {
     if (keys[1][0] && !byOrderNo.has(keys[1][0])) byOrderNo.set(keys[1][0], o.order_number);
     if (keys[2][0] && !byWaybill.has(keys[2][0])) byWaybill.set(keys[2][0], o.order_number);
     if (keys[3][0] && !byWaybill.has(keys[3][0])) byWaybill.set(keys[3][0], o.order_number);
+    // A MARKETPLACE ORDER ID STORED AS po_number IS AN ORDER NUMBER TOO. The
+    // Keyfields picking list carries the marketplace id in its Reference box;
+    // the parsers file it as po_number; a TracX/Lazada label prints that same
+    // id as its "Order No", which extractLabelFields reads into `orderNumber`
+    // and looks up HERE. Only the 13–18-digit shape — a B2B PO stays a PO.
+    if (keys[3][0] && /^\d{13,18}$/.test(keys[3][0]) && !byOrderNo.has(keys[3][0])) byOrderNo.set(keys[3][0], o.order_number);
     // LEADING ZEROS, the same tolerance the scan-to-find-order bar and the
     // manual-match picker have always had. A label printing 12345678 for an
     // issue_no stored as 0012345678 is the same order; only the EXACT maps
@@ -9525,6 +9531,13 @@ function parsePicklistText(text) {
   let reference    = '';
   let deliveryDate = '';
   let carrier      = '';
+  // THE CONSIGNEE BOX. On the Betime list Keyfields prints the TracX waybill
+  // here and the buyer's name in "Consignee Address" — swapped. Reported from
+  // the floor as "tracx labels always having issues": this parser never read
+  // the box at all, put the REFERENCE (the marketplace id) in waybill_number,
+  // and so the GI order carried no tracking number for a TracX label to
+  // match. See looksLikeTrackingNumber in lib/ocr-parse.js.
+  let consignee    = '';
 
   // Return next non-empty T[i] after index i
   const nextVal = (i) => {
@@ -9553,6 +9566,9 @@ function parsePicklistText(text) {
       if (accIdx !== -1) { accountName = T[accIdx]; reference = nextVal(accIdx); }
       continue;
     }
+    // "Consignee" but never "Consignee Address" — both labels start the same.
+    if ((m = t.match(/^Consignee\s+(?!Address\b)(\S.*)/i))) { consignee = m[1].trim(); continue; }
+    if (/^Consignee$/i.test(t))                    { consignee    = nextVal(i); continue; }
     if ((m = t.match(/^Pick\s*Ticket\s+(\S+)/i)))  { pickTicket   = m[1]; continue; }
     if (/^Pick\s*Ticket$/i.test(t))                { pickTicket   = nextVal(i); continue; }
     if ((m = t.match(/^Delivery\s+Date\s+(\S+)/i))){ deliveryDate = m[1]; continue; }
@@ -9700,6 +9716,19 @@ function parsePicklistText(text) {
   if (current) items.push(current);
   if (!items.length) return [];
 
+  // THE WAYBILL, WHICHEVER SIDE OF ITS LABEL IT LANDED. pdfParse reads the
+  // right-hand header column value-then-label for some fields (Reference, PO
+  // Number — see above) and label-then-value for others, and a Chromium print
+  // of the same layout can differ again. The one thing no layout can disguise
+  // is the SHAPE of a carrier tracking number, so the header region (every
+  // line above the item table) is scanned for a standalone tracking-shaped
+  // line, and that is the waybill. Falls back to a tracking-shaped Consignee
+  // value, then — exactly as before — to the customer reference.
+  const headerEnd = T.findIndex(t => /^SNo\b/i.test(t) || /Sku\s+Description/i.test(t));
+  const headerRegion = headerEnd > 0 ? T.slice(0, headerEnd) : T.slice(0, 40);
+  const headerTracking = headerRegion.find(t => looksLikeTrackingNumber(t)) || '';
+  const consigneeWaybill = headerTracking || (looksLikeTrackingNumber(consignee) ? consignee : '');
+
   return items.map(item => ({
     // GI number is the order identifier — it matches the scannable *GI-…*
     // barcode printed on the picking list, so scanning it opens the order.
@@ -9710,10 +9739,17 @@ function parsePicklistText(text) {
     client_name:      accountName || '',
     tel:              '',
     delivery_address: '',
-    waybill_number:   reference  || '',
+    // A tracking-shaped Consignee IS the waybill; otherwise the customer
+    // reference stays here exactly as before (a Shopee order sn, say).
+    waybill_number:   consigneeWaybill
+                        ? String(consigneeWaybill).replace(/[\s\-]/g, '').toUpperCase()
+                        : (reference || ''),
     issue_no:         giNumber   || '',
     pick_ticket:      pickTicket || '',
-    po_number:        poNumber   || '',
+    // The marketplace id (13–18 digits) rides as po_number when nothing else
+    // filled it — the label matcher indexes that shape as an order number, so
+    // a TracX label's printed "Order No" lands on the GI order exactly.
+    po_number:        poNumber   || (/^\d{13,18}$/.test(String(reference || '')) ? reference : ''),
     carrier:          carrier    || 'Offline',
     platform:         '',
     shop_name:        '',

@@ -1429,6 +1429,92 @@ like the two perf fixtures, because CI is pure Node and installs no browser.
 Its consignees are invented: a real carrier label carries a customer's name and
 address and is never committed.
 
+#### THE PICKING LIST HID THE WAYBILL IN THE CONSIGNEE BOX — "tracx labels always having issues"
+
+Reported from the floor (21 Sep 2026) with a photo of a Betime Keyfields
+picking list. The header reads:
+
+    Reference           173174129789495      <- the marketplace order id
+    Consignee           TXSGD03906517        <- the TracX WAYBILL
+    Consignee Address   TingTing             <- the buyer's NAME
+
+Keyfields prints the two swapped — the carrier tracking number in the box
+captioned Consignee, the person in the box captioned Address. A TracX label
+prints exactly those two identifiers and nothing else we hold (no GI, no pick
+ticket), so what the GI order stored decided whether ANY TracX label could
+ever match. It stored neither:
+
+- **`parseOcrPicklist`** (lib/ocr-parse.js, the photo path) fed the Consignee
+  box to the customer-name patterns and left `waybill_number` blank.
+- **the Keyfields PDF page parser** (server.js `parsePdfPicklistDetailed`)
+  never read the Consignee box at all, and put the REFERENCE — the marketplace
+  id — into `waybill_number`, where it can only ever match by the blind text
+  scan (a `scan` guess, never `exact`).
+- **`mapRow`** (lib/keyfields.js, XLSX/CSV) filed `consignee` as
+  `customer_name`.
+
+**THE SHAPE OF A TRACKING NUMBER IS THE ONE THING NO LAYOUT CAN DISGUISE.**
+`looksLikeTrackingNumber(v)` (`TRACKING_SHAPE` in lib/ocr-parse.js — the
+TXSGD/SGDEX/SPXSG/LZSGD prefixes and the generic 2–6 letters + 9–18 digits,
+the same shapes `extractLabelFields` reads off a label) is ONE test shared by
+all three parsers, so they cannot disagree about what a waybill looks like:
+
+- a tracking-shaped Consignee is the **waybill** (spaces/hyphens stripped,
+  upper-cased — the form the label matcher's `byWaybill` map holds), never the
+  customer's name; a real `Tracking No`/`Waybill Ref` column still wins over
+  it in `mapRow`; an ordinary consignee name is untouched, and no waybill is
+  invented from one (asserted both ways).
+- the PDF page parser scans the WHOLE header region (every line above the
+  `SNo …` table header) for a standalone tracking-shaped line rather than
+  trusting which side of the "Consignee" label pdf-parse put the value on —
+  the right-hand column comes out value-then-label for Reference and PO Number
+  and this file has never been read layout-exactly from the sandbox, so the
+  read must not depend on it. Falls back to a tracking-shaped Consignee, then
+  to the customer reference exactly as before.
+- **the marketplace id rides as `po_number`** (13–18 digits, when nothing else
+  filled it) on the OCR and PDF paths, and `buildLabelMatchIndexFor` now
+  indexes a 13–18-digit `po_number` in `byOrderNo` too — so a TracX page whose
+  tracking OCR'd badly still lands on the GI order EXACTLY by the printed
+  "Order No", not by a scan guess. Shorter PO numbers are not indexed there:
+  a short code in `byOrderNo` is the false-match trap the length floors exist
+  for.
+- **THE ACCOUNT STILL NAMES THE CLIENT** on the photo path. `parseOcrPicklist`
+  has always taken the Account box first for `customer_name` — that variable
+  doubles as `client_name`, which decides WHOSE batch the upload is — so the
+  buyer's name from "Consignee Address" is used only when no Account box
+  exists. Deliberately unchanged; the test asserts it.
+
+Verified 7 `node:test` checks (`test/tracx-consignee.test.js`, no server: the
+shape test on the real waybills and on names/ids that must NOT pass, the photo
+parser on the photo's own text, the row mapper both ways) plus 17 API checks
+(`test/legacy/tracx-consignee-e2e.js`, **tier `ci`**) through the real
+`/api/upload` and `/api/label-imports` on a Keyfields-shaped picking list: the
+GI order carries the TracX waybill AND the marketplace id as po_number, a
+label page printing only the waybill matches `exact` via `tracking_number`, a
+page printing only the marketplace id resolves to the same order `exact` via
+`order_number` (filed `duplicate` of the first, correctly — it carries no
+tracking number of its own, the parcel rule), a waybill nothing holds stays
+unmatched, and the label prints at the bench. **The build that shipped fails 7
+of the 17 and reproduces the report exactly** — the marketplace id stored as
+the waybill, po_number blank, the waybill page never matching, and the id-only
+page landing only as a `scan` guess. Regressions: `npm test` 13, CI tier 9
+suites / 287 checks.
+
+FIXTURES: `tracx-consignee-fixture.js` prints both PDFs through headless
+Chromium and they are committed (`tracx-picklist-fixture.pdf`,
+`tracx-label2-fixture.pdf`), same reasoning as `tracx-fixture.pdf`; names and
+addresses invented. The picking list's header is laid out ONE TOKEN PER LINE
+in the reading order the page parser's own comments document for the real
+file — a CSS grid glued "Issue No" and "GI-900001" into one token and the GI
+regex's `\b` then missed it (first run: order number `UNKNOWN`). The item
+lines are printed pre-concatenated (`{batch}{location}{sno}{sku}`), which
+pdf-parse hands the parser unchanged.
+
+TEST GOTCHA: a label page printing BOTH the waybill and the marketplace id
+resolves via `order_number`, not `tracking_number` — `matchLabelPage` tries the
+order number first, and the id is now an order-number key. To prove the
+tracking route on its own, the page must print the waybill alone.
+
 ## Live-wave visibility pill + build stamp (server.js `globalOrdersWithState`, public/app.js)
 
 Before a wave had a visible pill, closing the Wave Pick tab left a

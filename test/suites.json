@@ -493,6 +493,13 @@
       "timeoutMs": 420000
     },
     {
+      "file": "tracx-consignee-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 240000
+    },
+    {
       "file": "web-note-e2e.js",
       "browser": true,
       "selfBoots": true,

@@ -29,3 +29,10 @@ oc-pdfs/
 # carrier label carries a customer's name and address and is never committed.
 # Regenerate with `node tracx-fixture.js tracx-fixture.pdf`.
 !tracx-fixture.pdf
+
+# …and the pair tracx-consignee-e2e.js reads (a Keyfields-shaped picking list
+# with the waybill in the Consignee box, and a 3-page TracX label), same
+# reasoning, same invented names. Regenerate with
+# `node tracx-consignee-fixture.js`.
+!tracx-picklist-fixture.pdf
+!tracx-label2-fixture.pdf
