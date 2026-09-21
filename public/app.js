@@ -13864,10 +13864,15 @@
       const paint = () => {
         if (!note) return;
         if (zfNew.value !== '') { note.textContent = ''; return; }
+        // THE SERVER'S OWN ANSWER, never re-derived here. It reads what the
+        // store has actually filed as well as its channel map, and a second
+        // rule in the browser would disagree with it the moment either moved.
         const mapped = Object.keys(store?.channelClients || {}).length;
-        note.innerHTML = mapped
-          ? `<b>Automatic here means: the sales channel name.</b> This store already maps ${mapped} channel(s) to clients, so it is a hub serving several clients and its own name is a label rather than anybody's account.`
-          : `<b>Automatic here means: this store's own name.</b> No channel is mapped to a client yet, so this reads as a single-client store where <i>${esc(store?.clientName || 'the store name')}</i> really is the client.`;
+        note.innerHTML = store?.newClientFromChannelEffective
+          ? `<b>Automatic here means: the sales channel name.</b> ${mapped
+              ? `This store maps ${mapped} channel(s) to clients`
+              : 'This store has already filed orders under clients other than its own name'}, so it is a hub serving several clients and its own name is a label rather than anybody's account.`
+          : `<b>Automatic here means: this store's own name.</b> Nothing yet says this login serves more than one client, so it reads as a single-client store where <i>${esc(store?.clientName || 'the store name')}</i> really is the client.`;
       };
       paint();
       zfNew.onchange = paint;

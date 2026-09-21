@@ -22125,7 +22125,7 @@ function zortStorePublic(s, db) {
     // Absent means "decide from the channel map" — the form shows the resolved
     // answer, not a blank, so nobody has to guess which way an unset store runs.
     newClientFromChannel: s.newClientFromChannel ?? null,
-    newClientFromChannelEffective: zortNewClientFromChannel(s),
+    newClientFromChannelEffective: zortNewClientFromChannel(s, db),
     autoPullMinutes: s.autoPullMinutes || 0,
     completeAction: s.completeAction || 'none',
     completeStatusCode: s.completeStatusCode ?? 1,
@@ -22556,6 +22556,9 @@ async function pullZortStore(db, store, opts = {}) {
   const skippedByStatus = {}; const skippedHandledSample = [];
   let skippedClientOrders = 0; const skippedClientSample = [];
   const unmappedChannels = new Set();   // sales channels seen with no client mapping
+  // Resolved ONCE: it walks every batch, and doing that per order would make
+  // attribution cost O(orders x batches) on an account with a year of history.
+  const hubStore = zortNewClientFromChannel(store, db);
   // Clients this store must not bring in at all — they fulfil their own orders.
   const skipClients = new Set((store.skipClients || [])
     .map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
@@ -22707,7 +22710,7 @@ async function pullZortStore(db, store, opts = {}) {
       // something somebody sees, rather than something noticed weeks later when
       // a client asks why their stock and billing are wrong.
       if (channel && !zortChannelClient(store, channel)) unmappedChannels.add(channel);
-      const att = attributeSyncClient(skuOwners, lines, channel, store);
+      const att = attributeSyncClient(skuOwners, lines, channel, store, { newClientFromChannel: hubStore });
       const clientForOrder = att.client;
       // A CLIENT WE ARE NOT FULFILLING. Per the user: "we don't have stock, and
       // the client should be fulfilling from their end" — and their orders kept
@@ -23010,7 +23013,7 @@ async function pullZortStore(db, store, opts = {}) {
                        // Channels carrying orders that no channel→client mapping
                        // covers — where a client new to the hub shows up first.
                        unmappedChannels: [...unmappedChannels].slice(0, 25),
-                       newClientFromChannel: zortNewClientFromChannel(store) };
+                       newClientFromChannel: hubStore };
   if (only.length) store.lastWebhookResult = _result;   // kept apart from the sweep's own row
   else store.lastResult = _result;
   if (unsure.length) {
@@ -23110,19 +23113,49 @@ function buildSkuOwnerIndex(db) {
 //
 // NOT A BLANKET RULE, because a SINGLE-CLIENT store is the opposite case:
 // there `clientName` IS the client, and using the channel would mint a phantom
-// account beside a client that was filing correctly. Nothing in the data tells
-// the two apart, so the STORE says which it is: `channelClients` carrying any
-// entry is the operator declaring "this account houses several clients", and
-// that is the default. `store.newClientFromChannel` overrides it either way.
-function zortNewClientFromChannel(store) {
+// account beside a client that was filing correctly. So the question is only
+// ever "is this login a hub", and the answer is taken from WHAT THE STORE HAS
+// ALREADY DONE, not from how it happens to be configured.
+//
+// THE FIRST CUT ASKED THE WRONG THING and the live account disproved it in a
+// day: it read `channelClients` having any entry as the operator declaring a
+// hub. But on a hub whose clients all have item masters the SKU step places
+// every order on its own, so there is no reason to map a single channel — the
+// reported store serves four clients with an EMPTY channel map, so "hub" read
+// as false and a new client's orders still pooled into the store label. The
+// heuristic was reasoned about rather than measured, which is exactly how it
+// came to be confidently wrong.
+//
+// `zortStoreServesManyClients` is the evidence instead: a store that has
+// already filed orders under a client OTHER than its own label is serving
+// several clients, whatever its channel map says. A genuine single-client
+// store can never satisfy it, so the protection it replaces still holds.
+function zortStoreServesManyClients(db, store) {
+  if (!db || !store) return false;
+  const own = String(store.clientName || '').trim().toLowerCase();
+  for (const b of db.batches || []) {
+    const name = String(b.client_name || '').trim().toLowerCase();
+    if (!name || name === own) continue;
+    if ((b.orders || []).some(o => String(o.zort_store_id || '') === String(store.id))) return true;
+  }
+  return false;
+}
+
+// `db` is OPTIONAL — without it this answers from the store record alone, which
+// is what every read-only caller needs. The pull resolves it ONCE with the db
+// and hands the answer down, because walking every batch per order would make
+// attribution cost O(orders x batches).
+function zortNewClientFromChannel(store, db) {
   if (store && store.newClientFromChannel !== undefined && store.newClientFromChannel !== null) {
     return !!store.newClientFromChannel;
   }
-  return Object.keys((store && store.channelClients) || {}).length > 0;
+  if (Object.keys((store && store.channelClients) || {}).length > 0) return true;
+  return zortStoreServesManyClients(db, store);
 }
 
-function zortFallbackClient(store, channel) {
-  if (channel && zortNewClientFromChannel(store)) return channel;
+function zortFallbackClient(store, channel, hub) {
+  const useChannel = hub === undefined ? zortNewClientFromChannel(store) : !!hub;
+  if (channel && useChannel) return channel;
   return (store && store.clientName) || channel || 'ZORT';
 }
 
@@ -23140,7 +23173,7 @@ function zortChannelClient(store, channel) {
 
 // Resolve one order's client. Returns what it decided AND how, so an order
 // nobody could place is visible rather than quietly filed under the store.
-function attributeSyncClient(skuOwners, lines, channel, store) {
+function attributeSyncClient(skuOwners, lines, channel, store, opts = {}) {
   const owners = new Set();
   let ambiguous = false;
   const dupDetails = [];   // "SKU → clientA + clientB", so the store row can say it
@@ -23173,7 +23206,7 @@ function attributeSyncClient(skuOwners, lines, channel, store) {
     const clash = owners.size === 1 && [...owners][0] !== mapped;
     return { client: mapped, via: 'channel', unsure: clash ? `SKUs suggest ${[...owners][0]}` : null };
   }
-  const fb = zortFallbackClient(store, channel);
+  const fb = zortFallbackClient(store, channel, opts.newClientFromChannel);
   // Say WHICH bin it landed in, because the two mean different things to
   // whoever reads the row: the store label is a pool shared with every other
   // unplaceable order, the channel name is this client's own.
@@ -24925,7 +24958,7 @@ app.post('/api/master/zort/stores', (req, res) => {
       store.newClientFromChannel = want;
       logAudit('zort_new_client_from_channel_changed', {
         storeId: store.id, client: store.clientName || '',
-        setting: want === null ? 'auto' : want, effective: zortNewClientFromChannel(store),
+        setting: want === null ? 'auto' : want, effective: zortNewClientFromChannel(store, db),
         by: req.userId || _tokenUserId(req) || '',
       });
     }
@@ -25567,7 +25600,10 @@ app.post('/api/master/zort/stores/:id/lookup', express.json(), async (req, res) 
     }
     const stw = zortStatusWord(z.status);
     const channel = String(z.saleschannel || z.channel || '').trim();
-    const att = attributeSyncClient(skuOwners, z.list || z.orderlist || [], channel, store);
+    // Same answer the PULL would give — a tool that reports a different client
+    // than the import would actually file to explains nothing.
+    const att = attributeSyncClient(skuOwners, z.list || z.orderlist || [], channel, store,
+      { newClientFromChannel: zortNewClientFromChannel(store, db) });
     const cn = String(att.client || '').trim().toLowerCase();
     let would;
     if (stw === 'voided') would = 'voided on the hub — never imported as work';

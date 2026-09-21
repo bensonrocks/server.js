@@ -1683,6 +1683,29 @@ written to stop, arriving from the one direction it cannot cover.
   it resolves to, because it decides which account a client's stock and billing
   sit against. The form shows the resolved answer rather than a blank —
   a setting whose effect you cannot read is one nobody trusts.
+- **THE FIRST AUTO-DEFAULT WAS CONFIDENTLY WRONG, AND THE LIVE ACCOUNT
+  DISPROVED IT IN A DAY.** It read `channelClients` carrying any entry as the
+  operator declaring a hub. But on a hub whose clients all have item masters
+  the **SKU step places every order on its own**, so there is never a reason to
+  map a single channel — the reported store serves four clients (betime, BETIME
+  ECOM, Mayer2026, WESCO) with an **EMPTY channel map**, so "hub" read as false
+  and SmileFam's first order still pooled into the store label. The screenshot
+  that proved it is the store row's own new line: *"🎁 2 channel(s) not mapped
+  to a client: Lazada20082026Mayer, ShopeeSmilefam"* — **both** channels
+  carrying orders unmapped, Mayer's included, because the SKUs were doing all
+  the work. A heuristic reasoned about rather than measured.
+  **`zortStoreServesManyClients(db, store)` is the evidence instead**: a store
+  that has already FILED an order under a client other than its own label is
+  serving several clients, whatever its channel map says. A genuine
+  single-client store can never satisfy it, so the protection stands. Resolved
+  **ONCE per pull** and handed down (`opts.newClientFromChannel`) — walking
+  every batch per order would make attribution O(orders × batches) on a
+  year-old account. `db` is optional on the helper, so read-only callers still
+  answer from the store record alone; the store list, the audit entry and
+  🔍 Find order all pass it, or the tool would report a different client than
+  the import would file to. The form's note reads the SERVER's answer
+  (`newClientFromChannelEffective`) rather than re-deriving the rule in the
+  browser.
 - **A MAPPING STILL WINS, AND SO DOES A SKU.** Nothing that already worked
   moves: this is only the last resort, so filing under a channel is a
   **waypoint, not a new kind of wrong** — load that client's item master (or
@@ -1724,7 +1747,7 @@ written to stop, arriving from the one direction it cannot cover.
   that one is a guard, not a regression test. The `constructor` checks are the
   real coverage, and they fail 2 of 2 against the previous commit.
 
-Verified 32 API checks (`newclient-e2e.js`, **tier `ci`**, against a mock hub
+Verified 37 API checks (`newclient-e2e.js`, **tier `ci`**, against a mock hub
 serving two accounts): the reported order imports and files under
 `ShopeeSmilefam` and not `IDEALONEHUB`; the mapped Mayer channel still wins;
 the Success order is still not imported; the store row names the unmapped
@@ -1735,7 +1758,8 @@ its own client; pinning ON/OFF/automatic each takes effect and is on the trail;
 a channel named `constructor` is neither mistaken for a mapped one nor allowed
 to swallow the pull. **The build that shipped fails 14 of them and reproduces
 the screenshot exactly** (`SF-1001 … got IDEALONEHUB`, no unmapped channel
-reported). Regressions: the CI tier 8 suites / 236 checks, and `npm test` 6.
+reported; the empty-channel-map hub files its new client under IDEALONEHUB2).
+Regressions: the CI tier 8 suites / 241 checks, and `npm test` 6.
 
 TEST GOTCHA: re-using a SKU the FIRST pull already imported proves nothing —
 `harvestCatalogueFromOrders` learned it into that client's catalogue, so the

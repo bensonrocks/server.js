@@ -183,6 +183,35 @@ function clientOf(order) {
   ok(clientOf('SO-2001') === 'AcmeSolo',
      `a single-client store still files under its own client, NOT the channel (got ${clientOf('SO-2001')})`);
 
+  // ── THE REPORTED SHAPE: A HUB THAT MAPS NO CHANNEL AT ALL. ─────────────
+  //    Every client has an item master, so the SKU step places each order on
+  //    its own and there is no reason to map a single channel. The first cut
+  //    read "no mappings" as "single-client store" and a new client's orders
+  //    still pooled into the store label — the live account disproved the
+  //    heuristic in a day. What settles it is what the store has FILED.
+  const hub2 = await makeStore({
+    clientName: 'IDEALONEHUB2', storename: 'hub', apikey: 'k', apisecret: 's',
+    endpoint: M, enabled: true,            // <- no channelClients whatsoever
+  });
+  let h2 = await storeById(hub2);
+  ok(h2.newClientFromChannelEffective === false,
+     'a store that has filed nothing yet reads as single-client — the safe default holds');
+  // It files SF-2001 by SKU (SmileFam's master exists by now), which is the
+  // very act that proves the login serves somebody other than its own label.
+  await addOrder({ acc: 'hub', number: 'SF-2001', channel: 'ShopeeSmilefam', sku: 'SMILE-A', name: 'SmileFam Baby Wipes 80s' });
+  await pull(hub2); await sleep(2000);
+  ok(clientOf('SF-2001') === 'SmileFam', `the SKU places it (got ${clientOf('SF-2001')})`);
+  h2 = await storeById(hub2);
+  ok(h2.newClientFromChannelEffective === true,
+     'having filed under a client that is NOT its own label, the store now reads as a hub');
+  // …so the NEXT unplaceable order lands under its channel, with no mapping
+  // and nothing switched on by hand — which is what was asked for.
+  await addOrder({ acc: 'hub', number: 'SF-2002', channel: 'ShopeeBrandNew2', sku: 'NEW2-A', name: 'Another New Client' });
+  await pull(hub2); await sleep(2000);
+  ok(clientOf('SF-2002') === 'ShopeeBrandNew2',
+     `a new client lands under its channel with NO mapping made (got ${clientOf('SF-2002')})`);
+  ok(clientOf('SF-2002') !== 'IDEALONEHUB2', 'and not in the hub label bin');
+
   // ── THE OPERATOR OVERRIDES EITHER WAY. ──────────────────────────────────
   await J(await fetch(B + '/api/master/zort/stores', { method: 'POST', headers: H(),
     body: JSON.stringify({ id: solo, newClientFromChannel: true }) }));
