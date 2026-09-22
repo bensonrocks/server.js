@@ -3727,8 +3727,8 @@ and says why; the picking list arriving later attaches the held page by
 itself via `order_number_of_reference_copy`; the intake-fetched text-less page
 survives the sweep with its hint and attaches to its GI order by the fact it
 was fetched for the copy. **The build that shipped fails 19 of the 52** and
-reproduces the dialog above. Regressions: `onecart-e2e` (work mode) and
-`onecart-ref-e2e` unchanged.
+reproduces the dialog above. Regressions: `onecart-e2e` (work mode) 79,
+`label-ref-e2e` 30, `npm test` 13, and the CI tier 10 suites / 349 checks.
 
 TEST GOTCHA: the picking-list parsers only file a tracking-SHAPED Consignee
 as the waybill (`looksLikeTrackingNumber`), so a stand-in like `LZSGD9999`
