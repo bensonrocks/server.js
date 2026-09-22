@@ -2487,6 +2487,9 @@
               <option value="none">Do nothing (pull only)</option>
               <option value="ship">Mark SHIPPED on the channel (read back to confirm)</option>
             </select>
+            <div style="font-size:.78rem;color:#64748b;margin-top:.3rem">
+              <b>This is the switch to go live with, not the mode above.</b> It works while the orders are a Reference ledger: completing the client's own upload of the same shipment (matched by order number, or by waybill for a GI-numbered order) marks the channel's copy shipped. Turn it on when you want completions to flow to OneCart; until then completions here change nothing there.
+            </div>
           </div>
           <div class="form-group"><label>Shipping labels</label>
             <select id="ocLabelSync">
