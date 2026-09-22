@@ -42,6 +42,11 @@ const stateOf = (db, no) => { for (const b of db.batches || []) if ((b.orders ||
 const orderOf = (db, no) => { for (const b of db.batches || []) { const o = (b.orders || []).find(o => o.order_number === no); if (o) return { o, b }; } return null; };
 
 async function makePdfs() {
+  // The four labels are COMMITTED (onecart-reflabels-e2e.js reads them in CI,
+  // where there is no Chromium to print them). Reuse them when present so a
+  // run here does not rewrite the fixtures byte-for-byte on every pass; delete
+  // the folder to reprint them.
+  if (['9001', '9002', '9003', '9007'].every(id => fs.existsSync(path.join(PDFDIR, id + '.pdf')))) return;
   fs.rmSync(PDFDIR, { recursive: true, force: true }); fs.mkdirSync(PDFDIR, { recursive: true });
   const browser = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
   const page = await browser.newPage();

@@ -3738,6 +3738,17 @@ real carrier shapes (`LZSGD1019999999`). And the late-orders sweep is
 debounced under the FIRST caller's trigger name, so assert `labels_auto_
 matched` by import id, not by `trigger`.
 
+TEST GOTCHA that turned CI red on the first push while the same suite was
+green here: the mock's four label PDFs (`test/legacy/oc-pdfs/`) were
+gitignored and printed only by `onecart-e2e.js` — a CANDIDATE suite that
+needs Chromium — so a fresh CI checkout had none, every label link answered
+404 and 29 of 52 checks failed reading exactly like the fix being broken.
+**A CI-tier suite may read only fixtures that are committed** (the standing
+rule the perf and TracX PDFs already follow). The four are committed now
+(invented content only), `onecart-e2e.js` reuses them rather than reprinting
+so they stay byte-stable, and the CI suite names any missing one at start
+instead of failing 29 assertions downstream.
+
 ## Client Portal — read-only self-service for 3PL clients (/portal)
 
 `public/portal.html` + `portal.js`, served at `GET /portal`. Same architecture

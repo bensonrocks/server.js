@@ -81,6 +81,11 @@ const WB7 = 'LZSGD1017777777';
 
 (async () => {
   if (!(await portFree(B + '/api/version')) || !(await portFree(M + '/__ctl/calls'))) throw new Error(`port ${PORT}/${MPORT} already answering — a stray server; refusing to measure the wrong process`);
+  // The mock serves these as the channel's labels. They are COMMITTED (CI has
+  // no Chromium to print them); without them every label link answers 404 and
+  // the run reads as the fix being broken — say which file is missing instead.
+  const missingPdfs = ['9001', '9002', '9003', '9007'].map(id => path.join(PDFDIR, id + '.pdf')).filter(f => !fs.existsSync(f));
+  if (missingPdfs.length) throw new Error(`label fixture(s) missing: ${missingPdfs.join(', ')} — they are committed under test/legacy/oc-pdfs; onecart-e2e.js reprints them`);
   fs.rmSync(DDIR, { recursive: true, force: true });
   spawnLogged([path.join(S, 'onecart-mock.js')], { PORT: String(MPORT), OC_KEY: KEY, OC_PDF_DIR: PDFDIR }, path.join(S, 'oc-reflabels-mock.log'));
   await waitUp(M + '/__ctl/calls');

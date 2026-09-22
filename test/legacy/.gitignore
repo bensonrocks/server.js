@@ -12,7 +12,7 @@ gib/
 *.png
 *.xlsx
 *.pdf
-oc-pdfs/
+oc-pdfs/*
 
 # …except these two. perf-e2e.js and perf-ocr-e2e.js read them and neither
 # generates one, so a fresh checkout without them is a red CI run. They are
@@ -36,3 +36,14 @@ oc-pdfs/
 # `node tracx-consignee-fixture.js`.
 !tracx-picklist-fixture.pdf
 !tracx-label2-fixture.pdf
+
+# …and the four OneCart mock labels. onecart-reflabels-e2e.js is in the CI
+# tier and READS them; only onecart-e2e.js (a candidate suite that needs
+# Chromium) PRINTS them, so a fresh checkout without them made every label
+# link answer 404 in CI while the same suite was green here. Invented content
+# only (an order number, a tracking number, "Test Buyer"); onecart-e2e.js
+# reuses them when present rather than reprinting, so they stay stable.
+!oc-pdfs/9001.pdf
+!oc-pdfs/9002.pdf
+!oc-pdfs/9003.pdf
+!oc-pdfs/9007.pdf
