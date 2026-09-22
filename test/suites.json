@@ -465,6 +465,13 @@
       "timeoutMs": 420000
     },
     {
+      "file": "onecart-reflabels-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 420000
+    },
+    {
       "file": "perf-e2e.js",
       "browser": false,
       "selfBoots": true,

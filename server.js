@@ -8365,6 +8365,12 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
   // means no blind attach: the page stays unmatched with the reason, and the
   // late-orders sweep places it when the picking list arrives.
   let forTarget = forOrder || null;
+  // A ONE-PAGE LABEL FETCHED FOR AN ORDER KEEPS THAT FACT ON THE PAGE. It is
+  // evidence the text can never lose: a copy whose picking list has not been
+  // uploaded yet gets its work order LATER, and if the page's own text names
+  // nothing (a caption drawn as a bitmap) this stamp is the only way the
+  // late-orders sweep can ever place it — see rematchLabelImport.
+  if (forOrder && numPages === 1 && pages[0]) pages[0].fetchedFor = forOrder;
   if (forTarget) {
     const refBatch = referenceOnlyOrder(db, forTarget);
     if (refBatch) {
@@ -8881,12 +8887,32 @@ async function rematchLabelImport(id, rematchAll, { ocrForFields = false } = {})
       }
     }
 
-    const found  = matchLabelPage(rawText, page.extracted, matchIndex);
+    let found = matchLabelPage(rawText, page.extracted, matchIndex);
+    // A ONE-PAGE LABEL FETCHED FOR A CHANNEL COPY carries its link to that
+    // copy as a FACT (page.fetchedFor), not as text. When the page's own text
+    // names nothing — a caption drawn as a bitmap, a shape no reader knows —
+    // that fact is the only way it can reach the picking-list order, which at
+    // intake arrives AFTER the label. The import pass could not place it (no
+    // work order yet); it lands here once one shares the copy's waybill. Only
+    // onto a work order that has no label yet: if a human already attached
+    // one, this page stays on the review screen for a human to decide.
+    if (!found && page.fetchedFor && (imp.pages || []).length === 1 && page.matchStatus !== 'matched') {
+      const home = onecartLabelHome(db, page.fetchedFor);
+      if (home.reference && home.home && !home.labelled && !home.workCancelled) {
+        found = { hit: home.home, method: 'fetched-for-order_of_reference_copy', confidence: 'exact',
+                  reference: page.fetchedFor, referenceClient: (referenceOnlyOrder(db, page.fetchedFor) || {}).client_name || '' };
+      }
+    }
     const hit    = found?.hit    || null;
     const method = found?.method || null;
     // Say why a page attached to nothing when the only record holding its
     // number is a channel's reference copy; cleared the moment it matches.
-    page.referenceHint = (!found ? referenceOnlyHint(page.extracted, matchIndex)
+    // A hint that came from the FETCH (the page was asked for by the copy's
+    // number) survives a page whose text says nothing — without it the review
+    // row lost its explanation the first time the sweep ran.
+    const fetchedRef = !found && page.fetchedFor ? referenceOnlyOrder(db, page.fetchedFor) : null;
+    page.referenceHint = (!found ? (referenceOnlyHint(page.extracted, matchIndex)
+                          || (fetchedRef ? { field: 'orderNumber', value: page.fetchedFor, order: page.fetchedFor, client: fetchedRef.client_name || '' } : null))
                         : found.reference ? { via: true, order: found.reference, client: found.referenceClient || '' } : null) || undefined;
 
     // The page names two orders and nothing on it settles which — the SAME
@@ -26730,22 +26756,42 @@ app.post('/api/master/onecart/stores/:id/labels', async (req, res) => {
   const s = onecartStores(db).find(x => x.id === req.params.id);
   if (!s) return res.status(404).json({ error: 'Store not found' });
   const targets = [];
+  const alreadyLabelled = [], waitingForPickingList = [], workCancelled = [];
   for (const b of db.batches || []) {
     for (const o of b.orders || []) {
       if (o.onecart_store_id !== s.id || !o.onecart_id) continue;
       const st = b.orderStates?.[o.order_number] || {};
       if (st.status === 'unprocessed') continue;
-      if ((db.orderLabels || {})[o.order_number]) continue;
+      // "Does this order have a label" is asked of the label's HOME, not of
+      // the OneCart record: in reference mode the copy is never labelled
+      // (see onecartLabelHome), so keying on it re-asked the channel for
+      // every label that had already landed on the picking-list order.
+      const h = onecartLabelHome(db, o.order_number);
+      if (h.labelled) { alreadyLabelled.push({ order: o.order_number, landedOn: h.home !== o.order_number ? h.home : undefined }); continue; }
+      if (h.workCancelled) { workCancelled.push(o.order_number); continue; }
+      if (h.held) { waitingForPickingList.push(o.order_number); continue; }
       targets.push({ order_number: o.order_number, onecart_id: o.onecart_id });
     }
   }
-  if (!targets.length) return res.json({ ok: true, requested: 0, attached: [], noLabel: [], unusable: [], note: 'Every open OneCart order already has a label.' });
+  const skipNote = () => {
+    const bits = [];
+    const viaWork = alreadyLabelled.filter(a => a.landedOn).length;
+    if (alreadyLabelled.length) bits.push(`${alreadyLabelled.length} already labelled${viaWork ? ` (${viaWork} on the picking-list order sharing the waybill)` : ''}`);
+    if (waitingForPickingList.length) bits.push(`${waitingForPickingList.length} fetched and waiting for a picking list to land on — they attach by themselves when it is uploaded`);
+    if (workCancelled.length) bits.push(`${workCancelled.length} whose picking-list order is cancelled`);
+    return bits.join(' · ');
+  };
+  if (!targets.length) {
+    return res.json({ ok: true, requested: 0, attached: [], held: [], noLabel: [], unusable: [],
+      alreadyLabelled: alreadyLabelled.length, waitingForPickingList: waitingForPickingList.length, workCancelled: workCancelled.length,
+      note: 'Nothing to ask the channel for' + (skipNote() ? ' — ' + skipNote() + '.' : ': every open OneCart order already has a label.') });
+  }
   try {
     const r = await fetchOnecartLabels(s, targets.slice(0, 100));
     const db2 = readDb();
     const s2 = onecartStores(db2).find(x => x.id === s.id);
-    if (s2) { s2.lastLabels = { at: new Date().toISOString(), requested: r.requested, attached: r.attached.length, noLabel: r.noLabel.length, unusable: r.unusable.length }; writeDb(db2); }
-    res.json({ ok: true, ...r });
+    if (s2) { s2.lastLabels = { at: new Date().toISOString(), requested: r.requested, attached: r.attached.length, held: r.held.length, noLabel: r.noLabel.length, unusable: r.unusable.length }; writeDb(db2); }
+    res.json({ ok: true, ...r, alreadyLabelled: alreadyLabelled.length, waitingForPickingList: waitingForPickingList.length, workCancelled: workCancelled.length, skipNote: skipNote() || undefined });
   } catch (e) { res.status(502).json({ error: e.message, requestId: e.requestId || '' }); }
 });
 
@@ -26956,8 +27002,8 @@ async function pullOnecartStore(db, store) {
       const r = await fetchOnecartLabels(store, newOrders);
       const db2 = readDb();
       const s2 = onecartStores(db2).find(x => x.id === store.id);
-      if (s2) { s2.lastLabels = { at: new Date().toISOString(), requested: r.requested, attached: r.attached.length, noLabel: r.noLabel.length, unusable: r.unusable.length, via: 'intake' }; writeDb(db2); }
-      store.lastResult.labels = { requested: r.requested, attached: r.attached.length, noLabel: r.noLabel.length, unusable: r.unusable.length };
+      if (s2) { s2.lastLabels = { at: new Date().toISOString(), requested: r.requested, attached: r.attached.length, held: r.held.length, noLabel: r.noLabel.length, unusable: r.unusable.length, via: 'intake' }; writeDb(db2); }
+      store.lastResult.labels = { requested: r.requested, attached: r.attached.length, held: r.held.length, noLabel: r.noLabel.length, unusable: r.unusable.length };
     } catch (e) {
       store.lastResult.labels = { error: String(e.message).slice(0, 200) };
       logAudit('onecart_labels_failed', { storeId: store.id, error: String(e.message).slice(0, 200), requestId: e.requestId || '' });
@@ -27033,11 +27079,47 @@ async function fetchOnecartLabels(store, targets) {
       unusable.push({ order: orderNo || '', shop: c.shop || '', why: 'import failed: ' + String(e.message).slice(0, 80) });
     }
   }
+  // THE VERDICT IS READ AT THE LABEL'S HOME. A label fetched for a reference
+  // copy lands on the picking-list order sharing its waybill — or, with no
+  // such order yet, sits on the Labels tab for the sweep — so checking the
+  // copy's own number reported every one of those as "still without one".
   const after = readDb();
-  const got = new Set(targets.filter(t => (after.orderLabels || {})[t.order_number]).map(t => t.order_number));
-  const noLabel = targets.filter(t => !got.has(t.order_number)).map(t => t.order_number);
-  logAudit('onecart_labels_fetched', { storeId: store.id, requested, attached: got.size, noLabel: noLabel.length, unusable: unusable.length, candidates: cands.length });
-  return { requested, attached: [...got].map(o => ({ order: o })), noLabel, unusable, candidates: cands.length };
+  const got = [], held = [], noLabel = [];
+  for (const t of targets) {
+    const h = onecartLabelHome(after, t.order_number);
+    if (h.labelled) got.push({ order: t.order_number, landedOn: h.home !== t.order_number ? h.home : undefined });
+    else if (h.held) held.push(t.order_number);
+    else noLabel.push(t.order_number);
+  }
+  logAudit('onecart_labels_fetched', { storeId: store.id, requested, attached: got.length, held: held.length, noLabel: noLabel.length, unusable: unusable.length, candidates: cands.length });
+  return { requested, attached: got, held, noLabel, unusable, candidates: cands.length };
+}
+
+// WHERE A ONECART ORDER'S LABEL LIVES. In work mode, on the order itself. In
+// reference mode the copy is never labelled (the writer fence returns
+// 'reference'): the label lands on the picking-list order that shares its
+// waybill, or — when that order has not been uploaded yet — stays on the
+// Labels tab as an unmatched page hinting at the copy, and the late-orders
+// sweep attaches it the moment the picking list arrives. So "has this order
+// got a label" has to be asked of the HOME; asked of the copy, every press
+// of 🏷 Get Labels re-asked the channel for labels that had already landed
+// and reported them as missing (Betime's live configuration, found by
+// testing the button in reference mode rather than reading it).
+function onecartLabelHome(db, orderNumber) {
+  const n = String(orderNumber || '');
+  const labels = db.orderLabels || {};
+  const refBatch = referenceOnlyOrder(db, n);
+  if (!refBatch) return { reference: false, home: n, labelled: Object.prototype.hasOwnProperty.call(labels, n) };
+  const refOrd = (refBatch.orders || []).find(o => o.order_number === n);
+  const work = workOrderForReference(db, refOrd);
+  if (work) {
+    const wn = work.order.order_number;
+    const wst = (work.batch.orderStates || {})[wn] || {};
+    return { reference: true, home: wn, labelled: Object.prototype.hasOwnProperty.call(labels, wn), workCancelled: wst.status === 'unprocessed' };
+  }
+  const held = (db.labelImports || []).some(i => (i.pages || []).some(p =>
+    p.matchStatus !== 'matched' && ((p.referenceHint && String(p.referenceHint.order || '') === n) || p.fetchedFor === n)));
+  return { reference: true, home: null, labelled: false, held };
 }
 
 // Completion push-back: mark the order SHIPPED on the channel. Fire-and-

@@ -13124,7 +13124,7 @@
             }
           }
           const ll = s.lastLabels;
-          const labels = (s.labelSync === 'intake' ? 'auto at intake' : 'on request') + (ll ? `<br><span style="font-size:.75rem;color:#64748b">${ll.attached}/${ll.requested} · ${esc(fmt(ll.at))}</span>` : '');
+          const labels = (s.labelSync === 'intake' ? 'auto at intake' : 'on request') + (ll ? `<br><span style="font-size:.75rem;color:#64748b">${ll.attached}/${ll.requested}${ll.held ? ` + ${ll.held} waiting for a picking list` : ''} · ${esc(fmt(ll.at))}</span>` : '');
           return `<tr>
             <td style="font-weight:700">${esc(s.clientName)}${s.enabled ? '' : ' <span style="color:#94a3b8">(off)</span>'}</td>
             <td style="font-family:monospace">${esc(s.apiKey || '—')}</td>
@@ -13160,7 +13160,7 @@
               + (d.cancelConflicts && d.cancelConflicts.length ? `, <b style="color:#dc2626">${d.cancelConflicts.length} cancelled after work started — do not ship</b>` : '')
               + (d.skippedNoLines && d.skippedNoLines.length ? `, <b style="color:#b45309">${d.skippedNoLines.length} skipped with no product lines: ${esc(d.skippedNoLines.join(', '))}</b>` : '')
               + (d.heldElsewhereCount ? `, <b style="color:#6d28d9">${d.heldElsewhereCount} already held outside this connection and left untouched: ${esc(d.heldElsewhere.map(h => `${h.order} (${h.client}${h.job ? ', ' + h.job : ''})`).join(', '))}</b>` : '');
-            if (d.labels) msg += d.labels.error ? ` — ⚠ labels: ${esc(d.labels.error)}` : ` — labels ${d.labels.attached}/${d.labels.requested} attached`;
+            if (d.labels) msg += d.labels.error ? ` — ⚠ labels: ${esc(d.labels.error)}` : ` — labels ${d.labels.attached}/${d.labels.requested} attached${d.labels.held ? `, ${d.labels.held} waiting for a picking list` : ''}`;
             say(d.cancelConflicts && d.cancelConflicts.length ? 'error' : 'success', msg);
           }
           load(); refreshOrders?.();
@@ -13171,9 +13171,15 @@
           if (d.error) { say('error', '✗ ' + esc(d.error)); return; }
           if (!d.requested) { say('info', esc(d.note || 'Nothing to fetch.')); return; }
           let msg = `✓ ${d.attached.length} of ${d.requested} label(s) attached`;
+          // In reference mode the label lands on the PICKING-LIST order sharing
+          // the waybill (the channel copy is never labelled) — say where.
+          const viaWork = (d.attached || []).filter(a => a.landedOn);
+          if (viaWork.length) msg += ` — ${viaWork.length} on the picking-list order sharing the waybill (${esc(viaWork.slice(0, 5).map(a => a.landedOn).join(', '))}${viaWork.length > 5 ? '…' : ''})`;
+          if (d.held && d.held.length) msg += ` · <span style="color:#2563eb">${d.held.length} fetched and waiting for a picking list to land on — they attach by themselves when it is uploaded (${esc(d.held.slice(0, 5).join(', '))}${d.held.length > 5 ? '…' : ''})</span>`;
+          if (d.skipNote) msg += ` · <span style="color:#64748b">${esc(d.skipNote)}</span>`;
           if (d.noLabel.length) msg += ` · <span style="color:#b45309">${d.noLabel.length} still without one: ${esc(d.noLabel.slice(0, 8).join(', '))}${d.noLabel.length > 8 ? '…' : ''}</span>`;
           if (d.unusable.length) msg += ` · <span style="color:#dc2626">${d.unusable.length} the channel offered but could not be imported (${esc([...new Set(d.unusable.map(u => u.why))].join('; '))})</span>`;
-          say(d.attached.length ? 'success' : 'error', msg);
+          say((d.attached.length || (d.held && d.held.length)) ? 'success' : 'error', msg);
           load();
         }));
         tb.querySelectorAll('[data-oc-edit]').forEach(b => b.addEventListener('click', () => {

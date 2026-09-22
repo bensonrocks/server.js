@@ -3662,6 +3662,82 @@ the fence now sits where it cannot be forgotten — at the path and at the write
 Verified 6 in-repo checks (above), plus the 30 + 32 + 50 label/reference
 suites re-run green after the fence went in.
 
+#### 🏷 GET LABELS IN REFERENCE MODE — asked of the label's HOME, not of the copy
+
+Asked to *"test to see if we can get the shipping/waybill labels from
+OneCart"* (22 Sep 2026). The live account cannot be reached from the sandbox
+(the proxy refuses `app.getonecart.com`), so the test is the mock — and the
+work-mode suite was green. The button was then read against **Betime's real
+configuration, reference mode**, and it was written for work mode only:
+
+- **IT DECIDED WHAT TO FETCH, AND WHAT CAME IN, BY `db.orderLabels[<the
+  copy's number>]`.** In reference mode that key is NEVER set — the writer
+  fence returns `reference`, so a label fetched for a copy lands on the
+  picking-list order sharing its waybill (`fetched-for-order_of_reference_
+  copy`), or waits unmatched on the Labels tab until that order is uploaded.
+  So every press re-asked `print_awbs` for every open copy, labels that had
+  already landed on the GI orders were reported **"still without one"**, the
+  audit row read `attached: 0`, and a copy with no picking list yet was
+  re-imported as a fresh label file on every press (the filename carries
+  `Date.now()`, so the same-file guard never fires). Measured against the
+  build that shipped: "1 of 3 attached, 2 still without one" on three labels
+  that were all in the system, and `print_awbs` called again on the very next
+  press.
+- **`onecartLabelHome(db, n)` is the ONE question**: work mode → the order
+  itself; reference mode → the work order sharing the copy's waybill
+  (`workOrderForReference`) and whether IT is labelled, or — with no work
+  order yet — whether a page fetched for the copy is already **held** on the
+  Labels tab (`referenceHint.order === n` or `fetchedFor === n`, still
+  unmatched). The route's target selection AND `fetchOnecartLabels`'s verdict
+  both ask it, so they cannot disagree. The response carries `attached[]`
+  with **`landedOn`** (the GI order the label went to), **`held[]`** (fetched,
+  waiting for a picking list — they attach by themselves when it is uploaded),
+  `alreadyLabelled` / `waitingForPickingList` / `workCancelled` counts, and a
+  note in words when there is nothing to ask for. The dialog and the store row
+  say the same.
+- **THE LINK TO THE COPY IS A FACT, NOT TEXT — `page.fetchedFor`.** Labels at
+  intake arrive BEFORE the picking list, and a one-page label whose text names
+  nothing (a caption drawn as a bitmap, a shape no reader knows) had only the
+  fetch-time redirect to place it — which found no work order yet and gave up.
+  Worse, the late-orders sweep then **erased the "fetched for Betime Online's
+  copy" hint** (`referenceHint` was recomputed from the text alone), so the
+  review row lost its explanation and Get Labels re-fetched it. Now: a
+  one-page label fetched for an order stamps `fetchedFor` on the page;
+  `rematchLabelImport` keeps the hint on a text-less page and, when the copy's
+  waybill is now carried by an unlabelled work order, attaches it there as
+  `fetched-for-order_of_reference_copy` at confidence `exact`. Only onto a
+  work order with NO label — if a human already attached one, the page stays
+  on the review screen for a human to decide. Multi-page documents are still
+  never blind-attached.
+- The two facts only the live run can settle are unchanged: whether
+  `print_awbs` hands back a usable PDF for Betime's shops, and whether it
+  Ready-to-Ships the order. Connections → 🛒 OneCart (Direct) → Betime Online
+  → 🏷 Get Labels is the live test; the dialog now names where each label
+  landed.
+
+Verified 52 API checks (`onecart-reflabels-e2e.js`, **tier `ci`**, against
+the mock in reference mode, mirroring the floor: one shipment uploaded as a GI
+Analysis export sharing the copy's NUMBER, one as a GI-numbered picking list
+sharing only the WAYBILL, one whose picking list arrives after the label, and
+one fetched at intake whose page reads no identifier at all): one press asks
+for all three, both uploaded orders get their label with `landedOn` naming the
+GI order, the third is held with `sync_label_for_reference_unplaced` and NO
+label under any copy's number; a second press asks the channel for nothing
+and says why; the picking list arriving later attaches the held page by
+itself via `order_number_of_reference_copy`; the intake-fetched text-less page
+survives the sweep with its hint and attaches to its GI order by the fact it
+was fetched for the copy. **The build that shipped fails 19 of the 52** and
+reproduces the dialog above. Regressions: `onecart-e2e` (work mode) and
+`onecart-ref-e2e` unchanged.
+
+TEST GOTCHA: the picking-list parsers only file a tracking-SHAPED Consignee
+as the waybill (`looksLikeTrackingNumber`), so a stand-in like `LZSGD9999`
+lands as a customer name and the GI order shares no waybill with its copy —
+the first run read as "the sweep never attaches" and was the fixture. Use
+real carrier shapes (`LZSGD1019999999`). And the late-orders sweep is
+debounced under the FIRST caller's trigger name, so assert `labels_auto_
+matched` by import id, not by `trigger`.
+
 ## Client Portal — read-only self-service for 3PL clients (/portal)
 
 `public/portal.html` + `portal.js`, served at `GET /portal`. Same architecture
