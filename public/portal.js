@@ -1427,6 +1427,14 @@
         const p = d.preview || {};
         let m = `IMPORT BUNDLES\n\nFile: ${d.filename}\n\n${p.kits} kit(s), ${p.components} component line(s) in the file.\n`
           + `${p.willCreate} kit(s) will be defined — each one resolves an order line into these components automatically.`;
+        // Reusing a kit SKU replaces its recipe entirely — say so before it
+        // happens, by name, not just as a bare count.
+        if (p.existingKitCount) {
+          m += `\n\n⚠ ${p.existingKitCount} kit(s) already exist and will be OVERWRITTEN with the new records:\n`
+            + p.existingKits.slice(0, 10).map(k => `• ${k}`).join('\n')
+            + (p.existingKitCount > 10 ? '\n…' : '');
+        }
+        if (p.newKitCount) m += `\n\n${p.newKitCount} kit(s) are new.`;
         if (p.skippedKitCount) {
           m += `\n\n⚠ ${p.skippedKitCount} kit(s) name a SKU not in your item master and will NOT be saved until fixed:\n`
             + p.skippedKits.slice(0, 10).map(s => `• ${s.kit}: ${s.missing.join(', ')}`).join('\n')

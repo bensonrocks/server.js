@@ -19528,6 +19528,17 @@
             + `${p.kits} kit(s), ${p.components} component line(s) in the file.\n`
             + `${p.willCreate} kit(s) will be defined — each one EXPLODES into these components on the next order, `
             + `a synced ZORT order included.`;
+          // THE WRITE IS A SILENT FULL-RECIPE OVERWRITE (same rule as every
+          // other supersede in this app: the confirm states the consequence
+          // BEFORE it happens, naming what it touches) — a kit SKU the file
+          // reuses is not a new definition, it is replacing whatever that
+          // code already resolves to.
+          if (p.existingKitCount) {
+            m += `\n\n⚠ ${p.existingKitCount} kit(s) already exist and will be OVERWRITTEN with the new records:\n`
+              + p.existingKits.slice(0, 10).map(k => `• ${k}`).join('\n')
+              + (p.existingKitCount > 10 ? '\n…' : '');
+          }
+          if (p.newKitCount) m += `\n\n${p.newKitCount} kit(s) are new.`;
           // A KIT NAMING AN UNKNOWN COMPONENT IS LEFT OUT WHOLE, not written
           // with a gap in it — named by kit AND by SKU, since "3 unknown SKUs"
           // cannot be acted on but "GIFTSET-A is missing WIDGET-9" can.

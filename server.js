@@ -29517,10 +29517,23 @@ function bundleImportPreview(clientId, groups) {
   const unknownSkus = new Set();
   for (const s of skipped) for (const sku of s.missing) unknownSkus.add(sku);
   const kitSkus = [...groups.keys()];
+  // WHICH OF THESE ALREADY EXIST — the write is a silent full-recipe
+  // overwrite (upsertBundle: ON CONFLICT ... DO UPDATE), so the confirm must
+  // say so BEFORE it happens, per kit, not just "N will be defined" — a kit
+  // name reused for a different recipe is exactly the mistake this is for.
+  const existingKits = [];
+  const newKits = [];
+  for (const { kit } of ok) {
+    let already = null;
+    try { already = inventory.getBundle(clientId, kit); } catch (_) {}
+    (already ? existingKits : newKits).push(kit);
+  }
   return {
     kits: kitSkus.length, kitSkus,
     components: [...groups.values()].reduce((n, c) => n + c.length, 0),
     willCreate: ok.length, willCreateKits: ok.map(x => x.kit),
+    existingKits, existingKitCount: existingKits.length,
+    newKits, newKitCount: newKits.length,
     skippedKits: skipped, skippedKitCount: skipped.length,
     unknownSkus: [...unknownSkus], unknownSkuCount: unknownSkus.size,
   };
