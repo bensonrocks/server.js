@@ -9244,6 +9244,89 @@ inventory SQLite store. Take the data snapshot BEFORE shipping anything risky:
 When adding a new rollback point: append a row here IN THE SAME COMMIT that
 records it, so the name and the sha can never drift apart.
 
+## Bundle/kit definitions — bulk import, and the client portal can define its own
+
+Reported: a ZORT-synced order shows the raw bundle/kit SKU instead of
+resolving to the real inventory SKUs + qty beneath it. `explodeBundleRows`
+already does this at EVERY intake door — file upload, photo scan, ZORT/
+Shopify sync — replacing a bundle-coded order line with its components
+(`qty × qtyPerBundle`) before anything downstream (pick list, scanning,
+deduction, reports) ever sees the kit code. The gap was never the explosion —
+it was that no bundle **definitions** existed, and the only way to create one
+was the office's one-at-a-time "+ Define bundle" form. A client's real
+kitting sheet lists a bundle **one row per component, several rows sharing a
+Kit SKU** (`Kit SKU* / Inventory SKU* / Quantity*`), never pre-grouped.
+
+- **`parseBundleImportRows` / `planBundleImport` / `bundleImportPreview` /
+  `applyBundleImport`** (server.js, next to `explodeBundleRows`) are the ONE
+  shared implementation for both callers below, so the two screens can never
+  disagree about what a file means or which kits a given confirm actually
+  saves. Rows are grouped by Kit SKU; two rows naming the same component for
+  one kit SUM (the standing duplicate-line reasoning) rather than
+  overwriting.
+- **A KIT NAMING AN UNKNOWN COMPONENT IS SKIPPED WHOLE, not written with a
+  gap in it** — a bundle missing one of its own pieces would explode a
+  future order line into a pick list nobody can fulfil, silently, weeks
+  later. Named by kit AND by SKU (`skippedKits: [{kit, missing}]`), never a
+  bare count.
+- **ALWAYS VIRTUAL.** A bulk import defines what a marketplace kit code
+  resolves to for picking; a PHYSICAL kit (built ahead of time, stocked and
+  sold as its own SKU, consumed via 🔨 Build) stays a per-bundle decision
+  made from the single "+ Define bundle" form, never a bulk-import outcome.
+- **PREVIEW-CONFIRM**, the standing discipline for every mass write here:
+  `POST /api/inventory/bundles/import` (multipart + clientId) answers 409
+  `{needsBundleImportConfirm, preview}` — kits, component lines, how many
+  will actually be created, and which are skipped and why — until
+  `confirm_apply=yes`. UI: **⬆ Import bundles** beside "+ Define bundle" on
+  Inventory → 🎁 Bundles.
+
+### The client portal — a login can define its own kits
+
+Per the user: allow a client to create bundles from their own portal. This is
+a FOURTH narrow portal write (after ASN submit, self-cancel and the aging
+threshold) — everything else on the portal stays read-only.
+
+- **`bundles` joins `PORTAL_SECTIONS`** (absent reads as visible, same as
+  every other section), so an admin can hide it per login like any other tab;
+  `portalSectionForPath` routes `/api/portal/bundles*` through the section
+  gate every portal route already goes through.
+- **READ is open to any signed-in login** (view included, same as Stock);
+  **WRITE is `requirePortalWrite`** — the same full-access-only gate ASN
+  submission and self-cancel use. `GET/POST /api/portal/bundles`,
+  `DELETE /api/portal/bundles/:sku`, `POST /api/portal/bundles/import`
+  (multipart; `requirePortalWrite` invoked AFTER multer, same reason
+  `/api/portal/asn` does — multer does not reliably carry the
+  AsyncLocalStorage tenant context).
+- **EVERY COMPONENT MUST BE IN THAT CLIENT'S OWN ITEM MASTER.**
+  `inventory.get` is client-scoped, so a component naming another client's
+  SKU simply reads as unknown — there is no cross-client lookup to close,
+  the data itself never crosses the boundary. Named by SKU, never silently
+  invented, refused with a 400 (single-bundle form) or skipped per-kit (bulk
+  import — the SAME `planBundleImport`/`applyBundleImport` the office uses,
+  so the portal's bulk path behaves identically rather than drifting into a
+  stricter all-or-nothing rule).
+- **ALWAYS VIRTUAL here too** — a physical, pre-built kit is warehouse floor
+  work (🔨 Build consumes real stock), never a portal action; a client only
+  ever defines what a code MEANS for picking.
+- A bundle a client defines is visible and editable from the OFFICE side too
+  (same `inventory.getBundles(cid)` — one bundle table, two doors in).
+- UI: portal → 🎁 **Bundles** tab — a card per bundle (recipe, "can make"),
+  **+ Define bundle** (a simple form, no physical/virtual toggle, no Build
+  button — those stay office-only) and **⬆ Import from file** reading the
+  same template, both hidden for a view-only login.
+
+Verified 34 checks (`test/legacy/bundle-import-e2e.js`, **tier `ci`**, fixture
+shaped exactly like a real kitting export): office import against a client
+with NO item master skips both kits by name and creates nothing; against a
+client whose master covers the components, both kits are created virtual
+with the right recipe; an order line naming the kit SKU — the same path a
+ZORT sync line takes — explodes into the real component at the right
+multiplied quantity; the portal sees the office-defined bundles, a view-only
+login is refused a write, an unknown component is refused by name, a
+client-defined bundle is visible office-side, portal bulk import previews
+and applies identically to the office path, two clients' bundles never
+cross, and deleting from the portal removes it office-side too.
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`

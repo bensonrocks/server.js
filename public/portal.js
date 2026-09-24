@@ -21,7 +21,7 @@
   // the page and the API can never disagree about what is switched on.
   const visible = k => (portalUser?.visibility || {})[k] !== false;
   function applyVisibility() {
-    for (const k of ['overview', 'stock', 'orders', 'inbound']) {
+    for (const k of ['overview', 'stock', 'orders', 'inbound', 'bundles']) {
       document.querySelector(`nav button[data-tab="${k}"]`)?.classList.toggle('hidden', !visible(k));
     }
     // Reports are the downloads themselves, not a tab of their own — and each
@@ -1285,6 +1285,143 @@
     syncSel('inbound');
   }
 
+  // ── Bundles — kit/bundle definitions over the client's own catalogue ───────
+  // Loaded lazily when the tab is opened (same pattern as Send/Guide), not on
+  // every loadAll() — this is a management screen, not live floor data.
+  let bundles = [];
+  function bnMsg(kind, text) {
+    const el = $('bnMsg');
+    el.className = 'asn-msg' + (kind ? ' ' + kind : '');
+    el.textContent = text;
+    el.classList.remove('hidden');
+  }
+  async function loadBundles() {
+    try {
+      const r = await api('/api/portal/bundles');
+      if (r.status === 401) { logout(); return; }
+      bundles = r.ok ? await r.json() : [];
+    } catch (e) { bundles = []; }
+    renderBundles();
+  }
+  function renderBundles() {
+    const write = canWrite();
+    $('bnActions').classList.toggle('hidden', !write);
+    if (!bundles.length) {
+      $('bnList').innerHTML = emptyState('&#127873;', 'No bundles defined yet',
+        write
+          ? 'Define what a kit/bundle SKU on your own listings resolves to — the real product SKUs and quantities beneath it. Once defined, any order carrying that code picks the real components automatically.'
+          : 'Ask a full-access login on your account to define one — a view-only login can see bundles here but not create them.');
+      return;
+    }
+    $('bnList').innerHTML = bundles.map(b => `
+      <div class="card" style="margin-bottom:.5rem">
+        <div class="row">
+          <div style="min-width:0;flex:1">
+            <div class="t mono" style="font-weight:800;font-size:.9rem">${esc(b.bundle_sku)}</div>
+            ${b.name && b.name !== b.bundle_sku ? `<div class="s muted">${esc(b.name)}</div>` : ''}
+            <div class="s muted" style="font-size:.78rem;margin-top:.15rem">${b.components.map(c => `${esc(c.sku)}&times;${c.qty}`).join(' + ')}</div>
+          </div>
+          <div style="text-align:right;white-space:nowrap">
+            <div class="n" style="font-size:1.15rem;font-weight:800;color:${b.available <= 0 ? 'var(--bad)' : 'var(--ok)'}">${num(b.available)}</div>
+            <div class="l" style="font-size:.63rem;color:var(--muted);font-weight:800;text-transform:uppercase">Can make</div>
+          </div>
+        </div>
+        ${write ? `<div class="row" style="margin-top:.4rem;gap:.4rem">
+          <button class="btn-sm bn-edit" data-sku="${esc(b.bundle_sku)}">Edit</button>
+          <button class="btn-sm btn-del bn-del" data-sku="${esc(b.bundle_sku)}">&#128465; Delete</button>
+        </div>` : ''}
+      </div>`).join('');
+    if (!write) return;
+    document.querySelectorAll('.bn-edit').forEach(btn => btn.addEventListener('click',
+      () => openBundleModal(bundles.find(x => x.bundle_sku === btn.dataset.sku))));
+    document.querySelectorAll('.bn-del').forEach(btn => btn.addEventListener('click', async () => {
+      if (!confirm(`Delete bundle "${btn.dataset.sku}"? Your stock and its components are untouched.`)) return;
+      try {
+        const r = await api('/api/portal/bundles/' + encodeURIComponent(btn.dataset.sku), { method: 'DELETE' });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Could not delete it.'); return; }
+        loadBundles();
+      } catch (e) { alert('Could not reach the server.'); }
+    }));
+  }
+  function bnCompRow(sku, qty) {
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex;gap:.4rem;margin-top:.35rem';
+    div.innerHTML = `<input class="bn-csku" placeholder="your SKU" value="${esc(sku || '')}" style="flex:2;width:auto;padding:.4rem .5rem;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:inherit">
+      <input class="bn-cqty" type="number" min="1" value="${qty || 1}" style="width:70px;padding:.4rem .5rem;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:inherit">
+      <button class="btn-sm bn-crm" type="button">&#10005;</button>`;
+    div.querySelector('.bn-crm').addEventListener('click', () => div.remove());
+    return div;
+  }
+  function openBundleModal(b) {
+    $('bnSku').value = b?.bundle_sku || '';
+    $('bnSku').disabled = !!b;   // renaming a kit means deleting and redefining it — never silently
+    $('bnName').value = b?.name || '';
+    $('bnErr').classList.add('hidden');
+    const wrap = $('bnComponents'); wrap.innerHTML = '';
+    const comps = (b && b.components && b.components.length) ? b.components : [{ sku: '', qty: 1 }];
+    comps.forEach(c => wrap.appendChild(bnCompRow(c.sku, c.qty)));
+    $('bnModal').classList.remove('hidden');
+  }
+  $('bnAddBtn')?.addEventListener('click', () => openBundleModal(null));
+  $('bnAddComp')?.addEventListener('click', () => $('bnComponents').appendChild(bnCompRow('', 1)));
+  $('bnCancel')?.addEventListener('click', () => $('bnModal').classList.add('hidden'));
+  $('bnSave')?.addEventListener('click', async () => {
+    const bundle_sku = $('bnSku').value.trim();
+    const name = $('bnName').value.trim();
+    const components = [...document.querySelectorAll('#bnComponents > div')].map(d => ({
+      sku: d.querySelector('.bn-csku').value.trim(), qty: Number(d.querySelector('.bn-cqty').value) || 0,
+    })).filter(c => c.sku && c.qty > 0);
+    const err = $('bnErr');
+    if (!bundle_sku) { err.textContent = 'Kit SKU is required.'; err.classList.remove('hidden'); return; }
+    if (!components.length) { err.textContent = 'Add at least one component.'; err.classList.remove('hidden'); return; }
+    try {
+      const r = await api('/api/portal/bundles', { method: 'POST', body: JSON.stringify({ bundle_sku, name, components }) });
+      const d = await r.json();
+      if (!r.ok) { err.textContent = d.error || 'Save failed.'; err.classList.remove('hidden'); return; }
+      $('bnModal').classList.add('hidden');
+      bnMsg('', `Saved — "${d.bundle_sku}" now resolves to ${d.components.length} component(s).`);
+      loadBundles();
+    } catch (e) { err.textContent = 'Could not reach the server.'; err.classList.remove('hidden'); }
+  });
+  // Bulk — the same "Kit SKU / Inventory SKU / Quantity" template the office
+  // uses, read via /api/portal/bundles/import.
+  $('bnImportBtn')?.addEventListener('click', () => $('bnFileInput').click());
+  $('bnFileInput')?.addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0];
+    $('bnFileInput').value = '';
+    if (f) await uploadBundleFile(f);
+  });
+  async function uploadBundleFile(file, opts = {}) {
+    $('bnMsg').classList.add('hidden');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      if (opts.confirmApply) fd.append('confirm_apply', 'yes');
+      const r = await api('/api/portal/bundles/import', { method: 'POST', body: fd });
+      const d = await r.json();
+      if (r.status === 409 && d.needsBundleImportConfirm) {
+        const p = d.preview || {};
+        let m = `IMPORT BUNDLES\n\nFile: ${d.filename}\n\n${p.kits} kit(s), ${p.components} component line(s) in the file.\n`
+          + `${p.willCreate} kit(s) will be defined — each one resolves an order line into these components automatically.`;
+        if (p.skippedKitCount) {
+          m += `\n\n⚠ ${p.skippedKitCount} kit(s) name a SKU not in your item master and will NOT be saved until fixed:\n`
+            + p.skippedKits.slice(0, 10).map(s => `• ${s.kit}: ${s.missing.join(', ')}`).join('\n')
+            + (p.skippedKitCount > 10 ? '\n…' : '');
+        }
+        if (p.badRows) m += `\n\n${p.badRows} row(s) had no Kit SKU or no Inventory SKU and will be skipped.`;
+        m += `\n\nOK = import · Cancel = nothing happens`;
+        if (confirm(m)) return uploadBundleFile(file, { ...opts, confirmApply: true });
+        return;
+      }
+      if (!r.ok) { bnMsg('err', d.error || 'Import failed.'); return; }
+      let msg = `Defined ${d.kits} bundle(s)`;
+      if (d.badRows) msg += ` · skipped ${d.badRows} unreadable row(s)`;
+      if ((d.skippedKits || []).length) msg += ` · ${d.skippedKits.length} kit(s) skipped (unknown component)`;
+      bnMsg((d.skippedKits || []).length ? 'err' : '', msg);
+      loadBundles();
+    } catch (e) { bnMsg('err', 'Could not reach the server.'); }
+  }
+
   // ── ASN submission ────────────────────────────────────────────────────────
   const asnMsg = (kind, text) => {
     const el = $('asnMsg');
@@ -1960,6 +2097,7 @@
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
     document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + b.dataset.tab));
     if (b.dataset.tab === 'send') loadSubmissions();
+    if (b.dataset.tab === 'bundles') loadBundles();
     if (b.dataset.tab === 'help') loadGlossary();
     if (b.dataset.tab === 'overview') liveTick();
     window.scrollTo({ top: 0, behavior: 'smooth' });

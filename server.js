@@ -4457,6 +4457,7 @@ const PORTAL_SECTIONS = [
   { key: 'stock',    label: 'Stock',    hint: 'Live stock levels and their stock movement statement.' },
   { key: 'orders',   label: 'Orders',   hint: 'Outbound orders, their status, waybills and collection.' },
   { key: 'inbound',  label: 'Inbound',  hint: 'Inbound shipments, receipts (GRN) and sending an ASN.' },
+  { key: 'bundles',  label: 'Bundles',  hint: 'Kit/bundle SKUs built from your own catalogue — what a kit code resolves to for picking.' },
   { key: 'send',     label: 'Send work in', hint: 'Uploading order files and waybill PDFs for our approval.' },
   { key: 'reports',  label: 'Reports',  hint: 'The dated Excel downloads on every tab.' },
 ];
@@ -4526,6 +4527,7 @@ function portalSectionForPath(p) {
       || p.startsWith('/api/portal/order/')) return 'orders';
   if (p === '/api/portal/inbound' || p.startsWith('/api/portal/grn/')
       || p === '/api/portal/asn' || p === '/api/portal/asn-template') return 'inbound';
+  if (p === '/api/portal/bundles' || p.startsWith('/api/portal/bundles/')) return 'bundles';
   if (p === '/api/portal/submissions' || p.startsWith('/api/portal/submissions/')
       || p === '/api/portal/submit-orders' || p === '/api/portal/preview-orders'
       || p === '/api/portal/submit-labels') return 'send';
@@ -5799,6 +5801,95 @@ app.get('/api/portal/stock', requirePortalAuthMiddleware, (req, res) => {
   rows = sortStockRows(rows, req.query.sort, req.query.dir);
   res.json({ rows, agingDays, agingDaysDefault: PORTAL_AGING_DAYS_DEFAULT,
     sort: String(req.query.sort || 'sku'), dir: String(req.query.dir || 'asc') });
+});
+// ── Bundles — a client defines what a kit/bundle SKU on THEIR OWN listings
+// resolves to, from THEIR OWN catalogue. Read is open to any signed-in login
+// (view-only included, same as Stock); writing is requirePortalWrite, same as
+// an ASN or the aging threshold. Once defined, the same explodeBundleRows
+// path every other door already uses turns a bundle-coded order line — a
+// synced ZORT order included — into its real components at intake, with no
+// further wiring: this only creates the DEFINITION.
+app.get('/api/portal/bundles', requirePortalAuthMiddleware, (req, res) => {
+  const cid = invClientId(req.portalClient);
+  let bundles = [];
+  try { bundles = inventory.getBundles(cid).map(b => ({ ...b, available: inventory.bundleAvailable(cid, b.bundle_sku) })); } catch (_) {}
+  res.json(bundles);
+});
+// ALWAYS VIRTUAL — a physical, pre-built kit is warehouse floor work (🔨
+// Build consumes real stock), never a portal action; a client only ever
+// defines what a code MEANS for picking.
+app.post('/api/portal/bundles', express.json(), requirePortalWrite, (req, res) => {
+  const cid = invClientId(req.portalClient);
+  const bundle_sku = String(req.body?.bundle_sku || '').trim();
+  const name = String(req.body?.name || '').trim();
+  const rawComponents = Array.isArray(req.body?.components) ? req.body.components : [];
+  if (!bundle_sku) return res.status(400).json({ error: 'Kit SKU is required.' });
+  const comps = rawComponents
+    .map(c => ({ sku: String(c?.sku || '').trim(), qty: Math.max(1, Math.round(Number(c?.qty) || 0)) }))
+    .filter(c => c.sku && c.qty > 0);
+  if (!comps.length) return res.status(400).json({ error: 'Add at least one component.' });
+  // EVERY COMPONENT MUST BE IN THIS CLIENT'S OWN ITEM MASTER. inventory.get
+  // is client-scoped, so a component naming another client's SKU simply reads
+  // as unknown — there is no cross-client lookup to close, the data itself
+  // never crosses the boundary. Named by SKU, never silently dropped or
+  // invented, and refused whole (a portal write gets a human-reviewed office
+  // equivalent nowhere in the loop, so it is stricter than the bulk import).
+  const unknown = comps.filter(c => { try { return !inventory.get(c.sku, cid); } catch (_) { return true; } }).map(c => c.sku);
+  if (unknown.length) {
+    return res.status(400).json({
+      error: `Not in your item master: ${unknown.join(', ')} — add them to your catalogue first, or check the SKU.`,
+      unknownSkus: unknown,
+    });
+  }
+  try {
+    const bundle = inventory.upsertBundle(cid, bundle_sku, name || bundle_sku, comps, 'virtual');
+    logAudit('client_bundle_upserted', {
+      client: req.portalClient, bundle: bundle.bundle_sku, components: bundle.components.length,
+      by: `portal:${req.portalUserId}`,
+    });
+    zortNotifyStockChange(readDb(), cid, bundle.components.map(c => c.sku));
+    res.json({ ...bundle, available: inventory.bundleAvailable(cid, bundle.bundle_sku) });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.delete('/api/portal/bundles/:sku', requirePortalWrite, (req, res) => {
+  const cid = invClientId(req.portalClient);
+  try { inventory.deleteBundle(cid, req.params.sku); } catch (e) { return res.status(400).json({ error: e.message }); }
+  logAudit('client_bundle_deleted', { client: req.portalClient, bundle: req.params.sku, by: `portal:${req.portalUserId}` });
+  res.json({ ok: true });
+});
+// Bulk — the SAME "Kit SKU / Inventory SKU / Quantity" template AND the same
+// per-kit skip rule the office importer uses (parseBundleImportRows /
+// planBundleImport / applyBundleImport, near explodeBundleRows) — one
+// implementation, so the two screens can never disagree about what a file
+// means or which kits a given confirm actually saves.
+app.post('/api/portal/bundles/import', upload.single('file'), (req, res) => {
+  // multer does not reliably carry the AsyncLocalStorage tenant context, and
+  // this route sits outside the global auth middleware, so re-establish the
+  // portal session (and its tenant) after the upload has been parsed — same
+  // reason /api/portal/asn does this.
+  requirePortalWrite(req, res, () => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const cid = invClientId(req.portalClient);
+    let parsed;
+    try { parsed = parseBundleImportRows(req.file.buffer, req.file.originalname); }
+    catch (e) { return res.status(400).json({ error: 'Could not parse file: ' + e.message }); }
+
+    if (String(req.body?.confirm_apply || '') !== 'yes') {
+      const pv = bundleImportPreview(cid, parsed.groups);
+      return res.status(409).json({
+        needsBundleImportConfirm: true, filename: req.file.originalname || 'bundle import',
+        preview: { ...pv, badRows: parsed.badRows },
+      });
+    }
+    const { saved, skipped, allComponentSkus } = applyBundleImport(cid, parsed.groups);
+    logAudit('client_bundles_imported', {
+      client: req.portalClient, filename: req.file.originalname || 'bundle import',
+      kits: saved.length, components: allComponentSkus.size,
+      skippedKits: skipped.map(s => s.kit), by: `portal:${req.portalUserId}`,
+    });
+    zortNotifyStockChange(readDb(), cid, [...allComponentSkus]);
+    res.json({ ok: true, kits: saved.length, kitSkus: saved, skippedKits: skipped, badRows: parsed.badRows });
+  });
 });
 // One of THEIR orders in full — the line detail behind an Orders row.
 app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res) => {
@@ -29318,6 +29409,106 @@ function explodeBundleRows(rows, clientOf) {
   return out;
 }
 
+// ── Bundle bulk import — "Kit SKU / Inventory SKU / Quantity" template ─────
+// A real kitting export lists a bundle ONE ROW PER COMPONENT (several rows
+// share a Kit SKU), never pre-grouped — so the whole job here is turning that
+// flat list back into one bundle per kit. Shared by the office importer
+// (/api/inventory/bundles/import) and the client portal (/api/portal/bundles/
+// import): ONE parser, so a header synonym added for one is never missed by
+// the other, and the two screens can never disagree about what a file means.
+function parseBundleImportRows(buf, filename) {
+  const name = String(filename || '').toLowerCase();
+  let rows = [];
+  const isXlsx = buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4b;
+  const isXls  = buf.length > 7 && buf[0] === 0xd0 && buf[1] === 0xcf;
+  if (isXlsx || isXls || name.endsWith('.xlsx') || name.endsWith('.xls')) {
+    const wb = XLSX.read(buf, { type: 'buffer' });
+    rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })
+      .map(r => { const o = {}; for (const [k, v] of Object.entries(r)) o[String(k).trim().toLowerCase().replace(/[^a-z0-9]/g, '')] = v; return o; });
+  } else {
+    const text = buf.toString('utf8').replace(/^﻿/, '');
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) throw new Error('Empty file.');
+    const delim = (lines[0].includes(';') && !lines[0].includes(',')) ? ';' : ',';
+    const cols = lines[0].split(delim).map(c => c.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+    rows = lines.slice(1).map(line => {
+      const cells = line.split(delim); const o = {};
+      cols.forEach((c, i) => { o[c] = (cells[i] || '').trim(); });
+      return o;
+    });
+  }
+  const kitOf = r => String(r.kitsku ?? r.bundlesku ?? r.kit ?? r.parentsku ?? '').trim();
+  const skuOf = r => String(r.inventorysku ?? r.componentsku ?? r.sku ?? r.itemcode ?? '').trim();
+  const qtyOf = r => Math.max(1, Math.round(Number(r.quantity ?? r.qty ?? 1) || 1));
+  const groups = new Map();   // kitSku -> Map(componentSku -> qty)
+  let badRows = 0;
+  for (const r of rows) {
+    const kit = kitOf(r), sku = skuOf(r);
+    if (!kit || !sku) { badRows++; continue; }
+    if (!groups.has(kit)) groups.set(kit, new Map());
+    const m = groups.get(kit);
+    // Two rows of the same component for one kit SUM — the same duplicate-line
+    // reasoning used everywhere else in this app, never a silent overwrite.
+    m.set(sku, (m.get(sku) || 0) + qtyOf(r));
+  }
+  const out = new Map();
+  for (const [kit, m] of groups) out.set(kit, [...m].map(([sku, qty]) => ({ sku, qty })));
+  return { groups: out, badRows };
+}
+
+// ONE decision, consulted by both the preview and the write, so the number
+// somebody confirms can never disagree with what actually gets saved.
+// `clientId` must already be the resolved inventory account (invClientId).
+//
+// A KIT NAMING AN UNKNOWN COMPONENT IS SKIPPED WHOLE, not written with a gap
+// in it — a bundle missing one of its own pieces would explode a future order
+// line into a pick list a packer cannot fulfil, silently, weeks after the
+// import. Named by kit AND by SKU, so it reads as "fix these two lines",
+// never as a bare count.
+function planBundleImport(clientId, groups) {
+  const ok = [];              // [{kit, comps}]
+  const skipped = [];         // [{kit, missing:[sku,...]}]
+  for (const [kit, comps] of groups) {
+    if (!comps.length) continue;
+    const missing = comps
+      .filter(c => { let e = null; try { e = inventory.get(c.sku, clientId); } catch (_) {} return !e; })
+      .map(c => c.sku);
+    if (missing.length) skipped.push({ kit, missing });
+    else ok.push({ kit, comps });
+  }
+  return { ok, skipped };
+}
+function bundleImportPreview(clientId, groups) {
+  const { ok, skipped } = planBundleImport(clientId, groups);
+  const unknownSkus = new Set();
+  for (const s of skipped) for (const sku of s.missing) unknownSkus.add(sku);
+  const kitSkus = [...groups.keys()];
+  return {
+    kits: kitSkus.length, kitSkus,
+    components: [...groups.values()].reduce((n, c) => n + c.length, 0),
+    willCreate: ok.length, willCreateKits: ok.map(x => x.kit),
+    skippedKits: skipped, skippedKitCount: skipped.length,
+    unknownSkus: [...unknownSkus], unknownSkuCount: unknownSkus.size,
+  };
+}
+// Writes every VALID group as a VIRTUAL bundle (see explodeBundleRows above —
+// that is what makes a synced order line showing the kit SKU explode into its
+// real components on the very next pull/upload, with no further wiring
+// needed). Kits with an unknown component are left out — see planBundleImport.
+function applyBundleImport(clientId, groups) {
+  const { ok, skipped } = planBundleImport(clientId, groups);
+  const saved = [];
+  const allComponentSkus = new Set();
+  for (const { kit, comps } of ok) {
+    let bundle;
+    try { bundle = inventory.upsertBundle(clientId, kit, kit, comps, 'virtual'); }
+    catch (_) { continue; }
+    saved.push(bundle.bundle_sku);
+    for (const c of comps) allComponentSkus.add(c.sku);
+  }
+  return { saved, skipped, allComponentSkus };
+}
+
 // Every /api/inventory route needs an explicit client. Reads take ?clientId=,
 // writes take it in the body. Missing → 400 (never a 500 from the store guard).
 function reqClientId(req) {
@@ -30101,6 +30292,46 @@ app.post('/api/inventory/bundles', requireAuth, express.json(), (req, res) => {
     if (bundle.type === 'virtual') zortNotifyStockChange(readDb(), cid, bundle.components.map(c => c.sku));
     res.json({ ...bundle, available: inventory.bundleAvailable(cid, bundle.bundle_sku) });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+// BULK — the "Kit SKU / Inventory SKU / Quantity" template a real kitting
+// export already comes in as (one row per component, several rows per kit).
+// Registered BEFORE /:sku/build and /:sku for the same reason /bundles is
+// registered before /:sku on the plain inventory routes.
+// PREVIEW-CONFIRM, same discipline as every other mass write here: nothing is
+// written until `confirm_apply=yes`, and the confirm names every component
+// SKU that is not in this client's item master rather than inventing it.
+// ALWAYS VIRTUAL — a bulk import defines what a marketplace kit code resolves
+// to for picking; a PHYSICAL kit (built, stocked and sold as its own SKU) is
+// a per-bundle decision made from the single "+ Define bundle" form instead.
+app.post('/api/inventory/bundles/import', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const rawCid = String(req.body?.clientId || '').trim();
+  if (!rawCid) return res.status(400).json({ error: 'clientId is required' });
+  const cid = invClientId(canonicalClientName(readDb(), rawCid));
+  if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
+
+  let parsed;
+  try { parsed = parseBundleImportRows(req.file.buffer, req.file.originalname); }
+  catch (e) { return res.status(400).json({ error: 'Could not parse file: ' + e.message }); }
+
+  if (String(req.body?.confirm_apply || '') !== 'yes') {
+    const pv = bundleImportPreview(cid, parsed.groups);
+    return res.status(409).json({
+      needsBundleImportConfirm: true, client: cid,
+      filename: req.file.originalname || 'bundle import',
+      preview: { ...pv, badRows: parsed.badRows },
+    });
+  }
+
+  const who = req.userId || _tokenUserId(req) || '';
+  const { saved, skipped, allComponentSkus } = applyBundleImport(cid, parsed.groups);
+  logAudit('bundles_imported', {
+    clientId: cid, filename: req.file.originalname || 'bundle import',
+    kits: saved.length, components: allComponentSkus.size,
+    skippedKits: skipped.map(s => s.kit), by: who,
+  });
+  zortNotifyStockChange(readDb(), cid, [...allComponentSkus]);
+  res.json({ ok: true, kits: saved.length, kitSkus: saved, skippedKits: skipped, badRows: parsed.badRows });
 });
 // PHYSICAL KITTING — build N units: consume components, inbound the bundle SKU
 // as real stock, then sync both the consumed components AND the new bundle

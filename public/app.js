@@ -19497,6 +19497,56 @@
       } catch (e) { /* leave prior */ }
     }
 
+    // ── Bulk bundle import — "Kit SKU / Inventory SKU / Quantity" template ──
+    function pickBundleFile() {
+      if (!clientId) { alert('Load a client first.'); return; }
+      const inp = $('invBundleFileInput');
+      inp.onchange = async () => { const f = inp.files && inp.files[0]; inp.value = ''; if (f) await uploadBundleFile(f); };
+      inp.click();
+    }
+    async function uploadBundleFile(file, opts = {}) {
+      const st = $('invBundleImportStatus');
+      st.className = 'status-bar progress'; st.textContent = `Reading "${file.name}"…`; st.classList.remove('hidden');
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('clientId', clientId);
+        if (opts.confirmApply) fd.append('confirm_apply', 'yes');
+        const r = await fetch('/api/inventory/bundles/import', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (r.status === 409 && d.needsBundleImportConfirm) {
+          const p = d.preview || {};
+          let m = `IMPORT BUNDLES\n\nClient: ${d.client}\nFile: ${d.filename}\n\n`
+            + `${p.kits} kit(s), ${p.components} component line(s) in the file.\n`
+            + `${p.willCreate} kit(s) will be defined — each one EXPLODES into these components on the next order, `
+            + `a synced ZORT order included.`;
+          // A KIT NAMING AN UNKNOWN COMPONENT IS LEFT OUT WHOLE, not written
+          // with a gap in it — named by kit AND by SKU, since "3 unknown SKUs"
+          // cannot be acted on but "GIFTSET-A is missing WIDGET-9" can.
+          if (p.skippedKitCount) {
+            m += `\n\n⚠ ${p.skippedKitCount} kit(s) will be SKIPPED — a component isn't in this client's item master:\n`
+              + p.skippedKits.slice(0, 10).map(s => `• ${s.kit}: ${s.missing.join(', ')}`).join('\n')
+              + (p.skippedKitCount > 10 ? '\n…' : '');
+          }
+          if (p.badRows) m += `\n\n${p.badRows} row(s) had no Kit SKU or no Inventory SKU and will be skipped.`;
+          m += `\n\nOK = import · Cancel = nothing happens`;
+          if (confirm(m)) return uploadBundleFile(file, { ...opts, confirmApply: true });
+          st.classList.add('hidden');
+          return;
+        }
+        if (!r.ok) { st.className = 'status-bar error'; st.textContent = d.error || 'Import failed'; return; }
+        let msg = `✓ Defined ${d.kits} bundle(s)`;
+        if (d.badRows) msg += ` · skipped ${d.badRows} unreadable row(s)`;
+        if ((d.skippedKits || []).length) msg += ` · ${d.skippedKits.length} kit(s) skipped (unknown component)`;
+        st.className = 'status-bar success'; st.textContent = msg;
+        if ((d.skippedKits || []).length) {
+          alert(`Not defined — a component isn't in the item master:\n\n`
+            + d.skippedKits.map(s => `• ${s.kit}: ${s.missing.join(', ')}`).join('\n'));
+        }
+        loadBundles();
+      } catch (e) { st.className = 'status-bar error'; st.textContent = 'Import error: ' + e.message; }
+    }
+
     function compRow(sku, qty) {
       const div = document.createElement('div');
       div.style.cssText = 'display:flex;gap:.4rem;margin-bottom:.35rem';
@@ -19566,6 +19616,7 @@
       qtyHint();
       $('invClient')?.addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
       $('invBundleAddBtn')?.addEventListener('click', () => openBundle(null));
+      $('invBundleImportBtn')?.addEventListener('click', pickBundleFile);
       $('bmAddComp')?.addEventListener('click', () => $('bmComponents').appendChild(compRow('', 1)));
       $('bmCancelBtn')?.addEventListener('click', () => $('bundleModal').classList.add('hidden'));
       $('bmSaveBtn')?.addEventListener('click', async () => {

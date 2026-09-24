@@ -505,6 +505,7 @@
     <button data-tab="stock"><span class="ti">&#128230;</span> Stock</button>
     <button data-tab="orders"><span class="ti">&#128666;</span> Orders</button>
     <button data-tab="inbound"><span class="ti">&#128229;</span> Inbound</button>
+    <button data-tab="bundles"><span class="ti">&#127873;</span> Bundles</button>
     <button data-tab="send"><span class="ti">&#128228;</span> Send<span class="tw"> Orders</span></button>
     <button data-tab="help"><span class="ti">&#128161;</span> Guide</button>
   </nav>
@@ -641,6 +642,27 @@
       </div>
       <div id="ibList"></div>
       <div class="muted" id="ibWindowNote" style="text-align:center;font-size:.72rem;margin-top:.8rem"></div>
+    </section>
+
+    <!-- ── BUNDLES — what a kit/bundle SKU on your own listings resolves to,
+         from your own catalogue. Defining one here is all that is needed —
+         the very next order carrying that code, uploaded or synced, explodes
+         into its real components for picking automatically. -->
+    <section id="tab-bundles" class="hidden">
+      <div class="card" style="margin-bottom:.6rem">
+        <div class="muted" style="font-size:.79rem">
+          A kit/bundle SKU is a code your listing sells that is really several of your own
+          product SKUs. Define it once here — an order carrying that code, however it
+          arrives, will pick the real SKUs and quantities beneath it.
+        </div>
+      </div>
+      <div class="asn-actions" id="bnActions">
+        <button class="btn-sm" id="bnImportBtn">&#8593; Import from file</button>
+        <button class="btn-sm asn-primary" id="bnAddBtn">+ Define bundle</button>
+      </div>
+      <input type="file" id="bnFileInput" accept=".xlsx,.xls,.csv" style="display:none">
+      <div id="bnMsg" class="asn-msg hidden" style="margin-top:.5rem"></div>
+      <div id="bnList" style="margin-top:.6rem"></div>
     </section>
 
     <!-- ── SEND ORDERS ──────────────────────────────────────────────────────
@@ -813,6 +835,27 @@
         <div class="asn-actions" style="margin-top:.8rem">
           <button class="btn-sm" id="cfmCancel">Cancel</button>
           <button class="btn-sm asn-primary" id="cfmGo">Looks right &mdash; next &#8594;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Define / edit a bundle. Always virtual here — building a physical
+         pre-packed kit consumes real stock, which is warehouse floor work,
+         not a portal action. -->
+    <div class="modal-bg hidden" id="bnModal">
+      <div class="modal-box">
+        <b style="font-size:.95rem">Define bundle</b>
+        <label for="bnSku" style="margin-top:.5rem">Kit SKU <span style="font-weight:600;text-transform:none;letter-spacing:0">(what your listing sells)</span></label>
+        <input id="bnSku" type="text" placeholder="e.g. GIFTSET-XMAS" autocomplete="off">
+        <label for="bnName" style="margin-top:.5rem">Name <span style="font-weight:600;text-transform:none;letter-spacing:0">(optional)</span></label>
+        <input id="bnName" type="text" autocomplete="off">
+        <label style="margin-top:.6rem;display:block">Components — your own SKU &times; qty per kit</label>
+        <div id="bnComponents"></div>
+        <button class="btn-sm" id="bnAddComp" type="button" style="margin-top:.3rem">+ Add component</button>
+        <div id="bnErr" class="asn-msg err hidden" style="margin-top:.5rem"></div>
+        <div class="asn-actions" style="margin-top:.8rem">
+          <button class="btn-sm" id="bnCancel">Cancel</button>
+          <button class="btn-sm asn-primary" id="bnSave">Save bundle</button>
         </div>
       </div>
     </div>

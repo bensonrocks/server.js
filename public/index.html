@@ -3435,10 +3435,15 @@
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
             <div>
               <b>🎁 Bundles (BOM)</b>
-              <div class="hint" style="margin:.2rem 0 0">A bundle SKU = component SKUs × qty. Availability is <b>computed from components</b> and synced to the sales channels. When a bundle is ordered it auto-explodes into components for picking.</div>
+              <div class="hint" style="margin:.2rem 0 0">A bundle SKU = component SKUs × qty. Availability is <b>computed from components</b> and synced to the sales channels. When a bundle is ordered — including a synced ZORT order — it auto-explodes into components for picking.</div>
             </div>
-            <button class="btn-secondary btn-sm" id="invBundleAddBtn">+ Define bundle</button>
+            <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+              <button class="btn-secondary btn-sm" id="invBundleImportBtn">⬆ Import bundles</button>
+              <button class="btn-secondary btn-sm" id="invBundleAddBtn">+ Define bundle</button>
+            </div>
           </div>
+          <div id="invBundleImportStatus" class="status-bar hidden" style="margin-top:.4rem"></div>
+          <input type="file" id="invBundleFileInput" accept=".xlsx,.xls,.csv" style="display:none" />
           <div style="overflow-x:auto;margin-top:.6rem">
             <table class="tbl" style="width:100%">
               <thead><tr>

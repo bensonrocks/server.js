@@ -458,6 +458,13 @@
       "timeoutMs": 600000
     },
     {
+      "file": "bundle-import-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 180000
+    },
+    {
       "file": "onecart-ref-e2e.js",
       "browser": false,
       "selfBoots": true,
