@@ -1150,7 +1150,7 @@
         <th>SKU</th><th>Product</th><th class="r">Ordered</th>${showPacked ? '<th class="r">Packed</th>' : ''}
       </tr></thead><tbody>
         ${d.lines.map(l => `<tr>
-          <td class="mono">${esc(l.sku)}</td>
+          <td class="mono">${esc(l.sku)}${l.from_bundle ? ` <span class="pill p-bundle" title="This is part of bundle ${esc(l.from_bundle)} — your order named the bundle SKU, not this line directly">&#127873; Bundle</span>` : ''}</td>
           <td>${esc(l.description || '—')}${l.batch_number ? `<div class="muted" style="font-size:.7rem">Batch ${esc(l.batch_number)}${l.expiry_date ? ' · exp ' + esc(l.expiry_date) : ''}</div>` : ''}</td>
           <td class="r n">${num(l.qty)}</td>
           ${showPacked ? `<td class="r n" style="color:${l.packed >= l.qty ? 'var(--ok)' : 'var(--warn)'}">${num(l.packed)}</td>` : ''}

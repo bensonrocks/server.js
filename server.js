@@ -5924,6 +5924,10 @@ app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res
         sku: l.sku, description: l.description || '',
         qty: l.qty || 0, packed: scanned[l.sku] || 0,
         batch_number: l.batch_number || '', expiry_date: l.expiry_date || '',
+        // Which kit SKU this line was substituted for (explodeBundleRows) —
+        // same field the office scan screen already shows, so a client
+        // asking "why is this on my order" gets the same answer we would.
+        from_bundle: l.from_bundle || '',
       })),
     });
   }
