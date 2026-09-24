@@ -985,6 +985,20 @@
       : emptyState('&#128269;', 'Looking through your older orders…', 'Nothing on this page matches — checking your full history.');
   }
 
+  // THE KIT SKU ITSELF, not just the fact one was substituted — for a
+  // VIRTUAL bundle that code is never a pick line (it exploded away at
+  // intake, only its real components ship), so the order card is the one
+  // place a client can read it without expanding the order. Several
+  // distinct kits collapse to a count, named in full in the tooltip.
+  function bundlePillHtml(o) {
+    const skus = Array.isArray(o?.bundle_skus) ? o.bundle_skus.filter(Boolean) : [];
+    if (!skus.length) return '';
+    const label = skus.length === 1 ? esc(skus[0]) : `${skus.length} bundles`;
+    const title = skus.length === 1
+      ? `This order carries a component of bundle ${esc(skus[0])} — the kit SKU itself is never a pick line, only its real components`
+      : `This order carries components of ${skus.length} bundles: ${skus.map(esc).join(', ')} — none of the kit SKUs themselves are pick lines, only their real components`;
+    return ` <span class="pill p-bundle" style="font-size:.62rem;vertical-align:middle" title="${title}">&#127873; ${label}</span>`;
+  }
   // ONE CARD RENDERER, used by the everyday list AND by a full-history search
   // result. A second copy would drift, and the first thing to drift would be
   // whether a cancelled order still shows its reason and its re-placed note.
@@ -999,7 +1013,7 @@
             ? `<input type="checkbox" class="pick" data-k="${esc(o.order_number)}" title="Select to cancel">`
             : '<span class="no-pick"></span>'}
           <div style="min-width:0;flex:1">
-            <div class="mono" style="font-weight:800;font-size:.9rem">${esc(o.order_number)}${o.has_bundle ? ` <span class="pill p-bundle" style="font-size:.62rem;vertical-align:middle" title="At least one line was substituted for a bundle/kit SKU this order named — open it to see the real components">&#127873; Bundle</span>` : ''}</div>
+            <div class="mono" style="font-weight:800;font-size:.9rem">${esc(o.order_number)}${bundlePillHtml(o)}</div>
             <div class="muted" style="font-size:.76rem">
               ${fmtDate(o.date)} · ${num(o.lines)} line${o.lines === 1 ? '' : 's'} · ${num(o.total_qty)} pcs
             </div>
@@ -1150,7 +1164,7 @@
         <th>SKU</th><th>Product</th><th class="r">Ordered</th>${showPacked ? '<th class="r">Packed</th>' : ''}
       </tr></thead><tbody>
         ${d.lines.map(l => `<tr>
-          <td class="mono">${esc(l.sku)}${l.from_bundle ? `<div style="margin-top:.15rem"><span class="pill p-bundle" title="This is part of bundle ${esc(l.from_bundle)} — your order named the bundle SKU, not this line directly">&#127873; Bundle</span></div>` : ''}</td>
+          <td class="mono">${esc(l.sku)}${l.from_bundle ? `<div style="margin-top:.15rem"><span class="pill p-bundle" title="This is part of bundle ${esc(l.from_bundle)} — your order named the bundle SKU, not this line directly">&#127873; ${esc(l.from_bundle)}</span></div>` : ''}</td>
           <td>${esc(l.description || '—')}${l.batch_number ? `<div class="muted" style="font-size:.7rem">Batch ${esc(l.batch_number)}${l.expiry_date ? ' · exp ' + esc(l.expiry_date) : ''}</div>` : ''}</td>
           <td class="r n">${num(l.qty)}</td>
           ${showPacked ? `<td class="r n" style="color:${l.packed >= l.qty ? 'var(--ok)' : 'var(--warn)'}">${num(l.packed)}</td>` : ''}

@@ -2677,13 +2677,15 @@ body.ls-open { overflow: hidden; }
 .lot-badge.lot-cbreak,
 .lot-badge.lot-await,
 .lot-badge.lot-short,
-.lot-badge.lot-stage { white-space: normal; flex-wrap: wrap; max-width: 100%; align-items: flex-start; line-height: 1.35; }
+.lot-badge.lot-stage,
+.lot-badge.lot-bundle { white-space: normal; flex-wrap: wrap; max-width: 100%; align-items: flex-start; line-height: 1.35; }
 @media (max-width: 768px) {
   .lot-badge.lot-loc,
   .lot-badge.lot-cbreak,
   .lot-badge.lot-await,
   .lot-badge.lot-short,
-  .lot-badge.lot-stage { max-width: 46vw; }
+  .lot-badge.lot-stage,
+  .lot-badge.lot-bundle { max-width: 46vw; }
   /* Measured on a 412px phone: SKU 234 + Ordered 96 + Scanned 96 + icon 40 =
      466, i.e. 54px past the screen. The qty columns were spending 96px each on
      a two-digit number, so trim their horizontal padding — the numbers stay the

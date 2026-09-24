@@ -244,8 +244,13 @@
   .p-info { background:var(--info-bg); color:#1e40af; }
   /* A line that came from a kit/bundle SKU on the order — same pink used by
      the office scan screen's own bundle badge, so a client and a packer are
-     reading the same fact in the same colour. */
-  .p-bundle { background:#fdf2f8; color:#9d174d; }
+     reading the same fact in the same colour. Carries the actual kit SKU
+     text now (not just the word "Bundle"), which can run long — the base
+     .pill's white-space:nowrap would otherwise push the row past a phone's
+     width, the same overflow the office .lot-bundle badge already guards
+     against with wrapping + a max-width. */
+  .p-bundle { background:#fdf2f8; color:#9d174d; white-space:normal; max-width:100%; }
+  @media (max-width: 768px) { .p-bundle { max-width:60vw; } }
 
   /* alerts */
   .alert { display:flex; gap:.65rem; align-items:flex-start; border-radius:13px; padding:.75rem .85rem;

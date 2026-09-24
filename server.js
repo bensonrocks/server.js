@@ -3203,8 +3203,13 @@ function globalOrdersWithState(keep) {
         items:             enrichedLines,
         // At least one line was exploded from a bundle/kit SKU — surfaced on
         // the Orders LIST row so it is visible without opening the order,
-        // not just on the per-line pill inside the scan screen.
+        // not just on the per-line pill inside the scan screen. The KIT SKU
+        // itself is never a pick line for a virtual bundle (it exploded away
+        // at intake — only its real components are scanned), so this is the
+        // one place on the list row the code is readable at all. Deduped:
+        // an order can carry the same kit on several lines.
         has_bundle:        enrichedLines.some(l => !!l.from_bundle),
+        bundle_skus:        [...new Set(enrichedLines.filter(l => l.from_bundle).map(l => l.from_bundle))],
         uploadedAt:        batch.uploaded_at,
         idealscan_code:    batch.idealscan_code || '',
         scan_status:       state.status           || 'pending',
@@ -5949,15 +5954,32 @@ app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res
       // The waybill page we matched to this order. A number alone asks the
       // client to take it on trust; the label itself is the proof.
       has_label: !!(db.orderLabels || {})[o.order_number],
-      lines: (o.lines || []).map(l => ({
-        sku: l.sku, description: l.description || '',
-        qty: l.qty || 0, packed: scanned[l.sku] || 0,
-        batch_number: l.batch_number || '', expiry_date: l.expiry_date || '',
-        // Which kit SKU this line was substituted for (explodeBundleRows) —
-        // same field the office scan screen already shows, so a client
-        // asking "why is this on my order" gets the same answer we would.
-        from_bundle: l.from_bundle || '',
-      })),
+      lines: (() => {
+        // A BUNDLE-EXPLODED LINE'S STORED DESCRIPTION IS ITS OWN SKU
+        // (explodeBundleRows has no real name to give it), and this route
+        // used to pass that straight through — a client would read a raw
+        // component code ("PCMMPC6062AXXXXXXWEMY") where a product name
+        // belongs. Same "description equals SKU is a placeholder, not a
+        // name" rule globalOrdersWithState already applies for the office
+        // side, so the two screens cannot disagree about what a line is
+        // called.
+        const lookup = _makeSkuLookup();
+        return (o.lines || []).map(l => {
+          const stored = l.description || '';
+          const realDesc = (stored && stored !== l.sku) ? stored : '';
+          const hit = lookup(b, l.sku);
+          return {
+            sku: l.sku,
+            description: realDesc || hit.name || String(l.source_description || '').trim() || '',
+            qty: l.qty || 0, packed: scanned[l.sku] || 0,
+            batch_number: l.batch_number || '', expiry_date: l.expiry_date || '',
+            // Which kit SKU this line was substituted for (explodeBundleRows) —
+            // same field the office scan screen already shows, so a client
+            // asking "why is this on my order" gets the same answer we would.
+            from_bundle: l.from_bundle || '',
+          };
+        });
+      })(),
     });
   }
   res.status(404).json({ error: 'Order not found' });
@@ -6090,8 +6112,11 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
         lines: (o.lines || []).length, waybill: o.waybill_number || '', completed_at: st.endTime || null,
         // At least one line was substituted for a bundle/kit SKU the order
         // actually named — shown as a pill on the order card without needing
-        // to expand it, same fact the office Orders list flags.
+        // to expand it, same fact the office Orders list flags. The kit SKU
+        // itself never becomes a pick line for a virtual bundle, so this and
+        // the per-line pill are the only places it is readable at all.
         has_bundle: (o.lines || []).some(l => !!l.from_bundle),
+        bundle_skus: [...new Set((o.lines || []).filter(l => l.from_bundle).map(l => l.from_bundle))],
         delivery,
         pickup: _pk,
         stock: _sk ? { ...PORTAL_STOCK_LABEL[_sk.state], state: _sk.state, short: _sk.short.slice(0, 20) } : null,

@@ -240,6 +240,22 @@
     if (!gi) return '';
     return gi.toUpperCase() === String(o?.order_number || '').trim().toUpperCase() ? '' : gi;
   }
+  // THE ORDER-LEVEL "Bundle" PILL NAMES THE KIT SKU, not just the fact one
+  // exploded — for a VIRTUAL bundle that code is NEVER itself a pick line (it
+  // exploded away at intake, only its real components are scanned), so this
+  // row is the one place it is readable at all without opening the order. A
+  // single kit shows its own code; several distinct kits collapse to a count
+  // with all of them named in the tooltip, or the pill would grow without
+  // bound on an order carrying half a dozen bundle types.
+  function bundlePillHtml(o, cls) {
+    const skus = Array.isArray(o?.bundle_skus) ? o.bundle_skus.filter(Boolean) : [];
+    if (!skus.length) return '';
+    const label = skus.length === 1 ? esc(skus[0]) : `${skus.length} bundles`;
+    const title = skus.length === 1
+      ? `This order carries a component of bundle ${esc(skus[0])} — the kit SKU itself is never a pick line, only its real components`
+      : `This order carries components of ${skus.length} bundles: ${skus.map(esc).join(', ')} — none of the kit SKUs themselves are pick lines, only their real components`;
+    return ` <span class="${cls}" title="${title}">&#127873; ${label}</span>`;
+  }
   // Carrier strings off marketplace files arrive as the whole arrangement —
   // "Pickup: SpeedPost, Delivery: SpeedPost" — which wrapped into a four-line
   // green badge on EVERY phone row. Same courier both legs → just its name;
@@ -2757,7 +2773,7 @@
         <td class="ord-stripe-cell"></td>
         <td class="ord-select-cell"><input type="checkbox" class="ord-select" data-order="${esc(ord.order_number)}" ${orderSelection.has(ord.order_number) ? 'checked' : ''} onclick="event.stopPropagation()" /></td>
         <td class="col-order">
-          <span class="ord-no-link">${esc(ord.order_number)}</span>${ord.api_source ? ' <span class="api-pill" title="Synced from the marketplace — orders and completion status flow via the hub. Collection can be closed by waybill scan, by tick on the Collection screen (internal record, nothing relayed to the platform), or automatically when the hub reports the courier took it.">API</span>' : ''}${ord.has_bundle ? ' <span class="bundle-order-pill" title="At least one line was substituted for a bundle/kit SKU the order actually named — open the order to see the real components">&#127873; Bundle</span>' : ''}
+          <span class="ord-no-link">${esc(ord.order_number)}</span>${ord.api_source ? ' <span class="api-pill" title="Synced from the marketplace — orders and completion status flow via the hub. Collection can be closed by waybill scan, by tick on the Collection screen (internal record, nothing relayed to the platform), or automatically when the hub reports the courier took it.">API</span>' : ''}${bundlePillHtml(ord, 'bundle-order-pill')}
           ${isAdminView && ord.idealscan_code ? `<div class="ord-jobcode"><code class="job-code">${esc(ord.idealscan_code)}</code></div>` : ''}
           ${(() => { const g = giPillText(ord); return g ? `<div class="ord-jobcode" title="GI number"><code class="job-code">GI: ${esc(g)}</code></div>` : ''; })()}
           ${ord.transport_id ? `<div class="ord-jobcode" title="Linked Transport delivery job"><code class="job-code job-code-tr">🚚 ${esc(ord.transport_id)}</code></div>` : ''}
@@ -10316,7 +10332,7 @@
       // real component; this just says why a code they never uploaded is on
       // the pick list.
       if (item.from_bundle) {
-        lotParts.push(`<span class="lot-badge lot-bundle" title="This is a component of bundle ${esc(item.from_bundle)} — the order named the bundle SKU, not this line directly" style="background:#fdf2f8;color:#9d174d;font-weight:700">&#127873; Bundle</span>`);
+        lotParts.push(`<span class="lot-badge lot-bundle" title="This is a component of bundle ${esc(item.from_bundle)} — the order named the bundle SKU, not this line directly" style="background:#fdf2f8;color:#9d174d;font-weight:700">&#127873; ${esc(item.from_bundle)}</span>`);
       }
       // NOTE: the stock verdict is deliberately NOT repeated per line — per
       // the user it belongs at ORDER-SUMMARY level (the header pill built in
