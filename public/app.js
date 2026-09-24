@@ -10310,6 +10310,14 @@
       if (item.barcode && String(item.barcode).trim() && String(item.barcode).trim() !== item.sku) {
         lotParts.push(`<span class="lot-badge lot-barcode" title="Product barcode — scan this off the item" style="background:#ecfdf5;color:#065f46;font-weight:700">&#9646;&#9614;&#9646; ${esc(String(item.barcode).trim())}</span>`);
       }
+      // This line did NOT come off the order file as itself — it's a
+      // component explodeBundleRows substituted for a kit/bundle SKU the
+      // order actually named (ZORT sync included). The packer scans the
+      // real component; this just says why a code they never uploaded is on
+      // the pick list.
+      if (item.from_bundle) {
+        lotParts.push(`<span class="lot-badge lot-bundle" title="This is a component of bundle ${esc(item.from_bundle)} — the order named the bundle SKU, not this line directly" style="background:#fdf2f8;color:#9d174d;font-weight:700">&#127873; from ${esc(item.from_bundle)}</span>`);
+      }
       // NOTE: the stock verdict is deliberately NOT repeated per line — per
       // the user it belongs at ORDER-SUMMARY level (the header pill built in
       // enterItemsPhase), where one glance answers "can I finish this order".

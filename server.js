@@ -2653,6 +2653,11 @@ function summarizeOrders(lines) {
       // The code was MINTED here (a hub line with no SKU imports under
       // ZORT-P<productid>) — the screen and the store row say so.
       ...(line.sku_source ? { sku_source: line.sku_source } : {}),
+      // explodeBundleRows tags a component line with the KIT SKU it came
+      // from — without naming it here explicitly it was silently dropped
+      // the instant the order was created, and no screen could ever have
+      // shown a picker that a line came from a bundle.
+      ...(line.from_bundle ? { from_bundle: line.from_bundle } : {}),
     });
     map[key].total_qty += line.qty;
   }
