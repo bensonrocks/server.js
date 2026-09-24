@@ -3201,6 +3201,10 @@ function globalOrdersWithState(keep) {
         ...ord,
         lines:             enrichedLines,
         items:             enrichedLines,
+        // At least one line was exploded from a bundle/kit SKU — surfaced on
+        // the Orders LIST row so it is visible without opening the order,
+        // not just on the per-line pill inside the scan screen.
+        has_bundle:        enrichedLines.some(l => !!l.from_bundle),
         uploadedAt:        batch.uploaded_at,
         idealscan_code:    batch.idealscan_code || '',
         scan_status:       state.status           || 'pending',
@@ -6084,6 +6088,10 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
         order_number: o.order_number, date: o.date || b.uploaded_at,
         status: st.status || 'pending', total_qty: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
         lines: (o.lines || []).length, waybill: o.waybill_number || '', completed_at: st.endTime || null,
+        // At least one line was substituted for a bundle/kit SKU the order
+        // actually named — shown as a pill on the order card without needing
+        // to expand it, same fact the office Orders list flags.
+        has_bundle: (o.lines || []).some(l => !!l.from_bundle),
         delivery,
         pickup: _pk,
         stock: _sk ? { ...PORTAL_STOCK_LABEL[_sk.state], state: _sk.state, short: _sk.short.slice(0, 20) } : null,

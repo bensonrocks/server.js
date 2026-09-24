@@ -3000,6 +3000,15 @@ body.ls-open { overflow: hidden; }
   color: #7c3aed; background: #f5f3ff; border: 1px solid #ddd6fe;
   border-radius: 5px; padding: .04rem .32rem;
 }
+/* Order-level flag: at least one line was exploded from a bundle/kit SKU.
+   Same pink the per-line "🎁 Bundle" pill on the scan screen already uses —
+   one glance at the Orders list says so, without opening the order. */
+.bundle-order-pill {
+  display: inline-block; vertical-align: middle; margin-left: .3rem;
+  font-size: .62rem; font-weight: 800; letter-spacing: .02em;
+  color: #9d174d; background: #fdf2f8; border: 1px solid #fbcfe8;
+  border-radius: 5px; padding: .04rem .32rem;
+}
 
 /* ── Order claim chip: which station is packing this order right now ── */
 .chip-claimed { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-weight: 700; }

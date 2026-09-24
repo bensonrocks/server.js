@@ -999,7 +999,7 @@
             ? `<input type="checkbox" class="pick" data-k="${esc(o.order_number)}" title="Select to cancel">`
             : '<span class="no-pick"></span>'}
           <div style="min-width:0;flex:1">
-            <div class="mono" style="font-weight:800;font-size:.9rem">${esc(o.order_number)}</div>
+            <div class="mono" style="font-weight:800;font-size:.9rem">${esc(o.order_number)}${o.has_bundle ? ` <span class="pill p-bundle" style="font-size:.62rem;vertical-align:middle" title="At least one line was substituted for a bundle/kit SKU this order named — open it to see the real components">&#127873; Bundle</span>` : ''}</div>
             <div class="muted" style="font-size:.76rem">
               ${fmtDate(o.date)} · ${num(o.lines)} line${o.lines === 1 ? '' : 's'} · ${num(o.total_qty)} pcs
             </div>
