@@ -1029,12 +1029,18 @@ const SKU_DESC_FILE           = path.join(DATA_DIR, 'sku-descriptions.json');
 const LABEL_IMPORT_DIR   = path.join(DATA_DIR, 'label_imports');
 const INBOUND_PHOTO_DIR  = path.join(DATA_DIR, 'inbound_photos');
 const POD_PHOTO_DIR      = path.join(DATA_DIR, 'pod_photos');
+// The file that most recently, successfully defined a client's bundles — kept
+// ONE per (tenant, client), overwritten on every successful import, so the
+// client portal can hand it straight back as "the template" instead of
+// someone hunting down the original attachment again.
+const BUNDLE_FILE_DIR    = path.join(DATA_DIR, 'bundle_import_files');
 fs.mkdirSync(WMS_DIR,            { recursive: true });
 fs.mkdirSync(WAYBILL_DIR,        { recursive: true });
 fs.mkdirSync(LABEL_IMPORT_DIR,   { recursive: true });
 fs.mkdirSync(DOC_TEMPLATE_DIR, { recursive: true });
 fs.mkdirSync(INBOUND_PHOTO_DIR,  { recursive: true });
 fs.mkdirSync(POD_PHOTO_DIR,      { recursive: true });
+fs.mkdirSync(BUNDLE_FILE_DIR,    { recursive: true });
 
 // ── Global store (users + sessions) ───────────────────────────────────────────
 // NOT tenant-scoped — login has no tenant context yet at the point it runs,
@@ -5820,6 +5826,24 @@ app.get('/api/portal/bundles', requirePortalAuthMiddleware, (req, res) => {
   try { bundles = inventory.getBundles(cid).map(b => ({ ...b, available: inventory.bundleAvailable(cid, b.bundle_sku) })); } catch (_) {}
   res.json(bundles);
 });
+// THE TEMPLATE — the exact file that most recently, successfully defined this
+// client's bundles (office upload or an earlier portal import, either counts),
+// so a client re-downloading "the template" gets back their own real working
+// file rather than a made-up shape that may not match what they actually use.
+// A client with nothing on record yet gets a generic example in the same
+// shape instead of a dead button. Read-only, so this sits on the read side
+// of the gate like the ASN template — no write scope needed to download one.
+app.get('/api/portal/bundles/template', requirePortalAuthMiddleware, (req, res) => {
+  const cid = invClientId(req.portalClient);
+  const stored = loadBundleImportFile(cid);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  if (stored) {
+    res.setHeader('Content-Disposition', `attachment; filename="${String(stored.filename).replace(/"/g, '')}"`);
+    return res.send(stored.buf);
+  }
+  res.setHeader('Content-Disposition', 'attachment; filename="Bundle_Kitting_Template.xlsx"');
+  res.send(buildGenericBundleTemplateXlsx());
+});
 // ALWAYS VIRTUAL — a physical, pre-built kit is warehouse floor work (🔨
 // Build consumes real stock), never a portal action; a client only ever
 // defines what a code MEANS for picking.
@@ -5887,6 +5911,7 @@ app.post('/api/portal/bundles/import', upload.single('file'), (req, res) => {
       });
     }
     const { saved, skipped, allComponentSkus } = applyBundleImport(cid, parsed.groups);
+    if (saved.length) saveBundleImportFile(cid, req.file.buffer, req.file.originalname);
     logAudit('client_bundles_imported', {
       client: req.portalClient, filename: req.file.originalname || 'bundle import',
       kits: saved.length, components: allComponentSkus.size,
@@ -29518,6 +29543,64 @@ function applyBundleImport(clientId, groups) {
   return { saved, skipped, allComponentSkus };
 }
 
+// ── The bundle file itself, kept for the portal to hand back as "the template"
+// ── Path is tenant+client namespaced so two tenants sharing a client name (or
+// two different clients) can never collide or read each other's file — the
+// SAME reasoning safeLabelKey/prototype-pollution guards apply here: a
+// clientId can be typed, so it is sanitized before it ever touches a path.
+function _bundleFileKey(clientId) {
+  const tenantId = String((tenantContext.currentTenantId && tenantContext.currentTenantId()) || 'default');
+  const safeTenant = tenantId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeClient = String(clientId || '').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  return `${safeTenant}__${safeClient}`;
+}
+function saveBundleImportFile(clientId, buf, originalName) {
+  try {
+    const ext = (String(originalName || '').match(/\.[a-z0-9]+$/i) || ['.xlsx'])[0].toLowerCase();
+    fs.writeFileSync(path.join(BUNDLE_FILE_DIR, _bundleFileKey(clientId) + ext), buf);
+    const db = readDb();
+    db.bundleTemplateFiles = db.bundleTemplateFiles || {};
+    db.bundleTemplateFiles[clientId] = {
+      filename: originalName || ('bundle_import' + ext), ext, savedAt: new Date().toISOString(),
+    };
+    writeDb(db);
+  } catch (e) { console.warn('[bundle-template] could not save', e.message); }
+}
+function loadBundleImportFile(clientId) {
+  try {
+    const db = readDb();
+    const meta = (db.bundleTemplateFiles || {})[clientId];
+    if (!meta) return null;
+    const p = path.join(BUNDLE_FILE_DIR, _bundleFileKey(clientId) + meta.ext);
+    if (!fs.existsSync(p)) return null;
+    return { buf: fs.readFileSync(p), filename: meta.filename };
+  } catch { return null; }
+}
+// FALLBACK ONLY — a client who has never had a bundle file imported for them
+// yet has nothing on record to hand back, so this is a plain, generic example
+// in the same shape (Kit SKU* / Inventory SKU* / Quantity*, one row per
+// component) rather than a 404 that leaves the portal button dead.
+function buildGenericBundleTemplateXlsx() {
+  const headers = ['Kit SKU*', 'Inventory SKU*', 'Quantity*'];
+  const sample = [
+    ['KIT-GIFTSET', 'SKU-001', 1],
+    ['KIT-GIFTSET', 'SKU-002', 1],
+    ['KIT-VALUE-6PK', 'SKU-003', 6],
+  ];
+  const notes = [
+    ['Bundle / kit import — upload guide'], [],
+    ['Kit SKU', 'The code your listing sells — what a marketplace order, or a synced order, actually names.'],
+    ['Inventory SKU', 'One of your real product SKUs this kit contains — must already be in your item master.'],
+    ['Quantity', 'How many of that component ONE kit needs.'], [],
+    ['One row per component. A kit with several components gets several rows, all under the SAME Kit SKU — see the example above.'],
+    ['Every bundle defined this way is virtual: nothing is pre-built ahead of time. The next order naming the Kit SKU explodes into these real components automatically.'],
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([headers, ...sample]), 'Template');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(notes), 'Instructions');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
 // Every /api/inventory route needs an explicit client. Reads take ?clientId=,
 // writes take it in the body. Missing → 400 (never a 500 from the store guard).
 function reqClientId(req) {
@@ -30334,6 +30417,7 @@ app.post('/api/inventory/bundles/import', upload.single('file'), tenantMiddlewar
 
   const who = req.userId || _tokenUserId(req) || '';
   const { saved, skipped, allComponentSkus } = applyBundleImport(cid, parsed.groups);
+  if (saved.length) saveBundleImportFile(cid, req.file.buffer, req.file.originalname);
   logAudit('bundles_imported', {
     clientId: cid, filename: req.file.originalname || 'bundle import',
     kits: saved.length, components: allComponentSkus.size,

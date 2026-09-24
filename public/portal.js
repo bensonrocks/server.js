@@ -1383,6 +1383,30 @@
       loadBundles();
     } catch (e) { err.textContent = 'Could not reach the server.'; err.classList.remove('hidden'); }
   });
+  // The exact file that most recently defined YOUR bundles (office upload or
+  // an earlier portal import, either counts) — same fetch+blob pattern as the
+  // ASN template, since a plain <a href> cannot carry the session token. A
+  // client with nothing on record yet gets a generic example in the same
+  // shape instead of a dead button (the server decides which; this button
+  // does not need to know).
+  $('bnTemplateBtn')?.addEventListener('click', async e => {
+    const btn = e.currentTarget, orig = btn.innerHTML;
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const r = await api('/api/portal/bundles/template');
+      if (!r.ok) throw new Error('Could not prepare the template');
+      const blob = await r.blob();
+      const cd = r.headers.get('content-disposition') || '';
+      const m = cd.match(/filename="([^"]+)"/);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = m ? m[1] : 'Bundle_Kitting_Template.xlsx';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      bnMsg('', 'Template downloaded.');
+    } catch (err) { bnMsg('err', 'Could not download the template — please try again.'); }
+    finally { btn.disabled = false; btn.innerHTML = orig; }
+  });
   // Bulk — the same "Kit SKU / Inventory SKU / Quantity" template the office
   // uses, read via /api/portal/bundles/import.
   $('bnImportBtn')?.addEventListener('click', () => $('bnFileInput').click());
