@@ -95,7 +95,13 @@ const deliveryView = o => ({ id: o.id, order_no: o.order_no, platform: o.platfor
 // `json.order_ids` reads exactly like the JSON-body shape every other route
 // here already expects.
 function parseMultipart(buf, boundary) {
-  const out = {};
+  // Object.create(null): `name` comes straight off the request body, and a
+  // plain {} would let a field literally called "__proto__" reach the
+  // prototype chain via bracket assignment — the same shape this codebase's
+  // safeLabelKey/zortChannelClient guards close elsewhere. No prototype here
+  // at all is simpler than a per-key blocklist and cannot be bypassed by a
+  // spelling the blocklist didn't anticipate.
+  const out = Object.create(null);
   const parts = buf.toString('latin1').split('--' + boundary);
   for (const part of parts) {
     const m = part.match(/name="([^"]+)"\r\n\r\n([\s\S]*?)\r\n$/);
