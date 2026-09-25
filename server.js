@@ -2946,11 +2946,17 @@ function applyNoStockAutoCancel(db, opts = {}) {
   // proceeds even when the scheduled rule is switched off.
   const manual = override !== null;
   if (!inventory.available()) return { cancelled: [], armed: 0 };   // cannot judge → do nothing
+  // A KIT CODE IS NOT MISSING STOCK. Before judging anything, rewrite any
+  // untouched order still carrying a defined bundle's code into its real
+  // components — otherwise this sweep reads the kit code as a SKU with zero
+  // on hand and cancels an order the shelf can fill (reported live).
+  let _reexploded = { orders: [] };
+  try { _reexploded = reexplodeOpenBundleOrders(db, { trigger: 'auto-cancel-sweep' }); } catch (e) { console.warn('[auto-cancel] bundle re-explode failed:', e.message); }
   const lookup = _makeSkuLookup();
   const boIdx = _makeBackorderIndex(db);
   const now = Date.now();
   const cancelled = [];
-  let armed = 0, changed = false;
+  let armed = 0, changed = _reexploded.orders.length > 0;
   // ONE implementation with every other stock reader (batchStockTracked) —
   // this check used to live only here, which is why the sweep was right about
   // a learned client while the Orders row and Get Labels were wrong.
@@ -5886,7 +5892,8 @@ app.post('/api/portal/bundles', express.json(), requirePortalWrite, (req, res) =
       by: `portal:${req.portalUserId}`,
     });
     zortNotifyStockChange(readDb(), cid, bundle.components.map(c => c.sku));
-    res.json({ ...bundle, available: inventory.bundleAvailable(cid, bundle.bundle_sku) });
+    const reexploded = reexplodeAfterBundleChange('portal-bundle-defined');
+    res.json({ ...bundle, available: inventory.bundleAvailable(cid, bundle.bundle_sku), reexploded });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.delete('/api/portal/bundles/:sku', requirePortalWrite, (req, res) => {
@@ -5927,7 +5934,8 @@ app.post('/api/portal/bundles/import', upload.single('file'), (req, res) => {
       skippedKits: skipped.map(s => s.kit), by: `portal:${req.portalUserId}`,
     });
     zortNotifyStockChange(readDb(), cid, [...allComponentSkus]);
-    res.json({ ok: true, kits: saved.length, kitSkus: saved, skippedKits: skipped, badRows: parsed.badRows });
+    const reexploded = saved.length ? reexplodeAfterBundleChange('portal-bundles-imported') : 0;
+    res.json({ ok: true, kits: saved.length, kitSkus: saved, skippedKits: skipped, badRows: parsed.badRows, reexploded });
   });
 });
 // One of THEIR orders in full — the line detail behind an Orders row.
@@ -23471,6 +23479,21 @@ function buildSkuOwnerIndex(db) {
       }
       owners.set(name.toLowerCase(), name);   // case-variants collapse to one owner
     }
+    // A KIT CODE NAMES ITS OWNER TOO. Bundle SKUs live in the bundles table,
+    // not the item master, so an order carrying ONLY a kit code had no SKU
+    // the index knew — attribution fell through to the channel map, the order
+    // filed under a placeholder that owns no recipe, the kit never exploded,
+    // and it reached the floor as an unstockable code. The recipe is as much
+    // a declaration of ownership as a loaded catalogue row.
+    let kits = [];
+    try { kits = inventory.getBundles(invClientId(name)) || []; } catch (_) { kits = []; }
+    for (const bd of kits) {
+      const k = String(bd.bundle_sku || '').trim().toUpperCase();
+      if (!k) continue;
+      let owners = idx.get(k);
+      if (!owners) idx.set(k, owners = new Map());
+      owners.set(name.toLowerCase(), name);
+    }
   }
   // Nothing but learned rows knows this SKU — better a learned owner than none.
   for (const owners of idx.values()) {
@@ -24113,6 +24136,52 @@ app.post('/api/master/orders/:orderNumber/keep', express.json(), (req, res) => {
     return res.json({ ok: true, order: orderNumber, note: 'Off the clock. The rule will not cancel this order.' });
   }
   res.status(404).json({ error: 'Order not found' });
+});
+
+// ORDERS CANCELLED BECAUSE A KIT CODE WAS READ AS MISSING STOCK. Listed, and
+// restored only on request — never automatically, because the floor may have
+// re-placed one by hand already ("173431916609282 - Manual" sat beside its
+// cancelled original), and restoring both would ship twice. `replacedBy` and
+// `hubVoided` say which ones are not safe to bring back.
+app.get('/api/master/orders/bundle-cancelled', (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const rows = findBundleCancelledOrders(readDb());
+  res.json({ rows, restorable: rows.filter(r => r.restorable).length });
+});
+app.post('/api/master/orders/bundle-cancelled/restore', express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res)) return;
+  const want = new Set((Array.isArray(req.body?.orders) ? req.body.orders : []).map(String));
+  if (!want.size) return res.status(400).json({ error: 'Choose at least one order to restore.' });
+  const db = readDb();
+  const found = new Map(findBundleCancelledOrders(db).map(r => [r.order, r]));
+  const who = req.userId || _tokenUserId(req) || '';
+  const restored = [], refused = [];
+  for (const n of want) {
+    const row = found.get(n);
+    if (!row) { refused.push({ order: n, why: 'Not an order cancelled over a bundle code (or already restored).' }); continue; }
+    if (row.hubVoided) { refused.push({ order: n, why: 'Already voided on the channel — it cannot be brought back from here. Re-place it on the channel.' }); continue; }
+    if (row.replacedBy.length) { refused.push({ order: n, why: `Looks re-placed already as ${row.replacedBy.join(', ')} — restoring it would ship twice.` }); continue; }
+    const b = (db.batches || []).find(x => x.id === row.batchId);
+    const st = b && (b.orderStates || {})[n];
+    if (!st || st.status !== 'unprocessed') { refused.push({ order: n, why: 'No longer cancelled.' }); continue; }
+    st.bundle_restored = { at: new Date().toISOString(), by: who, was: st.auto_cancelled || null, reason: st.unprocessed_reason || '' };
+    st.status = 'pending';
+    delete st.unprocessed_reason; delete st.unprocessed_at; delete st.auto_cancelled;
+    delete st.no_stock_since; delete st.short_stock_since;
+    // A person decided this — the rule does not get to cancel it again.
+    st.autocancel_exempt = true;
+    b.orderStates[n] = st;
+    restored.push(n);
+  }
+  // Now pending and untouched, so the ordinary pass rewrites the kit lines
+  // into components and re-takes the reservation — one implementation.
+  const rx = restored.length ? reexplodeOpenBundleOrders(db, { trigger: 'bundle-restore' }) : { orders: [] };
+  if (restored.length) {
+    writeDb(db);
+    logAudit('orders_bundle_restored', { count: restored.length, orders: restored.slice(0, 100), by: who,
+      exploded: rx.orders.map(o => o.order).slice(0, 100) });
+  }
+  res.json({ ok: true, restored, refused, exploded: rx.orders.length });
 });
 
 // REOPEN — put a cancelled order back on the floor. Admin or master: a
@@ -28671,6 +28740,10 @@ backfillCataloguesFromOrders(); // the catalogue learns from the orders already 
 // the work order sharing the waybill. Same zone: globalOrdersWithState reads
 // the item master. Idempotent — a clean boot moves nothing and logs nothing.
 try { rehomeReferenceLabels(readDb(), 'boot'); } catch (e) { console.error('[labels] reference re-home failed:', e.message); }
+// Untouched orders still carrying a defined bundle's KIT CODE get their real
+// components now, before the auto-cancel sweep's first pass can read the code
+// as missing stock. Same zone: needs `inventory`. Idempotent.
+try { const r = reexplodeAfterBundleChange('boot'); if (r) console.log(`[bundles] boot: ${r} order(s) re-exploded into their components`); } catch (e) { console.error('[bundles] boot re-explode failed:', e.message); }
 // Reservations held by orders that no longer exist. THIS MUST RUN HERE, not
 // with the db.json reconcile pass at the top of the file: `const inventory` is
 // still in its temporal dead zone up there, so the call throws into a catch and
@@ -29456,24 +29529,192 @@ function normalizeOrderRowsToInhouseSku(rows, clientOf) {
 // downstream (pick list, scanning, deduction, reports) sees real components and
 // needs no bundle awareness. `clientOf(row)` returns the owning client for a
 // row. Rows are {sku, qty, ...}. No-op if inventory is unavailable.
+// ONE bundle lookup for every caller: exact first, then case/whitespace
+// tolerant. A channel sends "yp-800-eps111wex6 " as readily as the recipe's
+// "YP-800-EPS111WEX6", and an exact-only miss here means the kit code reaches
+// the pick list unexploded, reads as a SKU with no stock, and the auto-cancel
+// sweep cancels a perfectly fulfillable order — reported live. Per-call cache.
+function makeBundleResolver() {
+  const byClient = new Map();   // cid -> Map(UPPER sku -> bundle)
+  return (cid, sku) => {
+    const s = String(sku || '').trim();
+    if (!cid || !s) return null;
+    let exact = null;
+    try { exact = inventory.getBundle(cid, s); } catch (_) {}
+    if (exact) return exact;
+    if (!byClient.has(cid)) {
+      const m = new Map();
+      try { for (const b of inventory.getBundles(cid) || []) m.set(String(b.bundle_sku || '').trim().toUpperCase(), b); } catch (_) {}
+      byClient.set(cid, m);
+    }
+    return byClient.get(cid).get(s.toUpperCase()) || null;
+  };
+}
+
 function explodeBundleRows(rows, clientOf) {
   if (!inventory.available() || !Array.isArray(rows)) return rows;
   const out = [];
+  const bundleFor = makeBundleResolver();
   for (const r of rows) {
     let bundle = null;
-    try { bundle = r && r.sku ? inventory.getBundle(clientOf(r), r.sku) : null; } catch (_) {}
+    try { bundle = r && r.sku ? bundleFor(clientOf(r), r.sku) : null; } catch (_) {}
     // Only VIRTUAL bundles explode into components. A PHYSICAL kit is a real,
     // pre-built SKU on the shelf — it ships as itself, so leave the line alone.
     if (bundle && bundle.type === 'physical') bundle = null;
     if (bundle && bundle.components.length) {
       const bundleQty = Number(r.qty) || 0;
       for (const c of bundle.components) {
-        out.push({ ...r, sku: c.sku, qty: bundleQty * c.qty, from_bundle: r.sku,
+        // Tagged with the RECIPE's own kit code, not whatever casing/spacing
+        // the channel sent — one kit reads as one kit on every pill and count.
+        out.push({ ...r, sku: c.sku, qty: bundleQty * c.qty, from_bundle: bundle.bundle_sku,
           description: (r.description ? '' : '') || c.sku });
       }
     } else out.push(r);
   }
   return out;
+}
+
+// ── AN ORDER ALREADY ON THE BOOKS STILL CARRYING A KIT CODE ─────────────────
+// Intake explodes a bundle line exactly once. An order that arrived BEFORE its
+// bundle was defined, under a spelling the old exact-only lookup missed, or
+// filed under a client that did not own the recipe, kept the KIT CODE as a
+// pick line — a SKU with no stock (the intake gate even creates it at zero),
+// and the auto-cancel sweep then cancelled an order the shelf could fill.
+// Reported live, with cancelled orders to show for it.
+//
+// This rewrites such an order's kit lines into their components — but ONLY
+// while nothing has touched it (pending, nothing scanned, unclaimed, not in a
+// wave): changing the lines under a packer mid-pick moves the goal posts. For
+// a stock-tracked client the reservation is re-taken against the components,
+// releasing first what the LEDGER says the order holds (never what its lines
+// claim — that would free somebody else's units). Idempotent by construction:
+// the rewritten lines are real SKUs, so a second pass finds nothing.
+function rewriteOrderKitLines(cid, ord, bundleFor) {
+  const kits = [];
+  const newLines = [];
+  for (const l of ord.lines || []) {
+    const bd = bundleFor(cid, l.sku);
+    if (!bd || bd.type === 'physical' || !(bd.components || []).length) { newLines.push(l); continue; }
+    kits.push({ kit: bd.bundle_sku, qty: Number(l.qty) || 0 });
+    const kitQty = Number(l.qty) || 0;
+    for (const c of bd.components) {
+      let name = '', barcode = '';
+      try {
+        const r = inventory.get(c.sku, cid);
+        if (r) { name = r.name && r.name !== c.sku ? r.name : ''; barcode = r.barcode || ''; }
+      } catch (_) {}
+      newLines.push({
+        sku: c.sku, description: name || c.sku, qty: kitQty * (Number(c.qty) || 1),
+        uom: 'EACH', location: '', batch_number: '', serial_number: '', expiry_date: '',
+        remarks_betime: l.remarks_betime || '',
+        ...(barcode ? { barcode } : {}),
+        from_bundle: bd.bundle_sku,
+      });
+    }
+  }
+  if (!kits.length) return null;
+  ord.lines = newLines;
+  ord.total_qty = newLines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+  return kits;
+}
+
+function reexplodeOpenBundleOrders(db, opts = {}) {
+  const out = { orders: [], lines: 0 };
+  if (!inventory.available()) return out;
+  const bundleFor = makeBundleResolver();
+  const hasBundles = new Map();
+  const trackedCache = new Map();
+  for (const b of db.batches || []) {
+    if (isReferenceBatch(b)) continue;
+    const cid = b.inventory_client || invClientId(b.client_name || '');
+    if (!cid) continue;
+    if (!hasBundles.has(cid)) {
+      let n = 0; try { n = (inventory.getBundles(cid) || []).length; } catch (_) {}
+      hasBundles.set(cid, n > 0);
+    }
+    if (!hasBundles.get(cid)) continue;
+    for (const ord of b.orders || []) {
+      const st = (b.orderStates || {})[ord.order_number] || { status: 'pending', scanned: {} };
+      if (st.status !== 'pending') continue;
+      const scanned = Object.values(st.scanned || {}).reduce((s, n) => s + (Number(n) || 0), 0);
+      if (scanned > 0 || claimHolder(st) || st.wave_id) continue;
+      if (!(ord.lines || []).some(l => { const bd = bundleFor(cid, l.sku); return bd && bd.type !== 'physical' && (bd.components || []).length; })) continue;
+      // Release what the ledger says this order holds BEFORE the lines change.
+      const tracked = batchStockTracked(b, trackedCache);
+      if (tracked) {
+        try {
+          const open = inventory.openReservations(cid).filter(r => String(r.order_id) === String(ord.order_number));
+          if (open.length) inventory.releaseOrder(cid, { id: ord.order_number, items: open.map(r => ({ sku: r.sku, qty: r.open_qty })) });
+        } catch (e) { console.warn('[bundle-reexplode] release failed', ord.order_number, e.message); }
+        // Its open backorders were against the kit code — drop them; the
+        // re-reservation below records whatever is genuinely short now.
+        if (Array.isArray(db.backorders)) {
+          db.backorders = db.backorders.filter(x => !(x.order_number === ord.order_number && x.status === 'open'));
+        }
+      }
+      const kits = rewriteOrderKitLines(cid, ord, bundleFor);
+      if (!kits) continue;
+      if (tracked) {
+        try { reserveIntakeOrders(db, cid, b.client_name || '', [ord], b.id); }
+        catch (e) { console.warn('[bundle-reexplode] reserve failed', ord.order_number, e.message); }
+      }
+      // The clocks were counting a kit code as missing stock — forget them.
+      if (!b.orderStates) b.orderStates = {};
+      delete st.no_stock_since; delete st.short_stock_since;
+      st.bundle_reexploded = { at: new Date().toISOString(), kits: kits.map(k => k.kit), via: opts.trigger || '' };
+      b.orderStates[ord.order_number] = st;
+      out.orders.push({ order: ord.order_number, client: b.client_name || '', kits: kits.map(k => k.kit) });
+      out.lines += kits.length;
+    }
+  }
+  if (out.orders.length) {
+    logAudit('orders_bundle_reexploded', { count: out.orders.length, trigger: opts.trigger || '', orders: out.orders.slice(0, 50) });
+  }
+  return out;
+}
+
+// ORDERS THE SWEEP ALREADY CANCELLED BECAUSE OF A KIT CODE. Found, never
+// reopened on their own: the floor may have re-placed them by hand already
+// (seen live — "173431916609282 - Manual" sitting beside the cancelled
+// original), and reopening both would ship twice. So each one says whether a
+// live order looks like its replacement, and whether the channel was already
+// told it was cancelled (a hub void cannot be undone from here).
+function findBundleCancelledOrders(db) {
+  const rows = [];
+  if (!inventory.available()) return rows;
+  const bundleFor = makeBundleResolver();
+  const live = [];
+  for (const b of db.batches || []) {
+    if (isReferenceBatch(b)) continue;
+    for (const o of b.orders || []) {
+      const s = ((b.orderStates || {})[o.order_number] || {}).status || 'pending';
+      if (s !== 'unprocessed') live.push({ n: String(o.order_number), client: b.client_name || '', status: s });
+    }
+  }
+  for (const b of db.batches || []) {
+    if (isReferenceBatch(b)) continue;
+    const cid = b.inventory_client || invClientId(b.client_name || '');
+    if (!cid) continue;
+    for (const o of b.orders || []) {
+      const st = (b.orderStates || {})[o.order_number];
+      if (!st || st.status !== 'unprocessed' || !st.auto_cancelled) continue;
+      const kitLines = (o.lines || []).filter(l => { const bd = bundleFor(cid, l.sku); return bd && bd.type !== 'physical' && (bd.components || []).length; });
+      if (!kitLines.length) continue;
+      const n = String(o.order_number);
+      const replacedBy = live.filter(x => x.n !== n && x.n.includes(n)).map(x => x.n);
+      rows.push({
+        order: n, client: b.client_name || '', batchId: b.id,
+        cancelledAt: st.unprocessed_at || st.auto_cancelled.at || null,
+        reason: st.unprocessed_reason || '',
+        kits: kitLines.map(l => ({ sku: l.sku, qty: Number(l.qty) || 0 })),
+        hubVoided: !!st.zort_void_pushed_at,
+        replacedBy,
+        restorable: !st.zort_void_pushed_at && !replacedBy.length,
+      });
+    }
+  }
+  rows.sort((a, b) => String(b.cancelledAt || '').localeCompare(String(a.cancelledAt || '')));
+  return rows;
 }
 
 // ── Bundle bulk import — "Kit SKU / Inventory SKU / Quantity" template ─────
@@ -30418,17 +30659,32 @@ app.get('/api/inventory/bundles', requireAuth, (req, res) => {
   const bundles = inventory.getBundles(clientId).map(b => ({ ...b, available: inventory.bundleAvailable(clientId, b.bundle_sku) }));
   res.json(bundles);
 });
+// A bundle just changed — any untouched order still carrying its kit code is
+// rewritten now, not left for the sweep to find (and, before this, cancel).
+function reexplodeAfterBundleChange(trigger) {
+  try {
+    const db = readDb();
+    const r = reexplodeOpenBundleOrders(db, { trigger });
+    if (r.orders.length) writeDb(db);
+    return r.orders.length;
+  } catch (e) { console.warn('[bundle-reexplode]', trigger, e.message); return 0; }
+}
+
 app.post('/api/inventory/bundles', requireAuth, express.json(), (req, res) => {
   try {
     const { clientId, bundle_sku, name, components, type } = req.body || {};
-    const cid = String(clientId || '').trim();
+    // The SAME account every order and stock reader resolves to — a recipe
+    // saved under "mayer2026" while the orders sit under "Mayer2026" is a
+    // recipe no order can ever find.
+    const cid = invClientId(String(clientId || '').trim());
     if (!cid) return res.status(400).json({ error: 'clientId is required' });
     const bundle = inventory.upsertBundle(cid, bundle_sku, name, components, type);
     logAudit('bundle_upsert', { clientId: cid, bundle: bundle.bundle_sku, bundleType: bundle.type, components: bundle.components.length, by: req.userId || '' });
     // Only a virtual bundle's availability tracks its components; a physical
     // kit's sellable number is its own (built) stock.
     if (bundle.type === 'virtual') zortNotifyStockChange(readDb(), cid, bundle.components.map(c => c.sku));
-    res.json({ ...bundle, available: inventory.bundleAvailable(cid, bundle.bundle_sku) });
+    const reexploded = reexplodeAfterBundleChange('bundle-defined');
+    res.json({ ...bundle, available: inventory.bundleAvailable(cid, bundle.bundle_sku), reexploded });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 // BULK — the "Kit SKU / Inventory SKU / Quantity" template a real kitting
@@ -30470,7 +30726,8 @@ app.post('/api/inventory/bundles/import', upload.single('file'), tenantMiddlewar
     skippedKits: skipped.map(s => s.kit), by: who,
   });
   zortNotifyStockChange(readDb(), cid, [...allComponentSkus]);
-  res.json({ ok: true, kits: saved.length, kitSkus: saved, skippedKits: skipped, badRows: parsed.badRows });
+  const reexploded = saved.length ? reexplodeAfterBundleChange('bundles-imported') : 0;
+  res.json({ ok: true, kits: saved.length, kitSkus: saved, skippedKits: skipped, badRows: parsed.badRows, reexploded });
 });
 // PHYSICAL KITTING — build N units: consume components, inbound the bundle SKU
 // as real stock, then sync both the consumed components AND the new bundle

@@ -465,6 +465,13 @@
       "timeoutMs": 180000
     },
     {
+      "file": "bundle-cancel-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 300000
+    },
+    {
       "file": "onecart-ref-e2e.js",
       "browser": false,
       "selfBoots": true,

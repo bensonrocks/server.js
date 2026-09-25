@@ -9327,6 +9327,53 @@ client-defined bundle is visible office-side, portal bulk import previews
 and applies identically to the office path, two clients' bundles never
 cross, and deleting from the portal removes it office-side too.
 
+### "My bundling is not working and it's leading to cancelled orders"
+
+Reported live (Mayer2026, 25 Sep 2026). Intake explodes a kit line exactly
+ONCE, so any order carrying the KIT CODE past that moment kept it as a pick
+line — a SKU with no stock (the intake gate even creates it at zero for a
+tracked client) — and the auto-cancel sweep cancelled an order the shelf could
+fill. Four ways in, all closed:
+
+- **Pulled before the recipe existed.** `reexplodeOpenBundleOrders(db)`
+  rewrites an UNTOUCHED order's kit lines into components (pending, nothing
+  scanned, unclaimed, no wave — never under a packer mid-pick), releases what
+  the LEDGER says it holds, re-reserves the components via
+  `reserveIntakeOrders`, drops its kit-code backorders and clears both
+  auto-cancel clocks. Runs at BOOT (inventory zone), after every bundle
+  define/import (office + portal, `reexplodeAfterBundleChange`), and FIRST in
+  `applyNoStockAutoCancel` — the sweep can never judge a kit code as stock.
+  Idempotent: rewritten lines are real SKUs.
+- **Channel casing/spacing** (`yp-800-eps111wex6 `): `makeBundleResolver()` —
+  exact, then case/whitespace-tolerant, per-call cache — is the ONE lookup for
+  intake and the re-explode. Exploded lines are tagged with the RECIPE's
+  `bundle_sku`, never the channel's spelling.
+- **A kit-only order had no SKU the attribution index knew** (bundle SKUs
+  live in the bundles table): `buildSkuOwnerIndex` now indexes every client's
+  bundle SKUs as owned by that client, so it files under the recipe owner
+  instead of a channel placeholder that owns no recipe.
+- **Office single-define saved the recipe under the RAW typed client** while
+  the list read `invClientId` — now both fold.
+
+**Already-cancelled orders are LISTED, never auto-reopened** —
+`GET /api/master/orders/bundle-cancelled` / `POST …/restore` (admin or
+master), a pink panel on Inventory → Bundles. The floor re-places some by
+hand (live: `173431916609282 - Manual` beside its cancelled original), so a
+live order whose number CONTAINS the cancelled one is `replacedBy` and
+refused; one the hub already voided (`zort_void_pushed_at`) is refused too.
+Restore = pending, `autocancel_exempt` (a human decided), then the ordinary
+re-explode pass.
+
+Verified 35 API checks + 12 browser checks (desktop + Pixel 5)
+(`bundle-cancel-e2e.js`, **tier `ci`**; `BUNDLE_CANCEL_BROWSER=1` adds the
+browser pass): before the recipe the kit-code orders are cancelled exactly as
+reported; importing the kitting file re-explodes the kept order (kit
+reservation released, components 2+2 reserved); the manual re-placement blocks
+restore of its original; the other restores with WFEPS111 ×6; a kit-only order
+from an unmapped channel files under Mayer2026 and explodes; a lower-case kit
+code explodes; a purge at 0 minutes then cancels nothing. **The deployed build
+(`e321d46`) fails 15 of the API checks** and reproduces the report.
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`

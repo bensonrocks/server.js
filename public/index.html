@@ -3443,6 +3443,10 @@
             </div>
           </div>
           <div id="invBundleImportStatus" class="status-bar hidden" style="margin-top:.4rem"></div>
+          <!-- Orders the auto-cancel sweep cancelled because a kit code was read
+               as a SKU with no stock. Filled by loadBundleRescue(); hidden when
+               there are none (or for a login that cannot restore orders). -->
+          <div id="invBundleRescue" class="hidden" style="margin-top:.6rem;border:1px solid #fbcfe8;background:#fdf2f8;border-radius:8px;padding:.6rem .75rem"></div>
           <input type="file" id="invBundleFileInput" accept=".xlsx,.xls,.csv" style="display:none" />
           <div style="overflow-x:auto;margin-top:.6rem">
             <table class="tbl" style="width:100%">

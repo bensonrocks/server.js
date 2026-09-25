@@ -19475,7 +19475,60 @@
     }
 
     // ── Bundles / BOM ───────────────────────────────────────────────────────
+    // ORDERS CANCELLED OVER A KIT CODE — the sweep read an unexploded bundle
+    // SKU as a product with no stock. Listed here, restored only when asked:
+    // one re-placed by hand already (or already voided on the channel) says so
+    // and cannot be ticked, because bringing it back would ship it twice.
+    async function loadBundleRescue() {
+      const box = $('invBundleRescue'); if (!box || !clientId) return;
+      let d;
+      try {
+        const r = await fetch('/api/master/orders/bundle-cancelled');
+        if (!r.ok) { box.classList.add('hidden'); return; }   // warehouse: not theirs to restore
+        d = await r.json();
+      } catch (_) { box.classList.add('hidden'); return; }
+      const mine = (d.rows || []).filter(x => String(x.client || '').trim().toLowerCase() === String(clientId).trim().toLowerCase());
+      if (!mine.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      const fmt = s => s ? new Date(s).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+      box.innerHTML = `<div style="font-weight:700;color:#9d174d;margin-bottom:.35rem">⚠ ${mine.length} order(s) were auto-cancelled because a bundle SKU was read as a product with no stock</div>
+        <div class="hint" style="margin:0 0 .5rem">These carry a kit code that now has a recipe. Restoring puts the order back on the floor with its real components, re-reserves the stock, and keeps it off the auto-cancel clock. One already re-placed by hand, or already voided on the channel, is shown but cannot be restored — that would ship it twice.</div>
+        <div style="overflow-x:auto"><table class="tbl" style="width:100%"><thead><tr>
+          <th></th><th style="text-align:left">Order</th><th style="text-align:left">Kit code(s)</th><th style="text-align:left">Cancelled</th><th style="text-align:left">Note</th>
+        </tr></thead><tbody>${mine.map(x => `<tr>
+          <td>${x.restorable ? `<input type="checkbox" class="bres-pick" data-o="${esc(x.order)}" checked>` : ''}</td>
+          <td style="font-family:monospace;font-weight:600">${esc(x.order)}</td>
+          <td style="font-size:.82rem">${x.kits.map(k => `🎁 ${esc(k.sku)} ×${Number(k.qty) || 0}`).join('<br>')}</td>
+          <td style="font-size:.82rem">${esc(fmt(x.cancelledAt))}</td>
+          <td style="font-size:.8rem;color:${x.restorable ? '#166534' : '#991b1b'}">${x.restorable ? 'Ready to restore'
+            : x.hubVoided ? 'Already voided on the channel — re-place it there'
+            : `Re-placed as ${x.replacedBy.map(esc).join(', ')} — not restored`}</td>
+        </tr>`).join('')}</tbody></table></div>
+        <div style="margin-top:.5rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <button class="btn-primary btn-sm" id="bresRestoreBtn" ${mine.some(x => x.restorable) ? '' : 'disabled'}>♻ Restore ticked orders</button>
+          <span id="bresMsg" style="font-size:.82rem"></span>
+        </div>`;
+      box.classList.remove('hidden');
+      $('bresRestoreBtn')?.addEventListener('click', async () => {
+        const picked = [...box.querySelectorAll('.bres-pick:checked')].map(i => i.dataset.o);
+        if (!picked.length) { $('bresMsg').textContent = 'Tick at least one order.'; return; }
+        if (!confirm(`Restore ${picked.length} order(s)?\n\nEach goes back on the floor with its real components and its stock re-reserved, and will not be auto-cancelled again.\n\nOK = restore · Cancel = nothing happens`)) return;
+        const btn = $('bresRestoreBtn'); btn.disabled = true;
+        try {
+          const r = await fetch('/api/master/orders/bundle-cancelled/restore', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orders: picked }) });
+          const res = await r.json();
+          if (!r.ok) { $('bresMsg').textContent = res.error || 'Restore failed.'; btn.disabled = false; return; }
+          let msg = `✓ Restored ${res.restored.length} order(s)`;
+          if ((res.refused || []).length) msg += ` · ${res.refused.length} not restored`;
+          alert(msg + ((res.refused || []).length ? '\n\n' + res.refused.map(x => `• ${x.order}: ${x.why}`).join('\n') : ''));
+          loadBundleRescue();
+          if (typeof window.renderOrdersDash === 'function') { try { window.renderOrdersDash(); } catch (_) {} }
+        } catch (e) { $('bresMsg').textContent = 'Could not reach the server.'; btn.disabled = false; }
+      });
+    }
+
     async function loadBundles() {
+      loadBundleRescue();
       const tb = $('invBundleTbody'); if (!tb || !clientId) return;
       try {
         const r = await fetch('/api/inventory/bundles?clientId=' + encodeURIComponent(clientId));
@@ -19571,6 +19624,7 @@
         }
         if (!r.ok) { st.className = 'status-bar error'; st.textContent = d.error || 'Import failed'; return; }
         let msg = `✓ Defined ${d.kits} bundle(s)`;
+        if (d.reexploded) msg += ` · ${d.reexploded} open order(s) carrying these kit codes now show their real components`;
         if (d.badRows) msg += ` · skipped ${d.badRows} unreadable row(s)`;
         if ((d.skippedKits || []).length) msg += ` · ${d.skippedKits.length} kit(s) skipped (unknown component)`;
         st.className = 'status-bar success'; st.textContent = msg;
