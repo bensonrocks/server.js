@@ -13,7 +13,7 @@ const PORT = Number(process.env.BF_PORT || 4989), ZPORT = Number(process.env.BF_
 const B = `http://localhost:${PORT}`, Z = `http://localhost:${ZPORT}`;
 const DDIR = path.join(S, 'bundle-cancel-data-' + PORT);
 const MASTER = process.env.MASTER_KEY || '201432547E';
-const SERVER = process.env.IDEALONE_SERVER || '/home/user/server.js/server.js';
+const SERVER = process.env.SERVER_JS || process.env.IDEALONE_SERVER || path.join(__dirname, '../../server.js');
 const ZMOCK = path.join(S, 'bundle-cancel-mock.js');
 // Same sheet, headers and rows as the client's real Bundle_Kitting file —
 // generated here so no client file is ever committed.
@@ -129,7 +129,8 @@ const skusOf = o => (o && (o.items || o.lines) || []).map(l => `${l.sku}×${l.qt
   // ── REAL BROWSER: the rescue panel on Inventory → Bundles (BUNDLE_CANCEL_BROWSER=1) ──
   if (process.env.BUNDLE_CANCEL_BROWSER === '1') {
   const { chromium } = require('playwright');
-  const br = await chromium.launch({ executablePath: (process.env.TEST_CHROMIUM || '/opt/pw-browsers/chromium') });
+  // Optional pass only (BUNDLE_CANCEL_BROWSER=1); CI is pure Node. TEST_CHROMIUM names the binary.
+  const br = await chromium.launch(process.env.TEST_CHROMIUM ? { executablePath: process.env.TEST_CHROMIUM } : {});
   for (const [label, vp] of [['desktop', { width: 1440, height: 900 }], ['phone', { width: 393, height: 851 }]]) {
     const ctx = await br.newContext({ viewport: vp, isMobile: label === 'phone', hasTouch: label === 'phone' });
     const pg = await ctx.newPage();
