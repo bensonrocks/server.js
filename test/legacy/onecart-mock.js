@@ -89,12 +89,43 @@ const deliveryView = o => ({ id: o.id, order_no: o.order_no, platform: o.platfor
   first_name: o.first_name, last_name: o.last_name, shipping_address: o.shipping_address, payment_details: { method: 'online' },
   shipping_postal_code: o.shipping_postal_code, shipping_phone_number: o.shipping_phone_number, line_items: o.line_items });
 
+// Minimal multipart/form-data parser — text fields only (print_awbs is the
+// one call the real client sends this way; every field it posts is a plain
+// string, never a file), repeated field names collected into an array so
+// `json.order_ids` reads exactly like the JSON-body shape every other route
+// here already expects.
+function parseMultipart(buf, boundary) {
+  const out = {};
+  const parts = buf.toString('latin1').split('--' + boundary);
+  for (const part of parts) {
+    const m = part.match(/name="([^"]+)"\r\n\r\n([\s\S]*?)\r\n$/);
+    if (!m) continue;
+    const [, name, value] = m;
+    if (out[name] === undefined) out[name] = value;
+    else if (Array.isArray(out[name])) out[name].push(value);
+    else out[name] = [out[name], value];
+  }
+  return out;
+}
 http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   const q = u.searchParams;
-  let body = '';
-  for await (const c of req) body += c;
-  let json = {}; try { json = body ? JSON.parse(body) : {}; } catch (_) {}
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  const bodyBuf = Buffer.concat(chunks);
+  const ct = String(req.headers['content-type'] || '');
+  let json = {};
+  const mpBoundary = ct.match(/multipart\/form-data;\s*boundary=(.+)$/i);
+  if (mpBoundary) {
+    json = parseMultipart(bodyBuf, mpBoundary[1].trim());
+    // order_ids arrives as one string per repeated field (or a single string
+    // if only one) — normalise to the array of numbers the JSON path expects.
+    if (json.order_ids !== undefined) json.order_ids = (Array.isArray(json.order_ids) ? json.order_ids : [json.order_ids]).map(Number);
+    if (json.with_sku_list !== undefined) json.with_sku_list = json.with_sku_list === 'true';
+  } else {
+    const body = bodyBuf.toString('utf8');
+    try { json = body ? JSON.parse(body) : {}; } catch (_) {}
+  }
   const p = u.pathname;
 
   // ── control plane (test harness only) ────────────────────────────────────
