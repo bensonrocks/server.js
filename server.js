@@ -29456,12 +29456,43 @@ function normalizeOrderRowsToInhouseSku(rows, clientOf) {
 // downstream (pick list, scanning, deduction, reports) sees real components and
 // needs no bundle awareness. `clientOf(row)` returns the owning client for a
 // row. Rows are {sku, qty, ...}. No-op if inventory is unavailable.
+//
+// MAYER CHANNEL KITS: virtual kits are uploaded once under Mayer2026. Marketplace
+// channels whose name contains "Mayer" (Lazada20082026Mayer, TIKTOKMayer, …) often
+// attribute the order under the channel client (empty bundles + zero parent SKUs),
+// so getBundle(channelClient, YP-…) misses. For those channels, fall back to the
+// Mayer2026 bundle table after the row's own client has none.
+const MAYER2026_BUNDLE_CLIENT = 'Mayer2026';
+function rowLooksLikeMayerChannel(row, ownClient) {
+  const bits = [
+    ownClient,
+    row && row.client_name,
+    row && row.platform,
+    row && row.saleschannel,
+    row && row.channel,
+  ].map(v => String(v || ''));
+  return bits.some(s => /mayer/i.test(s));
+}
+function getBundleForExplode(row, clientOf) {
+  if (!row || !row.sku) return null;
+  const own = clientOf(row);
+  let bundle = null;
+  try { bundle = inventory.getBundle(own, row.sku); } catch (_) {}
+  if (bundle) return bundle;
+  if (!rowLooksLikeMayerChannel(row, own)) return null;
+  let mayer = MAYER2026_BUNDLE_CLIENT;
+  try { mayer = invClientId(MAYER2026_BUNDLE_CLIENT) || MAYER2026_BUNDLE_CLIENT; } catch (_) {}
+  if (mayer && String(mayer) !== String(own)) {
+    try { bundle = inventory.getBundle(mayer, row.sku); } catch (_) {}
+  }
+  return bundle;
+}
 function explodeBundleRows(rows, clientOf) {
   if (!inventory.available() || !Array.isArray(rows)) return rows;
   const out = [];
   for (const r of rows) {
     let bundle = null;
-    try { bundle = r && r.sku ? inventory.getBundle(clientOf(r), r.sku) : null; } catch (_) {}
+    try { bundle = getBundleForExplode(r, clientOf); } catch (_) {}
     // Only VIRTUAL bundles explode into components. A PHYSICAL kit is a real,
     // pre-built SKU on the shelf — it ships as itself, so leave the line alone.
     if (bundle && bundle.type === 'physical') bundle = null;
