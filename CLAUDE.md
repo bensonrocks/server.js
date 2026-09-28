@@ -9398,6 +9398,41 @@ barcode, names still update, a new SKU lands at 0 with its barcode, a blank Qty
 cell changes nothing while a given one moves 25 → 30 with a +5 movement naming
 the upload. **The build before this fails 9 of 13 — both SKUs read 0.**
 
+## + Add SKU — one product typed in, client picked first (`/api/inventory/add-sku`)
+
+Asked as "what do I suggest if my admin needs to add a new SKU?" — the only
+door was re-uploading an item master. Inventory → 📦 Stock & SKUs → **+ Add SKU**
+(in the client bar beside Load stock, so it is there BEFORE any client is
+loaded) opens `#invAddSkuOverlay`: the client is a PICKER fed by
+`/api/putaway/clients` (never free text — a typed name is how phantom accounts
+appear), and the SKU / name / barcode / brand fields stay locked until one is
+picked.
+
+- **Admin or master** (`requireInboundAdmin`); warehouse gets a real 403 and no
+  button.
+- **Created at 0 on hand, always** — a `stock_qty` in the body is ignored.
+  Stock arrives through Inbound, so it has a receipt behind it.
+- **Refused in words**: an existing SKU in ANY case (409 `exists`), a barcode
+  another SKU of the same client carries (409 `barcodeHolders` — two products on
+  one barcode make a scan book the wrong one), a blank name.
+- The client folds through `canonicalClientName` + `invClientId`; audited
+  `inventory_sku_added`; a connected store is offered (`storeOffer`), never
+  pushed.
+- On save the screen switches to Stock & SKUs, loads that client and filters to
+  the new row, with a green note; the red refusal clears as soon as you type.
+- **`forgetInvClientIds()`** drops the tenant's `invClientId` fold cache after
+  this route and the item-master upload create rows. Without it a read in
+  another case straight after creating a client served the RAW spelling from a
+  cache built a moment before the account existed — an empty list for up to 5s.
+- FOUND ALONG THE WAY: Inventory's `init()` re-bound every listener on each
+  visit to the tab, so ▲/▼ sort toggled twice per click on a second visit. Bound
+  once now (`_invWired`).
+
+Verified 15 API checks (`add-sku-e2e.js`, **tier `ci`**) plus 14 browser checks
+on desktop and a Pixel 5 (`br-add-sku.js`: the button on screen with no client
+loaded, fields locked until a client is picked, a duplicate refused in words,
+the new row on the stock list, no sideways scroll).
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`

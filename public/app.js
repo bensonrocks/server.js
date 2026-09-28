@@ -19218,7 +19218,98 @@
       finally { $('invAdjSave').disabled = false; }
     }
 
+    // ── + Add SKU ── client first (picked, never typed), then the product.
+    // Admin only; the server enforces it too. No stock field — see the route.
+    async function openAddSku() {
+      const sel = $('addSkuClient');
+      ['addSkuCode', 'addSkuName', 'addSkuBarcode', 'addSkuBrand'].forEach(id => { $(id).value = ''; });
+      $('addSkuError').classList.add('hidden');
+      sel.innerHTML = '<option value="">Loading clients…</option>';
+      $('invAddSkuOverlay').classList.remove('hidden');
+      try {
+        const r = await fetchT('/api/putaway/clients', { headers: hdrs() });
+        const d = await r.json();
+        const list = (d.clients || []).map(c => c.name);
+        sel.innerHTML = '<option value="">— choose the client —</option>'
+          + list.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+        // The client already loaded on the stock screen is the likely one.
+        const cur = list.find(n => n.toLowerCase() === String(clientId || '').toLowerCase());
+        if (cur) sel.value = cur;
+      } catch (_) {
+        sel.innerHTML = '<option value="">Could not load the client list</option>';
+      }
+      syncAddSku();
+      (sel.value ? $('addSkuCode') : sel).focus();
+    }
+    function syncAddSku() {
+      const picked = !!$('addSkuClient').value;
+      $('addSkuFields').disabled = !picked;
+      $('addSkuSave').disabled = !picked;
+    }
+    async function saveAddSku() {
+      const err = $('addSkuError');
+      const show = (m, field) => {
+        err.textContent = m; err.classList.remove('hidden');
+        const f = { sku: 'addSkuCode', name: 'addSkuName', barcode: 'addSkuBarcode', client: 'addSkuClient' }[field];
+        if (f) $(f).focus();
+      };
+      err.classList.add('hidden');
+      const body = {
+        clientId: $('addSkuClient').value,
+        sku: $('addSkuCode').value.trim(),
+        name: $('addSkuName').value.trim(),
+        barcode: $('addSkuBarcode').value.trim(),
+        brand: $('addSkuBrand').value.trim(),
+      };
+      if (!body.clientId) return show('Pick the client first.', 'client');
+      if (!body.sku) return show('Enter the SKU code.', 'sku');
+      if (!body.name) return show('Enter the product name — the pick list and the client portal show it.', 'name');
+      const btn = $('addSkuSave'); btn.disabled = true;
+      try {
+        const r = await fetchT('/api/inventory/add-sku', { method: 'POST', headers: hdrs(), body: JSON.stringify(body) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { show(d.error || 'Could not add that SKU.', d.field); return; }
+        $('invAddSkuOverlay').classList.add('hidden');
+        // Land on the client it was added to, with the new row in view — on
+        // the Stock & SKUs view, whichever view the form was opened from.
+        if (_invView !== 'stock') setInventoryView('stock');
+        $('invClient').value = d.client;
+        if ($('invSearch')) $('invSearch').value = d.item?.sku || body.sku;
+        await load();
+        const note = $('invAddSkuNote');
+        if (note) {
+          note.innerHTML = `&#10003; <b>${esc(d.item?.sku || body.sku)}</b> added for <b>${esc(d.client)}</b> at 0 on hand. Receive its stock through Inbound.`
+            + (d.storeOffer ? ` ${esc(d.storeOffer.storeName)} is connected — send it there with 📦 Push Catalogue on Connections.` : '');
+          note.classList.remove('hidden');
+        }
+      } catch (_) { show('Could not reach the server — nothing was added.'); }
+      finally { syncAddSku(); }
+    }
+
+    // init() runs on EVERY visit to the tab, so these must be bound ONCE — a
+    // second visit used to stack a second listener on every control (the
+    // ▲/▼ button then toggled twice per click and did nothing).
+    let _invWired = false;
     function wireSortAndExport() {
+      $('invAddSkuBtn')?.classList.toggle('hidden', currentUser?.role !== 'admin');
+      if (_invWired) return;
+      _invWired = true;
+      $('invAddSkuBtn')?.addEventListener('click', openAddSku);
+      $('addSkuClient')?.addEventListener('change', () => { syncAddSku(); if ($('addSkuClient').value) $('addSkuCode').focus(); });
+      $('addSkuCancel')?.addEventListener('click', () => $('invAddSkuOverlay').classList.add('hidden'));
+      $('addSkuSave')?.addEventListener('click', saveAddSku);
+      // A refusal describes what WAS typed — clear it the moment that changes.
+      ['addSkuCode', 'addSkuName', 'addSkuBarcode', 'addSkuBrand', 'addSkuClient'].forEach(id =>
+        $(id)?.addEventListener('input', () => $('addSkuError')?.classList.add('hidden')));
+      // Enter moves to the next box rather than submitting: a barcode gun ends
+      // every scan with Enter, and scanning the barcode must not save a
+      // half-typed product. Enter on the LAST box saves.
+      const order = ['addSkuCode', 'addSkuName', 'addSkuBarcode', 'addSkuBrand'];
+      order.forEach((id, i) => $(id)?.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        if (i < order.length - 1) $(order[i + 1]).focus(); else saveAddSku();
+      }));
       $('invAdjTo')?.addEventListener('input', paintAdjDelta);
       $('invAdjCancel')?.addEventListener('click', () => $('invAdjustOverlay').classList.add('hidden'));
       $('invAdjSave')?.addEventListener('click', saveAdjust);

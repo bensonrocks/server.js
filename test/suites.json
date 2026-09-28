@@ -9,6 +9,13 @@
       "timeoutMs": 600000
     },
     {
+      "file": "br-add-sku.js",
+      "browser": true,
+      "selfBoots": true,
+      "tier": "candidate",
+      "timeoutMs": 300000
+    },
+    {
       "file": "br-accept.js",
       "browser": true,
       "selfBoots": false,
@@ -470,6 +477,13 @@
       "selfBoots": true,
       "tier": "ci",
       "timeoutMs": 300000
+    },
+    {
+      "file": "add-sku-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 180000
     },
     {
       "file": "itemmaster-upsert-e2e.js",

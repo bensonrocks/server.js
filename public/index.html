@@ -1834,6 +1834,44 @@
     </div>
   </div>
 
+  <!-- + Add SKU: client FIRST (a picker, never free text), then the product.
+       No stock box — stock arrives through Inbound or the stock upload. -->
+  <div id="invAddSkuOverlay" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width:520px">
+      <h3 style="margin:0 0 .2rem">&#43; Add a new SKU</h3>
+      <div class="hint" style="margin-bottom:.9rem">Pick the client first. The SKU is created with <b>0 on hand</b> — receive the stock through Inbound.</div>
+      <label for="addSkuClient" style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">1. CLIENT</label>
+      <select id="addSkuClient" style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.9rem;font-weight:600;min-width:0">
+        <option value="">— choose the client —</option>
+      </select>
+      <fieldset id="addSkuFields" disabled style="border:0;padding:0;margin:0">
+        <label for="addSkuCode" style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">2. SKU CODE *</label>
+        <input type="text" id="addSkuCode" autocomplete="off" placeholder="e.g. MAY-EPS111-WH"
+               style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.7rem" />
+        <label for="addSkuName" style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">PRODUCT NAME *</label>
+        <input type="text" id="addSkuName" autocomplete="off" placeholder="What the pick list and the client portal show"
+               style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:.7rem" />
+        <div style="display:flex;gap:.6rem;flex-wrap:wrap">
+          <div style="flex:1;min-width:150px">
+            <label for="addSkuBarcode" style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">BARCODE <span style="font-weight:400">(optional)</span></label>
+            <input type="text" id="addSkuBarcode" autocomplete="off" placeholder="EAN / UPC — scan it in"
+                   style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+          </div>
+          <div style="flex:1;min-width:150px">
+            <label for="addSkuBrand" style="display:block;font-size:.75rem;color:#64748b;font-weight:600;margin-bottom:.25rem">BRAND <span style="font-weight:400">(optional)</span></label>
+            <input type="text" id="addSkuBrand" autocomplete="off"
+                   style="width:100%;padding:.55rem .7rem;border:1px solid #e2e8f0;border-radius:8px" />
+          </div>
+        </div>
+      </fieldset>
+      <div id="addSkuError" class="login-error hidden" style="margin-top:.7rem"></div>
+      <div class="modal-actions" style="margin-top:1rem">
+        <button class="btn-secondary" id="addSkuCancel">Cancel</button>
+        <button class="btn-primary" id="addSkuSave" disabled>Add SKU</button>
+      </div>
+    </div>
+  </div>
+
   <div id="invAdjustOverlay" class="modal-overlay hidden">
     <div class="modal-card" style="max-width:520px">
       <h3 style="margin:0 0 .2rem">Adjust stock</h3>
@@ -3310,8 +3348,11 @@
             <datalist id="invClientList"></datalist>
           </div>
           <button class="btn-primary btn-sm" id="invLoadBtn" style="padding:.55rem 1rem">Load stock</button>
+          <button class="btn-secondary btn-sm hidden" id="invAddSkuBtn" style="padding:.55rem 1rem" title="Add one new product to a client's item master — you pick the client in the form">&#43; Add SKU</button>
         </div>
       </div>
+
+      <div id="invAddSkuNote" class="status-bar success hidden" style="margin-bottom:.8rem"></div>
 
       <!-- ══ VIEW: Overview — warehouse-wide, all clients (default landing) ══ -->
       <div class="inv-view" data-inv-view="overview">

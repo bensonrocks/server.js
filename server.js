@@ -7419,6 +7419,7 @@ app.post('/api/master/client-profiles/:client/item-master', upload.single('file'
       imported++;
     } catch (e) { skipped++; errors.push({ row: i + 2, sku, error: e.message }); }
   }
+  if (created) forgetInvClientIds();
   const db = readDb();
   const p = clientProfiles(db).find(x => x.client === client);
   if (p) { p.itemCount = (inventory.getAll({ clientId: cid }) || []).length; p.updatedAt = new Date().toISOString(); writeDb(db); }
@@ -28982,6 +28983,10 @@ try {
 // them at boot — so the fold target is unique. Cached briefly: this is called
 // in per-order loops, and the account list changes rarely.
 const _invCidCache = new Map();   // tenantId -> { at, ids } — the store is per-tenant, so the fold map must be too
+// Called wherever a stock account can come into existence (an item master, a
+// stock upload, + Add SKU), so the NEXT read folds onto it at once instead of
+// serving the raw spelling from a cache built a moment before it existed.
+function forgetInvClientIds() { try { _invCidCache.delete(tenantContext.currentTenantId()); } catch (_) { _invCidCache.clear(); } }
 function invClientId(name) {
   const raw = String(name || '').trim();
   if (!raw) return 'GENERAL';
@@ -28996,7 +29001,18 @@ function invClientId(name) {
         c = { at: now, ids: m };
         _invCidCache.set(tid, c);
       }
-      const hit = c.ids.get(raw.toLowerCase());
+      let hit = c.ids.get(raw.toLowerCase());
+      // A MISS may just be a client created in the last few seconds (an item
+      // master, a stock upload, + Add SKU). Rebuild once rather than serve a
+      // stale "unknown" for up to 5s — the one-client-one-spelling rule must
+      // hold for a brand-new client's very first reads too.
+      if (!hit && now - c.at > 250) {
+        const m = new Map();
+        for (const id of inventory.listClientIds() || []) m.set(String(id).toLowerCase(), String(id));
+        c = { at: now, ids: m };
+        _invCidCache.set(tid, c);
+        hit = m.get(raw.toLowerCase());
+      }
       if (hit && hit !== raw) return hit;
     }
   } catch (_) { /* the raw spelling is always a safe answer */ }
@@ -30799,6 +30815,66 @@ app.post('/api/inventory/import-product-master', upload.single('file'), tenantMi
   } catch (_) { /* no store, nothing to offer */ }
   res.json({ imported, skipped: skipped.length, errors, storeOffer });
 });
+// ── + Add SKU — one new product, typed in, for a client picked from the list ──
+// Asked as "how does my admin add a new SKU?" — the only door was a spreadsheet.
+// This is the one-off door, and it is deliberately narrow:
+//   • ADMIN OR MASTER. A catalogue entry decides what scanners accept.
+//   • The client comes from the picker (client-side) and is folded onto the
+//     spelling already in use here, so a typed variant cannot mint an account.
+//   • NO STOCK FIELD. The SKU is created at 0 — stock arrives through Inbound
+//     (counted, GRN'd) or the stock upload (previewed, undoable). A quantity
+//     typed into a product form is stock nobody received.
+//   • REFUSED IN WORDS: an existing SKU (any case — two spellings of one code
+//     are two products to the ledger), a barcode another SKU of the same client
+//     already carries (a scan would book the wrong product), a blank name.
+app.post('/api/inventory/add-sku', requireAuth, express.json(), (req, res) => {
+  if (!requireInboundAdmin(req, res, 'add a SKU')) return;
+  if (!inventory.available()) return res.status(503).json({ error: 'Inventory store unavailable' });
+  const b = req.body || {};
+  const db = readDb();
+  const clientRaw = String(b.clientId || '').trim();
+  const sku = String(b.sku || '').trim();
+  const name = String(b.name || '').trim();
+  const barcode = String(b.barcode || '').trim();
+  const brand = String(b.brand || '').trim();
+  if (!clientRaw) return res.status(400).json({ error: 'Pick the client this SKU belongs to.', field: 'client' });
+  if (!sku) return res.status(400).json({ error: 'The SKU code is required.', field: 'sku' });
+  if (sku.length > 60 || /[\r\n\t]/.test(sku)) return res.status(400).json({ error: 'That SKU code is not usable (too long or contains a line break).', field: 'sku' });
+  if (!name) return res.status(400).json({ error: 'A product name is required — it is what the pick list, the portal and the store show.', field: 'name' });
+  const client = canonicalClientName(db, clientRaw);
+  const cid = invClientId(client);
+  const all = inventory.getAll({ clientId: cid }) || [];
+  const clash = all.find(r => String(r.sku).toLowerCase() === sku.toLowerCase());
+  if (clash) {
+    return res.status(409).json({ error: `${clash.sku} already exists for ${client} (“${clash.name}”). Edit it from the stock list instead of adding it again.`, field: 'sku', exists: clash.sku });
+  }
+  if (barcode) {
+    const holders = inventory.skusForBarcode(cid, barcode) || [];
+    if (holders.length) {
+      return res.status(409).json({ error: `Barcode ${barcode} already belongs to ${holders.join(', ')} for ${client}. Two products on one barcode would make a scan book the wrong one.`, field: 'barcode', barcodeHolders: holders });
+    }
+  }
+  let row;
+  try {
+    const rec = { sku, clientId: cid, name, stock_qty: 0 };
+    if (barcode) rec.barcode = barcode;
+    if (brand) rec.brand = brand;
+    row = inventory.upsert(rec);
+  } catch (e) { return res.status(400).json({ error: e.message }); }
+  forgetInvClientIds();
+  const p = clientProfiles(db).find(x => String(x.client).toLowerCase() === String(client).toLowerCase());
+  if (p) { p.itemCount = all.length + 1; p.updatedAt = new Date().toISOString(); writeDb(db); }
+  logAudit('inventory_sku_added', { client, sku, name, barcode, brand, by: req.userId || '', viaMaster: req.headers['x-master-key'] === MASTER_PASS });
+  // Same question the item-master upload asks: send it on to a connected store?
+  // Asked, never done here.
+  let storeOffer = null;
+  try {
+    const st = zortStoresForClient(readDb(), cid, { requireStockSync: false })[0];
+    if (st) storeOffer = { storeId: st.id, storeName: st.clientName || st.storename || 'the connected store' };
+  } catch (_) {}
+  res.status(201).json({ ok: true, client, item: row, storeOffer });
+});
+
 app.post('/api/inventory', requireAuth, express.json(), (req, res) => {
   try {
     const body = req.body || {};
