@@ -2985,18 +2985,18 @@ function applyNoStockAutoCancel(db, opts = {}) {
       if (st.autocancel_exempt) continue;
       const scanned = Object.values(st.scanned || {}).reduce((s, n) => s + (Number(n) || 0), 0);
       const busy = scanned > 0 || !!claimHolder(st) || !!st.wave_id;
-      // MAYER* TWINS: stock lives on Mayer2026. An order still filed under
-      // Lazada20082026Mayer / TIKTOKMayer (pre-remap backlog, or a door that
-      // did not yet remap) must not auto_cancel no_stock against the empty
-      // channel catalogue — live 171989295057570. Judge shelf against the
-      // fulfill home; ignore twin-side backorders that only exist because
-      // intake reserved against the empty twin.
-      const mayerTwin = looksLikeMayerChannelName(b.client_name)
-        || looksLikeMayerChannelName(b.inventory_client);
-      const stockBatch = mayerTwin ? batchForMayerStockCheck(b) : b;
+      // CHANNEL→HUB TWINS: stock lives on the hub (channel_hub_sources, or
+      // Mayer*→Mayer2026 fallback). An order still filed under a twin (pre-
+      // remap backlog, or a door that did not yet remap) must not auto_cancel
+      // no_stock against the empty channel catalogue — live 171989295057570.
+      // Judge shelf against the fulfill home; ignore twin-side backorders that
+      // only exist because intake reserved against the empty twin.
+      const hubTwin = needsFulfillHubRemap(b.client_name)
+        || needsFulfillHubRemap(b.inventory_client);
+      const stockBatch = hubTwin ? batchForMayerStockCheck(b) : b;
       const sk = orderStockStateSrv(stockBatch, o.lines, lookup, {
         orderNumber: o.order_number,
-        backorders: mayerTwin ? null : boIdx,
+        backorders: hubTwin ? null : boIdx,
         trackedCache,
       });
       const kind = sk ? sk.state : null;
@@ -4385,7 +4385,8 @@ app.get('/api/master/billing/invoice/export', (req, res) => {
 // config-type instructions auto-apply (Deployed); anything needing custom code
 // is stored as Processing for a developer to implement then mark Deployed.
 // db.clientProfiles[] = { client, type, commodity, barcodeSearch, instructions:
-//   [{id, text, status, createdAt}], status, itemCount, createdAt, updatedAt }.
+//   [{id, text, status, createdAt}], status, itemCount, createdAt, updatedAt,
+//   channel_hub_sources?: string[]  // other clients/channels that fulfill into THIS hub }.
 function clientProfiles(db) { return db.clientProfiles || (db.clientProfiles = []); }
 
 app.get('/api/master/client-profiles', (req, res) => {
@@ -4415,9 +4416,22 @@ app.post('/api/master/client-profiles', express.json(), (req, res) => {
   // barcodes for the scanners, a catalogue to push to their store — while
   // nothing is ever reserved at upload or deducted at completion.
   if (b.stock_tracking !== undefined) p.stock_tracking = !!b.stock_tracking;
+  // CHANNEL→HUB SOURCES: which other clients/channels fulfill into THIS hub.
+  // Stored as clear names on the hub profile (e.g. Mayer2026.channel_hub_sources
+  // = ["Lazada20082026Mayer","TIKTOKMayer"]). Self-references are dropped.
+  if (b.channel_hub_sources !== undefined) {
+    const hubLc = client.toLowerCase();
+    p.channel_hub_sources = normalizeChannelHubSources(b.channel_hub_sources)
+      .filter(s => s.toLowerCase() !== hubLc);
+  }
   p.updatedAt = new Date().toISOString();
   writeDb(db);
-  logAudit('client_profile_saved', { client, type: p.type, by: req.userId || '' });
+  invalidateChannelHubMapCache();
+  logAudit('client_profile_saved', {
+    client, type: p.type,
+    channel_hub_sources: p.channel_hub_sources || [],
+    by: req.userId || '',
+  });
   res.json(p);
 });
 app.delete('/api/master/client-profiles/:client', (req, res) => {
@@ -4425,6 +4439,7 @@ app.delete('/api/master/client-profiles/:client', (req, res) => {
   const db = readDb();
   db.clientProfiles = clientProfiles(db).filter(x => x.client !== req.params.client);
   writeDb(db);
+  invalidateChannelHubMapCache();
   logAudit('client_profile_deleted', { client: req.params.client, by: req.userId || '' });
   res.json({ ok: true });
 });
@@ -23078,8 +23093,8 @@ async function pullZortStore(db, store, opts = {}) {
       // the lines check, so a line-less order still names its shop.)
       const att = attributeSyncClient(skuOwners, lines, channel, store, { newClientFromChannel: hubStore });
       const clientForOrder = att.client;
-      // Skip / record-only lists may name either the fulfill home (Mayer2026)
-      // or the marketplace twin (Lazada20082026Mayer) — honour both after remap.
+      // Skip / record-only lists may name either the fulfill hub (e.g. Mayer2026)
+      // or a marketplace twin in channel_hub_sources — honour both after remap.
       const skipRecordKeys = [clientForOrder, att.channel_client, channel]
         .map(v => String(v || '').trim().toLowerCase()).filter(Boolean);
       // A CLIENT WE ARE NOT FULFILLING. Per the user: "we don't have stock, and
@@ -23637,10 +23652,67 @@ function zortLineRow(l) {
 // stock lived on Mayer2026 — then vanished from Active until reopen. Kits
 // (parked PR #28) and plain SKUs share the same filing miss. Benson: channel
 // orders should go into Mayer2026 automatically so reservation, kit explode,
-// and auto-cancel all see the real shelf. Known twins include
-// Lazada20082026Mayer, TIKTOKMayer, ShopeeMayer; any name containing "Mayer"
-// that is not Mayer2026 itself is treated as a twin.
+// and auto-cancel all see the real shelf.
+//
+// DATA-DRIVEN HUB MAPPING (preferred): a hub client's profile stores
+// `channel_hub_sources: ["Lazada20082026Mayer", "TIKTOKMayer", …]` — those
+// channel/twin names remap to the hub at intake and stock-check. Configured
+// in Onboard Client (create + edit). Goal: no delinquent twin holding orders
+// against an empty channel catalogue.
+//
+// FALLBACK (#29 heuristic): any name containing "Mayer" that is not Mayer2026
+// itself still remaps to Mayer2026 until that hub is configured (or forever as
+// a safety net). Known twins include Lazada20082026Mayer, TIKTOKMayer, ShopeeMayer.
 const MAYER2026_FULFILL_CLIENT = 'Mayer2026';
+
+function normalizeChannelHubSources(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const x of raw) {
+    const s = String(x || '').trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
+}
+
+// sourceName (lower) → hub client display name. Cached briefly: built from
+// clientProfiles and consulted in per-order loops.
+const _channelHubMapCache = { at: 0, tid: null, map: null };
+function invalidateChannelHubMapCache() {
+  _channelHubMapCache.at = 0;
+  _channelHubMapCache.map = null;
+}
+function channelHubSourceMap(db) {
+  let tid = null;
+  try { tid = tenantContext.currentTenantId(); } catch (_) {}
+  const now = Date.now();
+  if (_channelHubMapCache.map && _channelHubMapCache.tid === tid && now - _channelHubMapCache.at < 5000) {
+    return _channelHubMapCache.map;
+  }
+  const map = new Map();
+  let list = [];
+  try {
+    list = db ? clientProfiles(db) : clientProfiles(readDb());
+  } catch (_) { list = []; }
+  for (const p of list || []) {
+    const hub = String(p.client || '').trim();
+    if (!hub) continue;
+    for (const src of normalizeChannelHubSources(p.channel_hub_sources)) {
+      if (src.toLowerCase() === hub.toLowerCase()) continue;
+      map.set(src.toLowerCase(), hub);
+    }
+  }
+  _channelHubMapCache.at = now;
+  _channelHubMapCache.tid = tid;
+  _channelHubMapCache.map = map;
+  return map;
+}
+
 function looksLikeMayerChannelName(name) {
   const s = String(name || '').trim();
   if (!s || !/mayer/i.test(s)) return false;
@@ -23648,35 +23720,60 @@ function looksLikeMayerChannelName(name) {
   try { id = invClientId(s) || s; } catch (_) {}
   return String(id).toLowerCase() !== 'mayer2026';
 }
-function mayerFulfillClientName(name) {
+
+// Resolve a twin/channel name to its fulfill hub. Returns { home, via } where
+// via is 'channel_hub' (config), 'mayer2026' (#29 fallback), or null (no remap).
+function resolveFulfillClientName(name) {
   const raw = String(name || '').trim();
-  if (!looksLikeMayerChannelName(raw)) return raw;
-  try { return invClientId(MAYER2026_FULFILL_CLIENT) || MAYER2026_FULFILL_CLIENT; }
-  catch (_) { return MAYER2026_FULFILL_CLIENT; }
+  if (!raw) return { home: raw, via: null };
+  try {
+    const hit = channelHubSourceMap().get(raw.toLowerCase());
+    if (hit) {
+      let id = hit;
+      try { id = invClientId(hit) || hit; } catch (_) {}
+      return { home: id, via: 'channel_hub' };
+    }
+  } catch (_) {}
+  if (looksLikeMayerChannelName(raw)) {
+    let id = MAYER2026_FULFILL_CLIENT;
+    try { id = invClientId(MAYER2026_FULFILL_CLIENT) || MAYER2026_FULFILL_CLIENT; } catch (_) {}
+    return { home: id, via: 'mayer2026' };
+  }
+  return { home: raw, via: null };
 }
+
+function mayerFulfillClientName(name) {
+  return resolveFulfillClientName(name).home;
+}
+
+function needsFulfillHubRemap(name) {
+  return !!resolveFulfillClientName(name).via;
+}
+
 // After attribution: keep the twin on `channel_client` for audit / Find-order;
-// `client` becomes Mayer2026 so intake reserves and stock-checks the home.
+// `client` becomes the hub so intake reserves and stock-checks the home.
 function applyMayerFulfillClient(att) {
   if (!att || !att.client) return att;
-  const home = mayerFulfillClientName(att.client);
-  if (!home || String(home) === String(att.client)) return att;
+  const { home, via } = resolveFulfillClientName(att.client);
+  if (!home || !via || String(home) === String(att.client)) return att;
   return {
     ...att,
     client: home,
     channel_client: att.channel_client || att.client,
-    via: att.via ? `${att.via}+mayer2026` : 'mayer2026',
+    via: att.via ? `${att.via}+${via}` : via,
   };
 }
 function batchForMayerStockCheck(batch) {
   if (!batch) return batch;
-  const twin = looksLikeMayerChannelName(batch.client_name)
-    || looksLikeMayerChannelName(batch.inventory_client);
-  if (!twin) return batch;
-  const home = mayerFulfillClientName(batch.client_name || MAYER2026_FULFILL_CLIENT)
-    || MAYER2026_FULFILL_CLIENT;
-  let cid = home;
-  try { cid = invClientId(home) || home; } catch (_) {}
-  return { ...batch, client_name: home, inventory_client: cid };
+  const candidates = [batch.client_name, batch.inventory_client];
+  for (const n of candidates) {
+    const { home, via } = resolveFulfillClientName(n);
+    if (!via || !home) continue;
+    let cid = home;
+    try { cid = invClientId(home) || home; } catch (_) {}
+    return { ...batch, client_name: home, inventory_client: cid };
+  }
+  return batch;
 }
 
 // Resolve one order's client. Returns what it decided AND how, so an order
@@ -23734,9 +23831,9 @@ function attributeSyncClient(skuOwners, lines, channel, store, opts = {}) {
       }
     }
   }
-  // Mayer* sales-channel twins (Lazada20082026Mayer, TIKTOKMayer, …) fulfill
-  // from Mayer2026 — remap here so every Zort intake door and Find-order share
-  // one rule. Platform / saleschannel on the order row stays the twin name.
+  // Channel→hub remap (profile.channel_hub_sources, else Mayer*→Mayer2026
+  // fallback) — every Zort intake door and Find-order share one rule.
+  // Platform / saleschannel on the order row stays the twin name.
   return applyMayerFulfillClient(decided);
 }
 
@@ -29630,11 +29727,11 @@ function makeBundleResolver() {
   };
 }
 
-// MAYER CHANNEL KITS (also parked as PR #28): virtual kits live under
-// Mayer2026. A row still attributed to a Mayer* twin (upload under the
-// channel name, or backlog before intake remap) misses getBundle(twin, YP-…).
-// Fall back to Mayer2026 after the row's own client has none — same helper
-// family as applyMayerFulfillClient so this PR stands alone without #28 merged.
+// CHANNEL HUB KITS: virtual kits live under the fulfill hub (channel_hub_sources
+// config, else Mayer*→Mayer2026). A row still attributed to a twin (upload under
+// the channel name, or backlog before intake remap) misses getBundle(twin, …).
+// Fall back to the hub after the row's own client has none — same helper family
+// as applyMayerFulfillClient / resolveFulfillClientName.
 function getBundleForExplode(row, clientOf, bundleFor) {
   if (!row || !row.sku) return null;
   const own = clientOf(row);
@@ -29642,12 +29739,13 @@ function getBundleForExplode(row, clientOf, bundleFor) {
   try { bundle = bundleFor(own, row.sku); } catch (_) {}
   if (bundle) return bundle;
   const bits = [own, row.client_name, row.platform, row.saleschannel, row.channel];
-  if (!bits.some(v => looksLikeMayerChannelName(v))) return null;
-  let mayer = MAYER2026_FULFILL_CLIENT;
-  try { mayer = invClientId(MAYER2026_FULFILL_CLIENT) || MAYER2026_FULFILL_CLIENT; } catch (_) {}
-  if (mayer && String(mayer) !== String(own)) {
-    try { bundle = bundleFor(mayer, row.sku); } catch (_) {}
+  let hub = null;
+  for (const v of bits) {
+    const r = resolveFulfillClientName(v);
+    if (r.via && r.home && String(r.home) !== String(own)) { hub = r.home; break; }
   }
+  if (!hub) return null;
+  try { bundle = bundleFor(hub, row.sku); } catch (_) {}
   return bundle;
 }
 function explodeBundleRows(rows, clientOf) {

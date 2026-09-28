@@ -688,6 +688,17 @@
                     </span>
                   </label>
                 </div>
+                <div class="form-group" style="grid-column:1/3" id="obHubSourcesWrap">
+                  <label style="font-weight:600">&#128279; Channel hub sources</label>
+                  <div class="hint" style="margin:.15rem 0 .4rem">
+                    Multi-select other clients/channels whose orders should <b>fulfill into this hub</b>
+                    (e.g. on <b>Mayer2026</b>, tick <code>Lazada20082026Mayer</code>, <code>TIKTOKMayer</code>, <code>ShopeeMayer</code>).
+                    Intake remaps those names here so stock is reserved on this catalogue — no empty twin shelf holding orders.
+                    Leave empty for a normal (non-hub) client. Mayer* still falls back to Mayer2026 until configured.
+                  </div>
+                  <div id="obHubSourcesList" style="max-height:11rem;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;padding:.4rem .55rem;background:#f8fafc"></div>
+                  <div id="obHubSourcesHint" class="hint" style="margin-top:.3rem"></div>
+                </div>
               </div>
               <div style="display:flex;gap:.5rem;align-items:center;margin:.2rem 0 1rem">
                 <button class="btn-primary btn-sm" id="obSaveBtn">Save client</button>
