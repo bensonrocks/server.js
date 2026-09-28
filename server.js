@@ -2985,7 +2985,20 @@ function applyNoStockAutoCancel(db, opts = {}) {
       if (st.autocancel_exempt) continue;
       const scanned = Object.values(st.scanned || {}).reduce((s, n) => s + (Number(n) || 0), 0);
       const busy = scanned > 0 || !!claimHolder(st) || !!st.wave_id;
-      const sk = orderStockStateSrv(b, o.lines, lookup, { orderNumber: o.order_number, backorders: boIdx });
+      // MAYER* TWINS: stock lives on Mayer2026. An order still filed under
+      // Lazada20082026Mayer / TIKTOKMayer (pre-remap backlog, or a door that
+      // did not yet remap) must not auto_cancel no_stock against the empty
+      // channel catalogue — live 171989295057570. Judge shelf against the
+      // fulfill home; ignore twin-side backorders that only exist because
+      // intake reserved against the empty twin.
+      const mayerTwin = looksLikeMayerChannelName(b.client_name)
+        || looksLikeMayerChannelName(b.inventory_client);
+      const stockBatch = mayerTwin ? batchForMayerStockCheck(b) : b;
+      const sk = orderStockStateSrv(stockBatch, o.lines, lookup, {
+        orderNumber: o.order_number,
+        backorders: mayerTwin ? null : boIdx,
+        trackedCache,
+      });
       const kind = sk ? sk.state : null;
       if (!sk || busy || (kind !== 'none' && kind !== 'partial')) {
         // Stock arrived, someone started it, or it is not tracked — the
@@ -23065,6 +23078,10 @@ async function pullZortStore(db, store, opts = {}) {
       // the lines check, so a line-less order still names its shop.)
       const att = attributeSyncClient(skuOwners, lines, channel, store, { newClientFromChannel: hubStore });
       const clientForOrder = att.client;
+      // Skip / record-only lists may name either the fulfill home (Mayer2026)
+      // or the marketplace twin (Lazada20082026Mayer) — honour both after remap.
+      const skipRecordKeys = [clientForOrder, att.channel_client, channel]
+        .map(v => String(v || '').trim().toLowerCase()).filter(Boolean);
       // A CLIENT WE ARE NOT FULFILLING. Per the user: "we don't have stock, and
       // the client should be fulfilling from their end" — and their orders kept
       // reappearing because every removal (row bin, batch delete, Clear Test
@@ -23072,17 +23089,18 @@ async function pullZortStore(db, store, opts = {}) {
       // never mean "not ours"; this switch can. Checked AFTER attribution, so
       // it follows the client the SKUs name rather than whatever label the
       // channel happened to carry.
-      if (skipClients.size && skipClients.has(String(clientForOrder || '').trim().toLowerCase())) {
+      if (skipClients.size && skipRecordKeys.some(k => skipClients.has(k))) {
         skippedClientOrders++;
         if (skippedClientSample.length < 20) skippedClientSample.push({ order: number, client: clientForOrder });
         continue;
       }
       // RECORD ONLY: imported (so the record exists and the dedup check holds),
       // flagged so the batch loop below files it already closed.
-      const recordOnly = recordClients.size && recordClients.has(String(clientForOrder || '').trim().toLowerCase());
+      const recordOnly = recordClients.size && skipRecordKeys.some(k => recordClients.has(k));
       if (recordOnly) recordOnlyOrders++;
       zortMeta[number] = { record_only: recordOnly || undefined,
                            zort_id: o.id, zort_status: o.status, client: clientForOrder,
+                           channel_client: att.channel_client || undefined,
                            attributed_via: att.via, attribution_unsure: att.unsure || null,
                            attribution_hint: att.hint || null, placed_at: _zortPlacedAt(o) };
       for (const l of lines) {
@@ -23152,6 +23170,8 @@ async function pullZortStore(db, store, opts = {}) {
     // Kept on the stored order (clean name, no underscore) so the Orders list
     // can render the fallen-back row as CLIENT (probable owner).
     o.attribution_hint = m.attribution_hint || null;
+    // Twin sales-channel name when fulfill client was remapped to Mayer2026.
+    if (m.channel_client) o.channel_client = m.channel_client;
     o.placed_at = m.placed_at || null;
   }
 
@@ -23610,6 +23630,55 @@ function zortLineRow(l) {
            keys: l && typeof l === 'object' ? Object.keys(l).slice(0, 20) : [] };
 }
 
+
+// MAYER MARKETPLACE TWINS → Mayer2026 FULFILL HOME
+// Live 2026-09-28: order 171989295057570 under Lazada20082026Mayer was
+// auto_cancelled no_stock (channel twin catalogue / stock check at 0) while
+// stock lived on Mayer2026 — then vanished from Active until reopen. Kits
+// (parked PR #28) and plain SKUs share the same filing miss. Benson: channel
+// orders should go into Mayer2026 automatically so reservation, kit explode,
+// and auto-cancel all see the real shelf. Known twins include
+// Lazada20082026Mayer, TIKTOKMayer, ShopeeMayer; any name containing "Mayer"
+// that is not Mayer2026 itself is treated as a twin.
+const MAYER2026_FULFILL_CLIENT = 'Mayer2026';
+function looksLikeMayerChannelName(name) {
+  const s = String(name || '').trim();
+  if (!s || !/mayer/i.test(s)) return false;
+  let id = s;
+  try { id = invClientId(s) || s; } catch (_) {}
+  return String(id).toLowerCase() !== 'mayer2026';
+}
+function mayerFulfillClientName(name) {
+  const raw = String(name || '').trim();
+  if (!looksLikeMayerChannelName(raw)) return raw;
+  try { return invClientId(MAYER2026_FULFILL_CLIENT) || MAYER2026_FULFILL_CLIENT; }
+  catch (_) { return MAYER2026_FULFILL_CLIENT; }
+}
+// After attribution: keep the twin on `channel_client` for audit / Find-order;
+// `client` becomes Mayer2026 so intake reserves and stock-checks the home.
+function applyMayerFulfillClient(att) {
+  if (!att || !att.client) return att;
+  const home = mayerFulfillClientName(att.client);
+  if (!home || String(home) === String(att.client)) return att;
+  return {
+    ...att,
+    client: home,
+    channel_client: att.channel_client || att.client,
+    via: att.via ? `${att.via}+mayer2026` : 'mayer2026',
+  };
+}
+function batchForMayerStockCheck(batch) {
+  if (!batch) return batch;
+  const twin = looksLikeMayerChannelName(batch.client_name)
+    || looksLikeMayerChannelName(batch.inventory_client);
+  if (!twin) return batch;
+  const home = mayerFulfillClientName(batch.client_name || MAYER2026_FULFILL_CLIENT)
+    || MAYER2026_FULFILL_CLIENT;
+  let cid = home;
+  try { cid = invClientId(home) || home; } catch (_) {}
+  return { ...batch, client_name: home, inventory_client: cid };
+}
+
 // Resolve one order's client. Returns what it decided AND how, so an order
 // nobody could place is visible rather than quietly filed under the store.
 function attributeSyncClient(skuOwners, lines, channel, store, opts = {}) {
@@ -23628,37 +23697,47 @@ function attributeSyncClient(skuOwners, lines, channel, store, opts = {}) {
       owners.add([...ownerMap.values()][0]);
     }
   }
-  if (owners.size === 1 && !ambiguous) return { client: [...owners][0], via: 'sku' };
-  // What the SKUs point at, even when it isn't conclusive — shown on the
-  // Orders row as "IDEALONEMAIN (Mayer2026)" so a fallen-back order still
-  // says who it probably belongs to. Display-only; filing is unchanged.
-  const dupOwners = new Set();
-  for (const l of lines || []) {
-    const om = skuOwners.get(String(l.sku || l.barcode || '').trim().toUpperCase());
-    if (om && om.size > 1) for (const n of om.values()) dupOwners.add(n);
+  let decided;
+  if (owners.size === 1 && !ambiguous) {
+    decided = { client: [...owners][0], via: 'sku' };
+  } else {
+    // What the SKUs point at, even when it isn't conclusive — shown on the
+    // Orders row as "IDEALONEMAIN (Mayer2026)" so a fallen-back order still
+    // says who it probably belongs to. Display-only; filing is unchanged.
+    const dupOwners = new Set();
+    for (const l of lines || []) {
+      const om = skuOwners.get(String(l.sku || l.barcode || '').trim().toUpperCase());
+      if (om && om.size > 1) for (const n of om.values()) dupOwners.add(n);
+    }
+    const hint = [...new Set([...owners, ...dupOwners])].join(' / ') || null;
+    const mapped = zortChannelClient(store, channel);
+    if (mapped) {
+      // Lines pointing at a DIFFERENT client than the channel map is worth
+      // knowing about — one of the two is wrong.
+      const clash = owners.size === 1 && [...owners][0] !== mapped;
+      decided = { client: mapped, via: 'channel', unsure: clash ? `SKUs suggest ${[...owners][0]}` : null, hint };
+    } else {
+      const fb = zortFallbackClient(store, channel, opts.newClientFromChannel);
+      // Say WHICH bin it landed in, because the two mean different things to
+      // whoever reads the row: the store label is a pool shared with every other
+      // unplaceable order, the channel name is this client's own.
+      const where = (channel && fb === channel)
+        ? ` — filed under the sales channel "${channel}"; map the channel or load their item master to place it properly`
+        : ` — filed under the store's own name "${fb}"`;
+      if (owners.size > 1) {
+        decided = { client: fb, via: 'unresolved', hint,
+                    unsure: `lines span ${owners.size} clients: ${[...owners].join(', ')}${where}` };
+      } else {
+        decided = { client: fb, via: 'default', hint,
+                    unsure: (ambiguous ? `a SKU is registered to more than one client: ${dupDetails.slice(0, 3).join('; ')}`
+                                       : 'no SKU on this order is in any client item master') + where };
+      }
+    }
   }
-  const hint = [...new Set([...owners, ...dupOwners])].join(' / ') || null;
-  const mapped = zortChannelClient(store, channel);
-  if (mapped) {
-    // Lines pointing at a DIFFERENT client than the channel map is worth
-    // knowing about — one of the two is wrong.
-    const clash = owners.size === 1 && [...owners][0] !== mapped;
-    return { client: mapped, via: 'channel', unsure: clash ? `SKUs suggest ${[...owners][0]}` : null };
-  }
-  const fb = zortFallbackClient(store, channel, opts.newClientFromChannel);
-  // Say WHICH bin it landed in, because the two mean different things to
-  // whoever reads the row: the store label is a pool shared with every other
-  // unplaceable order, the channel name is this client's own.
-  const where = (channel && fb === channel)
-    ? ` — filed under the sales channel "${channel}"; map the channel or load their item master to place it properly`
-    : ` — filed under the store's own name "${fb}"`;
-  if (owners.size > 1) {
-    return { client: fb, via: 'unresolved', hint,
-             unsure: `lines span ${owners.size} clients: ${[...owners].join(', ')}${where}` };
-  }
-  return { client: fb, via: 'default', hint,
-           unsure: (ambiguous ? `a SKU is registered to more than one client: ${dupDetails.slice(0, 3).join('; ')}`
-                              : 'no SKU on this order is in any client item master') + where };
+  // Mayer* sales-channel twins (Lazada20082026Mayer, TIKTOKMayer, …) fulfill
+  // from Mayer2026 — remap here so every Zort intake door and Find-order share
+  // one rule. Platform / saleschannel on the order row stays the twin name.
+  return applyMayerFulfillClient(decided);
 }
 
 // ── ZORT outbox — durable, retrying up/down message queue ───────────────────
@@ -26772,7 +26851,7 @@ async function pullShopifyStore(db, store) {
 
   let imported = 0; let batchId = null;
   if (rows.length) {
-    const clientName = canonicalClientName(db, store.clientName);
+    const clientName = canonicalClientName(db, mayerFulfillClientName(store.clientName) || store.clientName);
     const cid = invClientId(clientName);
     const normRows = normalizeOrderRowsToInhouseSku(rows, () => cid);
     const explodedRows = explodeBundleRows(normRows, () => cid);
@@ -27150,7 +27229,7 @@ async function pullOnecartStore(db, store) {
 
   let imported = 0; let batchId = null; const newOrders = [];
   if (rows.length) {
-    const clientName = canonicalClientName(db, store.clientName);
+    const clientName = canonicalClientName(db, mayerFulfillClientName(store.clientName) || store.clientName);
     const cid = invClientId(clientName);
     const normRows = normalizeOrderRowsToInhouseSku(rows, () => cid);
     const explodedRows = explodeBundleRows(normRows, () => cid);
@@ -29551,13 +29630,33 @@ function makeBundleResolver() {
   };
 }
 
+// MAYER CHANNEL KITS (also parked as PR #28): virtual kits live under
+// Mayer2026. A row still attributed to a Mayer* twin (upload under the
+// channel name, or backlog before intake remap) misses getBundle(twin, YP-…).
+// Fall back to Mayer2026 after the row's own client has none — same helper
+// family as applyMayerFulfillClient so this PR stands alone without #28 merged.
+function getBundleForExplode(row, clientOf, bundleFor) {
+  if (!row || !row.sku) return null;
+  const own = clientOf(row);
+  let bundle = null;
+  try { bundle = bundleFor(own, row.sku); } catch (_) {}
+  if (bundle) return bundle;
+  const bits = [own, row.client_name, row.platform, row.saleschannel, row.channel];
+  if (!bits.some(v => looksLikeMayerChannelName(v))) return null;
+  let mayer = MAYER2026_FULFILL_CLIENT;
+  try { mayer = invClientId(MAYER2026_FULFILL_CLIENT) || MAYER2026_FULFILL_CLIENT; } catch (_) {}
+  if (mayer && String(mayer) !== String(own)) {
+    try { bundle = bundleFor(mayer, row.sku); } catch (_) {}
+  }
+  return bundle;
+}
 function explodeBundleRows(rows, clientOf) {
   if (!inventory.available() || !Array.isArray(rows)) return rows;
   const out = [];
   const bundleFor = makeBundleResolver();
   for (const r of rows) {
     let bundle = null;
-    try { bundle = r && r.sku ? bundleFor(clientOf(r), r.sku) : null; } catch (_) {}
+    try { bundle = getBundleForExplode(r, clientOf, bundleFor); } catch (_) {}
     // Only VIRTUAL bundles explode into components. A PHYSICAL kit is a real,
     // pre-built SKU on the shelf — it ships as itself, so leave the line alone.
     if (bundle && bundle.type === 'physical') bundle = null;
