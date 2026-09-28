@@ -12203,12 +12203,20 @@
     const mk = () => ({ 'x-master-key': LOG_PASSWORD });
     const mkJson = () => ({ 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' });
 
+    let knownClients = []; // names from profiles + batches + inventory (picker)
     async function load() {
       try {
         const r = await fetch('/api/master/client-profiles', { headers: mk() });
         profiles = r.ok ? await r.json() : [];
       } catch { profiles = []; }
+      try {
+        const r2 = await fetch('/api/master/client-data/clients', { headers: mk() });
+        const d2 = r2.ok ? await r2.json() : { clients: [] };
+        knownClients = (d2.clients || []).map(c => c.name).filter(Boolean);
+      } catch { knownClients = profiles.map(p => p.client).filter(Boolean); }
       renderList();
+      if (current) renderHubSources(profiles.find(x => x.client === current)?.channel_hub_sources || []);
+      else if (current === '') renderHubSources([]);
     }
     function renderList() {
       const el = $('obClientList');
@@ -12234,6 +12242,7 @@
       $('obItemCount').textContent = ''; $('obItemStatus').classList.add('hidden');
       $('obInstrList').innerHTML = ''; $('obTestResult').textContent = '';
       $('obSaveStatus').textContent = '';
+      renderHubSources([]);
     }
     function select(client) {
       const p = profiles.find(x => x.client === client);
@@ -12248,6 +12257,7 @@
       $('obStockTracking').checked = p.stock_tracking !== false;
       $('obItemCount').textContent = p.itemCount ? `${p.itemCount} items loaded` : 'no items yet';
       $('obItemStatus').classList.add('hidden'); $('obTestResult').textContent = ''; $('obSaveStatus').textContent = '';
+      renderHubSources(p.channel_hub_sources || []);
       renderInstr(p.instructions || []);
       // Portal access state (credentials are masked server-side)
       const pt = p.portal || {};
@@ -12467,6 +12477,50 @@
         loadPortalUsers();
       }));
     }
+    // CHANNEL→HUB PICKER: other known clients/channels that fulfill into the
+    // client being created/edited. Names saved on the hub as channel_hub_sources.
+    function selectedHubSources() {
+      const box = $('obHubSourcesList');
+      if (!box) return [];
+      return [...box.querySelectorAll('input.ob-hub-src:checked')].map(c => c.value).filter(Boolean);
+    }
+    function renderHubSources(selected) {
+      const box = $('obHubSourcesList');
+      const hint = $('obHubSourcesHint');
+      if (!box) return;
+      const sel = new Set((selected || []).map(s => String(s).trim().toLowerCase()).filter(Boolean));
+      const selfName = ($('obName')?.value || current || '').trim();
+      const selfLc = selfName.toLowerCase();
+      // Union: known clients + already-selected (so a renamed/removed twin stays visible)
+      const names = new Set();
+      for (const n of knownClients) if (n) names.add(String(n).trim());
+      for (const p of profiles) if (p.client) names.add(String(p.client).trim());
+      for (const s of selected || []) if (s) names.add(String(s).trim());
+      const options = [...names]
+        .filter(n => n && n.toLowerCase() !== selfLc)
+        .sort((a, b) => a.localeCompare(b));
+      if (!options.length) {
+        box.innerHTML = '<span class="hint">No other clients/channels yet — onboard channel twins first, then tick them here.</span>';
+        if (hint) hint.textContent = '';
+        return;
+      }
+      box.innerHTML = options.map(n => {
+        const checked = sel.has(n.toLowerCase()) ? 'checked' : '';
+        return `<label style="display:flex;align-items:center;gap:.45rem;padding:.18rem 0;font-size:.84rem;cursor:pointer">
+          <input type="checkbox" class="ob-hub-src" value="${esc(n)}" ${checked} />
+          <span>${esc(n)}</span>
+        </label>`;
+      }).join('');
+      const nSel = sel.size;
+      if (hint) {
+        hint.innerHTML = nSel
+          ? `<b style="color:#0369a1">${nSel}</b> channel(s) will fulfill into <b>${esc(selfName || 'this hub')}</b>.`
+          : (selfLc === 'mayer2026'
+            ? 'No sources selected — Mayer* name heuristic still remaps to Mayer2026 until you configure this list.'
+            : 'No sources selected — this client is not a channel hub.');
+      }
+    }
+
     function renderInstr(list) {
       $('obInstrList').innerHTML = list.length ? list.map(i => {
         const badge = i.status === 'Deployed'
@@ -12481,10 +12535,14 @@
       const client = $('obName').value.trim();
       if (!client) { $('obSaveStatus').textContent = 'Name required.'; return; }
       const body = { client, type: $('obType').value, commodity: $('obCommodity').value.trim(),
-                     stock_tracking: $('obStockTracking').checked };
+                     stock_tracking: $('obStockTracking').checked,
+                     channel_hub_sources: selectedHubSources() };
       const r = await fetch('/api/master/client-profiles', { method: 'POST', headers: mkJson(), body: JSON.stringify(body) });
       if (!r.ok) { const d = await r.json(); $('obSaveStatus').textContent = d.error || 'Save failed'; return; }
-      $('obSaveStatus').textContent = '✓ Saved';
+      const nHub = (body.channel_hub_sources || []).length;
+      $('obSaveStatus').textContent = nHub
+        ? `✓ Saved · ${nHub} channel hub source(s)`
+        : '✓ Saved';
       await load(); select(client);
     }
     function uploadItems() {
@@ -12573,6 +12631,15 @@
     setTimeout(() => {
       $('obNewBtn')?.addEventListener('click', openBlank);
       $('obSaveBtn')?.addEventListener('click', save);
+      $('obName')?.addEventListener('input', () => {
+        // Keep the self-name out of the picker while typing a new hub name.
+        if (current === '') renderHubSources(selectedHubSources());
+      });
+      $('obHubSourcesList')?.addEventListener('change', (e) => {
+        if (e.target && e.target.classList.contains('ob-hub-src')) {
+          renderHubSources(selectedHubSources());
+        }
+      });
       $('obItemUploadBtn')?.addEventListener('click', uploadItems);
       $('obTestBtn')?.addEventListener('click', testCode);
       $('obTestCode')?.addEventListener('keydown', e => { if (e.key === 'Enter') testCode(); });
