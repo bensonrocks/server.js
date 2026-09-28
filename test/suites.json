@@ -472,6 +472,13 @@
       "timeoutMs": 300000
     },
     {
+      "file": "itemmaster-upsert-e2e.js",
+      "browser": false,
+      "selfBoots": true,
+      "tier": "ci",
+      "timeoutMs": 180000
+    },
+    {
       "file": "onecart-ref-e2e.js",
       "browser": false,
       "selfBoots": true,

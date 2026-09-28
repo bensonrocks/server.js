@@ -12568,6 +12568,15 @@
             st.className = 'status-bar success';
             st.textContent = `✓ ${d.imported} item(s) loaded${d.skipped ? `, ${d.skipped} skipped` : ''}. SKU↔barcode search is on.`;
           }
+          // Say what the file actually did: new SKUs vs names refreshed, and —
+          // the part that matters — whose on-hand it changed. A blank Qty cell
+          // changes nothing, so this line only appears when the file set one.
+          if (d.created != null) {
+            st.textContent += ` ${d.created} new, ${d.updated} already existed (stock left as it was unless the file gave a quantity).`;
+            if (d.stockSet) st.textContent += ` On-hand set from the file for ${d.stockSet} SKU(s): `
+              + (d.stockSetSkus || []).slice(0, 6).map(x => `${x.sku} ${x.from}→${x.to}`).join(', ')
+              + (d.stockSet > 6 ? '…' : '') + '.';
+          }
           $('obItemCount').textContent = `${d.itemCount} items loaded`;
           // A connected store carries this client — offer to send the catalogue
           // on. ASKED, never automatic: pushing products outward is a decision,

@@ -9374,6 +9374,30 @@ from an unmapped channel files under Mayer2026 and explodes; a lower-case kit
 code explodes; a purge at 0 minutes then cancels nothing. **The deployed build
 (`e321d46`) fails 15 of the API checks** and reproduces the report.
 
+## Item master re-upload never resets stock or wipes barcodes
+
+Asked as "how do I add a new SKU?" — there is no single-SKU form, so the answer
+is Onboard Client → ⬆ Upload item master. That route passed
+`stock_qty: … ?? 0` and `barcode: … ?? ''` on EVERY row, so re-uploading a full
+item master to add one SKU set every existing SKU's on-hand to **0** and blanked
+its barcode — no movement row, no undo.
+
+- **A blank or missing cell means "not given"**: barcode is written only when
+  the file carries one; quantity only when a Qty/Stock cell has a number.
+- **A given quantity goes through the LEDGER** (`inventory.adjust`, type
+  `upload`, reason "Item master upload: on-hand set X → Y" / "opening stock"),
+  so on-hand never moves without a movement saying why. A new SKU is created at
+  0 and its opening stock posted the same way.
+- The response and the screen say `created` / `updated` and name every SKU
+  whose on-hand the file changed (`stockSetSkus`, from → to); audited on
+  `client_item_master_uploaded`.
+
+Verified 13 checks (`itemmaster-upsert-e2e.js`, **tier `ci`**): a re-upload
+with no Qty column leaves 40/25 standing, a blank barcode cell keeps the
+barcode, names still update, a new SKU lands at 0 with its barcode, a blank Qty
+cell changes nothing while a given one moves 25 → 30 with a +5 movement naming
+the upload. **The build before this fails 9 of 13 — both SKUs read 0.**
+
 ## Git
 
 - Branch: `claude/order-processing-wms-fulfillment-6mf8o4`

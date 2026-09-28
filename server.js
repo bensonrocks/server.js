@@ -7375,7 +7375,7 @@ app.post('/api/master/client-profiles/:client/item-master', upload.single('file'
     }
   } catch (e) { return res.status(400).json({ error: 'Could not parse file: ' + e.message }); }
 
-  let imported = 0, skipped = 0; const errors = []; const noName = [];
+  let imported = 0, skipped = 0, created = 0, updated = 0; const errors = []; const noName = []; const stockSet = [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const sku = String(r.sku ?? r.skucode ?? r.itemcode ?? '').trim();
@@ -7392,20 +7392,38 @@ app.post('/api/master/client-profiles/:client/item-master', upload.single('file'
     // refusal happening as an anonymous exception.
     const pname = String(r.name ?? r.description ?? r.productname ?? '').trim();
     if (!pname) { noName.push(sku); skipped++; continue; }
+    // A BLANK CELL IS "NOT GIVEN", NEVER ZERO OR EMPTY. This upsert used to
+    // pass `stock_qty: … ?? 0` and `barcode: … ?? ''` on every row, so
+    // re-uploading a full item master to add ONE new SKU reset every existing
+    // SKU's on-hand to 0 and wiped its barcode — silently, with no movement
+    // row and no undo. Now a field is written only when the file carries a
+    // value for it, and a quantity change goes through the LEDGER (adjust),
+    // so on-hand never moves without a movement saying why.
+    const bcRaw = String(r.barcode ?? r.ean ?? r.upc ?? r.barcodeeanupc ?? '').trim();
+    const qRaw = [r.stockqty, r.qty, r.quantity, r.stock].find(v => v !== undefined && String(v).trim() !== '');
+    const qGiven = qRaw !== undefined && Number.isFinite(Number(qRaw));
+    const qty = qGiven ? Math.max(0, Number(qRaw)) : 0;
     try {
-      inventory.upsert({
-        sku, clientId: cid,
-        name: pname,
-        barcode: String(r.barcode ?? r.ean ?? r.upc ?? r.barcodeeanupc ?? '').trim(),
-        stock_qty: Number(r.stockqty ?? r.qty ?? r.quantity ?? r.stock ?? 0) || 0,
-      });
+      const before = inventory.get(sku, cid);
+      const rec = { sku, clientId: cid, name: pname };
+      if (bcRaw) rec.barcode = bcRaw;
+      if (!before) rec.stock_qty = 0;          // opening stock goes via the ledger below
+      inventory.upsert(rec);
+      if (before) updated++; else created++;
+      const from = before ? (Number(before.stock_qty) || 0) : 0;
+      if (qGiven && qty !== from) {
+        inventory.adjust(sku, cid, qty - from, 'upload',
+          before ? `Item master upload: on-hand set ${from} → ${qty}` : 'Item master upload: opening stock');
+        stockSet.push({ sku, from, to: qty });
+      }
       imported++;
     } catch (e) { skipped++; errors.push({ row: i + 2, sku, error: e.message }); }
   }
   const db = readDb();
   const p = clientProfiles(db).find(x => x.client === client);
   if (p) { p.itemCount = (inventory.getAll({ clientId: cid }) || []).length; p.updatedAt = new Date().toISOString(); writeDb(db); }
-  logAudit('client_item_master_uploaded', { client, imported, skipped, noName: noName.length, by: req.userId || '' });
+  logAudit('client_item_master_uploaded', { client, imported, created, updated, skipped, noName: noName.length,
+    stockSet: stockSet.slice(0, 50), by: req.userId || '' });
   // Is there a connected store carrying this client? Only then is there
   // anything to offer. The push is NOT fired here — the operator is asked
   // first, because sending a catalogue outward is a decision, not a side
@@ -7418,7 +7436,8 @@ app.post('/api/master/client-profiles/:client/item-master', upload.single('file'
     if (st && imported) storeOffer = { storeId: st.id, storeName: st.clientName || st.storename || 'the connected store', skus: imported };
   } catch (_) { /* no store — nothing to offer */ }
   res.json({
-    imported, skipped, errors: errors.slice(0, 20),
+    imported, created, updated, skipped, errors: errors.slice(0, 20),
+    stockSet: stockSet.length, stockSetSkus: stockSet.slice(0, 20),
     itemCount: p ? p.itemCount : imported,
     noName: noName.length, noNameSkus: noName.slice(0, 20),
     storeOffer,
