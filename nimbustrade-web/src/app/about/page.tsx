@@ -46,8 +46,8 @@ export default function AboutPage() {
       <FaqJsonLd faqs={FAQS} />
       <div className="mx-auto max-w-7xl px-6 py-20">
         <Reveal className="max-w-2xl">
-          <span className="text-xs font-bold uppercase tracking-wider text-brand">About</span>
-          <h1 className="mt-3 font-display text-5xl font-bold text-ink">
+          <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">About</span>
+          <h1 className="mt-3 font-display text-5xl font-semibold text-ink">
             One desk, coordinating the operating layer.
           </h1>
           <p className="mt-6 text-lg leading-relaxed text-ink-muted">
@@ -59,20 +59,20 @@ export default function AboutPage() {
         </Reveal>
 
         <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-2">
-          <Reveal delay={staggerDelay(0)} className="group overflow-hidden rounded-lg border border-border">
+          <Reveal delay={staggerDelay(0)} className="overflow-hidden border border-border">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/gallery/gallery-racking-aisle.jpg"
               alt="Pallet racking inside a NimbusTrade-appointed warehouse"
-              className="aspect-[4/3] w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+              className="aspect-[4/3] w-full object-cover"
             />
           </Reveal>
-          <Reveal delay={staggerDelay(1)} className="group overflow-hidden rounded-lg border border-border">
+          <Reveal delay={staggerDelay(1)} className="overflow-hidden border border-border">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/gallery/gallery-outbound-single.jpg"
               alt="An outbound parcel ready for courier collection"
-              className="aspect-[4/3] w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+              className="aspect-[4/3] w-full object-cover"
             />
           </Reveal>
         </div>
@@ -82,8 +82,8 @@ export default function AboutPage() {
 
       <section className="mx-auto max-w-4xl px-6 py-24">
         <Reveal>
-          <span className="text-xs font-bold uppercase tracking-wider text-brand">FAQ</span>
-          <h2 className="mt-3 font-display text-4xl font-bold text-ink">Common questions.</h2>
+          <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">FAQ</span>
+          <h2 className="mt-3 font-display text-4xl font-semibold text-ink">Common questions.</h2>
         </Reveal>
         <Reveal delay={0.1}>
           <Accordion type="single" collapsible className="mt-8">

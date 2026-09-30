@@ -17,7 +17,7 @@
 <div class="login-screen" id="login-screen">
   <form class="login-card" id="login-form">
     <div class="login-brand">
-      <img src="assets/logo.png" class="brand-logo" alt="NimbusTrade Solutions" />
+      <img src="assets/logo.png" class="brand-logo" alt="NimbusTrade Solutions" width="216" height="79" />
     </div>
     <p class="login-eyebrow">Client Access</p>
     <h1>Sign in to your operations portal</h1>
@@ -34,15 +34,14 @@
 
     <button type="submit" class="btn btn-primary btn-block">Sign in</button>
     <p class="login-error" id="login-error" hidden></p>
-    <p class="login-hint">Demo credentials — username <code>bwlonline</code>, password <code>BWLOnline@2026</code></p>
-  </form>
+      </form>
 </div>
 
 <!-- ---------- Dashboard ---------- -->
 <div class="app" id="app" hidden>
   <header class="app-header">
     <div class="app-brand">
-      <img src="assets/logo.png" class="brand-logo" alt="NimbusTrade Solutions" />
+      <img src="assets/logo.png" class="brand-logo" alt="NimbusTrade Solutions" width="216" height="79" />
       <em class="app-brand-suffix">Client Access</em>
     </div>
     <div class="app-header-right">
@@ -85,7 +84,7 @@
         <h2>Order flow across your markets</h2>
       </div>
       <div class="toolbar-actions">
-        <button class="btn btn-ghost-sm" id="open-upload-orders">Upload Orders (CSV)</button>
+        <button class="btn btn-ghost-sm" id="open-upload-orders">Upload orders</button>
         <button class="btn btn-primary" id="open-drop-order">+ Drop New Order</button>
       </div>
     </div>
@@ -128,6 +127,23 @@
         <p class="table-loading">Loading…</p>
       </div>
     </section>
+
+    <section class="panel" id="panel-charts">
+      <div class="panel-head">
+        <h3>Delivery performance</h3>
+        <p class="panel-sub">Counted from your orders. Days are Singapore time.</p>
+      </div>
+      <form class="chart-filters" id="chart-form">
+        <label>Orders on <input type="date" id="chart-day"></label>
+        <label>From <input type="date" id="chart-from"></label>
+        <label>To <input type="date" id="chart-to"></label>
+        <button type="submit" class="btn btn-ghost-sm">Update</button>
+      </form>
+      <div class="chart-kpis" id="chart-kpis"></div>
+      <div class="chart-columns" id="chart-columns">
+        <p class="table-loading">Loading…</p>
+      </div>
+    </section>
   </main>
   </div>
 </div>
@@ -151,6 +167,7 @@
           <option value="CA" data-name="Canada">Canada</option>
           <option value="GB" data-name="United Kingdom">United Kingdom</option>
           <option value="MX" data-name="Mexico">Mexico</option>
+          <option value="SG" data-name="Singapore">Singapore</option>
           <option value="US" data-name="United States">United States</option>
         </select>
       </label>
@@ -181,14 +198,15 @@
 <!-- ---------- Upload orders modal ---------- -->
 <div class="modal-overlay" id="upload-orders-overlay" hidden>
   <div class="modal-card modal-card-wide">
-    <h3>Upload orders (CSV)</h3>
+    <h3>Upload orders</h3>
     <p class="modal-sub">
-      Columns, in order: <code>customerName, country, sku, qty, orderDate</code>. Market codes: AE, CA, GB, MX, US.
-      First row may be a header — it's detected automatically. Every row drops as a new order with status <strong>Dropped</strong>.
+      Download the spreadsheet template, fill one order per row, and upload it here.
+      Valid rows are created as <strong>Dropped</strong>. Rows that fail are listed with their spreadsheet row number and are not created.
+      <a href="#" id="download-order-template">Download template</a>
     </p>
     <label class="field">
-      <span>CSV file</span>
-      <input type="file" id="upload-orders-file" accept=".csv,text/csv" />
+      <span>Spreadsheet</span>
+      <input type="file" id="upload-orders-file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" />
     </label>
     <p class="upload-summary" id="upload-orders-summary" hidden></p>
     <div class="modal-actions">

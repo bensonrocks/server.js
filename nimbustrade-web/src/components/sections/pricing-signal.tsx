@@ -4,7 +4,7 @@ import { Reveal } from "@/components/reveal";
 export function PricingSignal() {
   return (
     <section className="border-y border-border bg-paper-alt">
-      <Reveal y={12} className="mx-auto max-w-4xl px-6 py-10 text-center">
+      <Reveal y={12} className="mx-auto max-w-3xl px-6 py-10">
         <p className="text-sm leading-relaxed text-ink">
           No minimum volume, no fixed-term lease — every engagement runs month-to-month. A rate
           card is quoted per scope and issued within 2 business days of a scoping call.{" "}

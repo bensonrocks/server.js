@@ -1,7 +1,3 @@
-"use client";
-
-import { motion } from "framer-motion";
-
 const STEPS = [
   {
     n: "01",
@@ -34,34 +30,26 @@ export function HowItWorks() {
   return (
     <section className="mx-auto max-w-7xl px-6 py-24">
       <div className="max-w-2xl">
-        <span className="text-xs font-bold uppercase tracking-wider text-brand">How it works</span>
-        <h2 className="mt-3 font-display text-4xl font-bold text-ink">
+        <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">How it works</span>
+        <h2 className="mt-3 font-display text-4xl font-semibold text-ink">
           Five steps from first call to live operations.
         </h2>
       </div>
 
-      <div className="mt-14 grid grid-cols-1 gap-x-8 gap-y-12 md:grid-cols-5">
-        {STEPS.map((step, i) => (
-          <motion.div
+      <ol className="mt-12 max-w-3xl border-t border-border">
+        {STEPS.map((step) => (
+          <li
             key={step.n}
-            initial={{ opacity: 0, y: 24 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-80px" }}
-            transition={{ duration: 0.5, delay: i * 0.08 }}
-            className="relative"
+            className="grid grid-cols-[3.5rem_1fr] gap-x-4 border-b border-border py-6 sm:grid-cols-[4.5rem_12rem_1fr] sm:gap-x-8"
           >
-            <span className="font-display text-5xl font-bold text-brand-tint">{step.n}</span>
-            <h3 className="mt-2 font-display text-xl font-bold text-ink">{step.title}</h3>
-            <p className="mt-2 text-sm leading-relaxed text-ink-muted">{step.body}</p>
-            {i < STEPS.length - 1 && (
-              <span
-                aria-hidden
-                className="hidden md:block absolute top-6 left-[calc(100%+1rem)] h-px w-8 bg-border-strong"
-              />
-            )}
-          </motion.div>
+            <span className="font-mono text-xs text-ink-muted">{step.n}</span>
+            <h3 className="font-display text-xl font-semibold text-ink">{step.title}</h3>
+            <p className="col-start-2 mt-2 text-sm leading-relaxed text-ink-muted sm:col-start-3 sm:mt-0">
+              {step.body}
+            </p>
+          </li>
         ))}
-      </div>
+      </ol>
     </section>
   );
 }

@@ -131,19 +131,90 @@
     const tbody = $('#by-client-table tbody');
     if (!data.byClient.length) {
       tbody.innerHTML = '<tr><td colspan="6" class="table-loading">No orders yet.</td></tr>';
-      return;
+    } else {
+      tbody.innerHTML = data.byClient.map((c) => `
+        <tr>
+          <td>${escapeHtml(c.clientName)}</td>
+          <td>${c.dropped}</td>
+          <td>${c.processing}</td>
+          <td>${c.completed}</td>
+          <td>${c.issue}</td>
+          <td><strong>${c.total}</strong></td>
+        </tr>
+      `).join('');
     }
-    tbody.innerHTML = data.byClient.map((c) => `
-      <tr>
-        <td>${escapeHtml(c.clientName)}</td>
-        <td>${c.dropped}</td>
-        <td>${c.processing}</td>
-        <td>${c.completed}</td>
-        <td>${c.issue}</td>
-        <td><strong>${c.total}</strong></td>
-      </tr>
-    `).join('');
+    try {
+      await fillChartClients();
+      await loadCharts();
+    } catch (err) {
+      const wrap = $('#chart-columns');
+      if (wrap) wrap.innerHTML = `<p class="chart-empty">${escapeHtml(err.message)}</p>`;
+    }
   }
+
+  async function fillChartClients() {
+    const sel = $('#chart-client');
+    if (!sel || sel.dataset.filled) return;
+    const clients = await api('/clients');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All clients</option>' + clients.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+    sel.value = current;
+    sel.dataset.filled = '1';
+  }
+
+  function chartBars(series) {
+    const max = Math.max(1, ...series.map((d) => Number(d.n) || 0));
+    return `<div class="day-bars">${series.map((d) => {
+      const n = Number(d.n) || 0;
+      const h = Math.round((n / max) * 100);
+      return `<div class="day-bar" title="${escapeHtml(d.date)}: ${n}"><span class="day-bar-fill" style="height:${h}%"></span></div>`;
+    }).join('')}</div>`;
+  }
+
+  function chartBlock(title, total, series, emptyText) {
+    const empty = Number(total) === 0;
+    return `<div class="chart-block"><h4>${escapeHtml(title)}</h4><p class="chart-figure">${Number(total).toLocaleString()}</p>${
+      empty ? `<p class="chart-empty">${escapeHtml(emptyText)}</p>` : chartBars(series || [])
+    }</div>`;
+  }
+
+  async function loadCharts() {
+    const wrap = $('#chart-columns');
+    if (!wrap) return;
+    const params = new URLSearchParams();
+    const day = $('#chart-day')?.value || '';
+    const from = $('#chart-from')?.value || '';
+    const to = $('#chart-to')?.value || '';
+    const clientId = $('#chart-client')?.value || '';
+    if (day) params.set('day', day);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (clientId) params.set('clientId', clientId);
+    const data = await api(`/charts?${params}`);
+    if ($('#chart-day') && !$('#chart-day').value) $('#chart-day').value = data.day;
+    if ($('#chart-from') && !$('#chart-from').value) $('#chart-from').value = data.from;
+    if ($('#chart-to') && !$('#chart-to').value) $('#chart-to').value = data.to;
+    $('#chart-kpis').innerHTML = [
+      ['Orders on this day', data.ordersInDay],
+      ['Orders in period', data.ordersInPeriod],
+      ['Deliveries completed', data.deliveriesCompleted],
+      ['Late deliveries', data.lateDeliveries],
+    ].map(([label, n]) => `<div class="chart-kpi"><span>${escapeHtml(label)}</span><strong>${Number(n).toLocaleString()}</strong></div>`).join('');
+    wrap.innerHTML = [
+      chartBlock('Orders on this day', data.ordersInDay, data.ordersOnDay, 'No orders on this day.'),
+      chartBlock('Orders over the period', data.ordersInPeriod, data.ordersByDay, 'No orders in this period.'),
+      chartBlock('Deliveries completed', data.deliveriesCompleted, data.deliveriesByDay, 'No deliveries completed in this period.'),
+      chartBlock('Late deliveries', data.lateDeliveries, data.lateByDay, 'No late deliveries in this period.'),
+    ].join('');
+  }
+
+  $('#chart-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    loadCharts().catch((err) => {
+      const wrap = $('#chart-columns');
+      if (wrap) wrap.innerHTML = `<p class="chart-empty">${escapeHtml(err.message)}</p>`;
+    });
+  });
 
   // ---------- Map (all clients, all markets + inbound shipment trails) ----------
 
@@ -308,10 +379,10 @@
       `).join('');
       tbody.querySelectorAll('[data-add-login]').forEach((btn) => {
         btn.addEventListener('click', () => {
+          $('#add-user-form').reset();
           $('#add-user-client-id').value = btn.dataset.addLogin;
           $('#add-user-client-name').textContent = btn.dataset.name;
           $('#add-user-error').hidden = true;
-          $('#add-user-form').reset();
           $('#add-user-overlay').hidden = false;
         });
       });

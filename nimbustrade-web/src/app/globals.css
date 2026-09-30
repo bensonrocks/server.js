@@ -83,6 +83,29 @@
   }
 }
 
+/* Real lockup is 270×127. Width is derived from the intended height so a
+   max-width constraint recomputes height instead of squashing the pixels. */
+.brand-lockup {
+  display: block;
+  height: auto;
+  max-width: 100%;
+  aspect-ratio: 270 / 127;
+  object-fit: contain;
+  object-position: left center;
+  flex-shrink: 0;
+}
+.brand-lockup.is-header {
+  width: calc(64px * 270 / 127);
+}
+@media (min-width: 768px) {
+  .brand-lockup.is-header {
+    width: calc(80px * 270 / 127);
+  }
+}
+.brand-lockup.is-footer {
+  width: calc(88px * 270 / 127);
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

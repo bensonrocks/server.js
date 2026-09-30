@@ -123,7 +123,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .login-brand { display: flex; flex-direction: column; margin-bottom: 28px; }
-.brand-logo { display: block; height: 30px; width: auto; }
+.brand-logo {
+  display: block;
+  height: auto;
+  width: calc(30px * 216 / 79);
+  max-width: 100%;
+  aspect-ratio: 216 / 79;
+  object-fit: contain;
+  object-position: left center;
+}
 
 .login-eyebrow { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; font-weight: 600; color: var(--accent); margin: 0 0 8px; }
 .login-card h1 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
@@ -170,7 +178,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   color: var(--hero-fg);
 }
 .app-brand { display: flex; align-items: center; gap: 10px; }
-.app-brand .brand-logo { height: 26px; }
+.app-brand .brand-logo { width: calc(26px * 216 / 79); height: auto; }
 .app-brand-suffix { font-family: var(--font-display); font-size: 15px; font-weight: 700; font-style: normal; color: var(--hero-fg); border-left: 1px solid rgba(16,20,28,0.18); padding-left: 10px; }
 .app-header-right { display: flex; align-items: center; gap: 16px; }
 .client-name { font-family: var(--font-mono); font-size: 13px; color: var(--fg-muted); }

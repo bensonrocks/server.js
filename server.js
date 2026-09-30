@@ -38,7 +38,8 @@ const ntVendorAuth = require('./lib/nimbustrade-portal/vendor-auth');
 const ntStaffAuth  = require('./lib/nimbustrade-portal/staff-auth');
 const ntStore      = require('./lib/nimbustrade-portal/store');
 const ntTracking   = require('./lib/nimbustrade-portal/tracking');
-const { seedBWLDemo } = require('./lib/nimbustrade-portal/seed');
+const { seedBWLDemo, seedPortalDemo } = require('./lib/nimbustrade-portal/seed');
+const ntTemplate = require('./lib/nimbustrade-portal/order-template');
 const { seedBWLRateCard, computeLiveIndicative } = require('./lib/nimbustrade-portal/rate-card');
 
 // ── Data migration: copy legacy single-tenant DB → default tenant ─────────────
@@ -1192,15 +1193,48 @@ app.get('/client-access/api/orders', withNTAuth, (req, res) => {
 });
 
 app.post('/client-access/api/orders', withNTAuth, (req, res) => {
-  const { customerName, country, countryName, sku, productName, qty, orderDate } = req.body || {};
+  const { customerName, country, countryName, sku, productName, qty, orderDate, dueDate } = req.body || {};
   if (!customerName || !country || !sku) {
     return res.status(400).json({ error: 'customerName, country, and sku are required' });
   }
   const order = ntStore.createOrder(req.ntClientId, {
     customerName, country, countryName: countryName || country, sku,
-    productName: productName || sku, qty, orderDate,
+    productName: productName || sku, qty, orderDate, dueDate,
   });
   res.status(201).json(order);
+});
+
+const ntOrderUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+app.get('/client-access/api/orders/template', withNTAuth, (req, res) => {
+  const buf = ntTemplate.buildTemplate();
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="nimbustrade-order-template.xlsx"');
+  res.send(buf);
+});
+
+app.post('/client-access/api/orders/upload', withNTAuth, (req, res) => {
+  ntOrderUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: 'Could not read that file' });
+    if (!req.file) return res.status(400).json({ error: 'Choose a spreadsheet to upload' });
+    const parsed = ntTemplate.parseOrdersWorkbook(req.file.buffer);
+    if (parsed.unreadable) {
+      return res.status(400).json({ error: parsed.errors[0].error, created: 0, errors: parsed.errors });
+    }
+    if (parsed.rows.length > 1000) return res.status(400).json({ error: 'Max 1000 rows per upload' });
+    if (!parsed.rows.length) return res.json({ created: 0, errors: parsed.errors });
+    const inserted = ntStore.bulkCreateOrders(req.ntClientId, parsed.rows);
+    res.json({ created: inserted.created, errors: parsed.errors.concat(inserted.errors) });
+  });
+});
+
+app.get('/client-access/api/charts', withNTAuth, (req, res) => {
+  res.json(ntStore.getCharts({
+    clientId: req.ntClientId,
+    from: req.query.from,
+    to: req.query.to,
+    day: req.query.day,
+  }));
 });
 
 app.patch('/client-access/api/orders/:id/status', withNTAuth, (req, res) => {
@@ -1228,13 +1262,13 @@ app.get('/client-access/api/orders/export', withNTAuth, (req, res) => {
   const { rows } = ntStore.listOrders(req.ntClientId, {
     country: country || undefined, status: status || undefined, search: search || undefined, all: true,
   });
-  const header = ['Order Ref', 'Market', 'Customer', 'SKU', 'Product', 'Qty', 'Status', 'Carrier', 'Waybill', 'Order Date'];
+  const header = ['Order Ref', 'Market', 'Customer', 'SKU', 'Product', 'Qty', 'Status', 'Carrier', 'Waybill', 'Due', 'Order Date'];
   const csvEscape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = [header.map(csvEscape).join(',')];
   for (const r of rows) {
     lines.push([
       r.order_ref, r.country_name, r.customer_name, r.sku, r.product_name,
-      r.qty, r.status, r.carrier, r.waybill_number, r.order_date,
+      r.qty, r.status, r.carrier, r.waybill_number, r.due_date, r.order_date,
     ].map(csvEscape).join(','));
   }
   res.setHeader('Content-Type', 'text/csv');
@@ -1426,6 +1460,15 @@ app.get('/staff-access/api/dashboard', withStaffAuth, (req, res) => {
   res.json(ntStore.getGlobalDashboard());
 });
 
+app.get('/staff-access/api/charts', withStaffAuth, (req, res) => {
+  res.json(ntStore.getCharts({
+    clientId: req.query.clientId ? String(req.query.clientId) : null,
+    from: req.query.from,
+    to: req.query.to,
+    day: req.query.day,
+  }));
+});
+
 app.get('/staff-access/api/map', withStaffAuth, (req, res) => {
   res.json({
     locations: ntStore.getGlobalLocationBreakdown(),
@@ -1454,7 +1497,7 @@ app.post('/staff-access/api/clients/:id/users', withStaffAuth, (req, res) => {
   try {
     res.status(201).json(ntStore.createClientUser(req.params.id, name, username, password));
   } catch (e) {
-    res.status(400).json({ error: e.message.includes('UNIQUE') ? 'Username already taken' : e.message });
+    res.status(400).json({ error: /UNIQUE|duplicate key/i.test(e.message) ? 'Username already taken' : e.message });
   }
 });
 
@@ -1491,7 +1534,7 @@ app.post('/staff-access/api/vendors', withStaffAuth, (req, res) => {
   try {
     res.status(201).json(ntStore.createVendor(country, name, username, password));
   } catch (e) {
-    res.status(400).json({ error: e.message.includes('UNIQUE') ? 'Username already taken' : e.message });
+    res.status(400).json({ error: /UNIQUE|duplicate key/i.test(e.message) ? 'Username already taken' : e.message });
   }
 });
 
@@ -1610,16 +1653,23 @@ async function autoSyncAll() {
 
 (function seedNimbusTradeDemo() {
   try {
-    const result = seedBWLDemo();
-    if (!result.alreadySeeded) {
-      console.log(`  NimbusTrade Client Access: seeded BWL Online demo (${result.ordersSeeded} orders)`);
-    } else if (result.backfilledMonths && result.backfilledMonths.length) {
-      console.log(`  NimbusTrade Client Access: backfilled months ${result.backfilledMonths.join(', ')} (${result.ordersSeeded} orders total)`);
-    }
+    if (process.env.DATABASE_URL) {
+      const result = seedPortalDemo();
+      if (!result.alreadySeeded) {
+        console.log('  NimbusTrade Client Access: seeded demo portal login (BWL Online (demo))');
+      }
+    } else {
+      const result = seedBWLDemo();
+      if (!result.alreadySeeded) {
+        console.log(`  NimbusTrade Client Access: seeded BWL Online demo (${result.ordersSeeded} orders)`);
+      } else if (result.backfilledMonths && result.backfilledMonths.length) {
+        console.log(`  NimbusTrade Client Access: backfilled months ${result.backfilledMonths.join(', ')} (${result.ordersSeeded} orders total)`);
+      }
 
-    const rateCardResult = seedBWLRateCard();
-    if (!rateCardResult.alreadySeeded) {
-      console.log('  NimbusTrade Client Access: loaded BWL Online rate card');
+      const rateCardResult = seedBWLRateCard();
+      if (!rateCardResult.alreadySeeded) {
+        console.log('  NimbusTrade Client Access: loaded BWL Online rate card');
+      }
     }
   } catch (e) {
     console.warn('  NimbusTrade Client Access seed skipped:', e.message);

@@ -15,10 +15,10 @@ export function SolutionsSelector() {
     <section className="bg-paper-alt border-y border-border">
       <div className="mx-auto max-w-7xl px-6 py-24">
         <div className="max-w-2xl">
-          <span className="text-xs font-bold uppercase tracking-wider text-brand">
+          <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">
             Find your solution
           </span>
-          <h2 className="mt-3 font-display text-4xl font-bold text-ink">
+          <h2 className="mt-3 font-display text-4xl font-semibold text-ink">
             What are you trying to solve right now?
           </h2>
           <p className="mt-4 text-lg leading-relaxed text-ink-muted">
@@ -39,10 +39,10 @@ export function SolutionsSelector() {
                 aria-selected={s.slug === activeSlug}
                 onClick={() => setActiveSlug(s.slug)}
                 className={cn(
-                  "shrink-0 rounded-sm border px-4 py-3 text-left text-sm font-semibold transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] motion-reduce:active:scale-100 lg:shrink",
+                  "shrink-0 border-l-2 px-4 py-3 text-left text-sm font-semibold transition-colors duration-150 ease-out lg:shrink",
                   s.slug === activeSlug
-                    ? "border-brand bg-brand text-white"
-                    : "border-border-strong bg-paper text-ink hover:border-brand hover:text-brand"
+                    ? "border-l-brand bg-paper text-ink"
+                    : "border-l-transparent bg-transparent text-ink-muted hover:text-ink"
                 )}
               >
                 {s.name}

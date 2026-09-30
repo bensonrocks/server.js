@@ -108,8 +108,65 @@
       $('#stat-issue').textContent = data.counts.issue.toLocaleString();
       renderMonthlyBars(data.months);
     }
+    if ($('#chart-columns')) {
+      loadCharts().catch((err) => {
+        $('#chart-columns').innerHTML = `<p class="chart-empty">${escapeHtml(err.message)}</p>`;
+      });
+    }
     if (needsShipments) renderMap(data.countries, shipments);
   }
+
+  function chartBars(series) {
+    const max = Math.max(1, ...series.map((d) => Number(d.n) || 0));
+    return `<div class="day-bars">${series.map((d) => {
+      const n = Number(d.n) || 0;
+      const h = Math.round((n / max) * 100);
+      return `<div class="day-bar" title="${escapeHtml(d.date)}: ${n}"><span class="day-bar-fill" style="height:${h}%"></span></div>`;
+    }).join('')}</div>`;
+  }
+
+  function chartBlock(title, total, series, emptyText) {
+    const empty = Number(total) === 0;
+    return `<div class="chart-block"><h4>${escapeHtml(title)}</h4><p class="chart-figure">${Number(total).toLocaleString()}</p>${
+      empty ? `<p class="chart-empty">${escapeHtml(emptyText)}</p>` : chartBars(series || [])
+    }</div>`;
+  }
+
+  async function loadCharts() {
+    const wrap = $('#chart-columns');
+    if (!wrap) return;
+    const day = $('#chart-day')?.value || '';
+    const from = $('#chart-from')?.value || '';
+    const to = $('#chart-to')?.value || '';
+    const params = new URLSearchParams();
+    if (day) params.set('day', day);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    const data = await api(`/charts?${params}`);
+    if ($('#chart-day') && !$('#chart-day').value) $('#chart-day').value = data.day;
+    if ($('#chart-from') && !$('#chart-from').value) $('#chart-from').value = data.from;
+    if ($('#chart-to') && !$('#chart-to').value) $('#chart-to').value = data.to;
+    $('#chart-kpis').innerHTML = [
+      ['Orders on this day', data.ordersInDay],
+      ['Orders in period', data.ordersInPeriod],
+      ['Deliveries completed', data.deliveriesCompleted],
+      ['Late deliveries', data.lateDeliveries],
+    ].map(([label, n]) => `<div class="chart-kpi"><span>${escapeHtml(label)}</span><strong>${Number(n).toLocaleString()}</strong></div>`).join('');
+    wrap.innerHTML = [
+      chartBlock('Orders on this day', data.ordersInDay, data.ordersOnDay, 'No orders on this day.'),
+      chartBlock('Orders over the period', data.ordersInPeriod, data.ordersByDay, 'No orders in this period.'),
+      chartBlock('Deliveries completed', data.deliveriesCompleted, data.deliveriesByDay, 'No deliveries completed in this period.'),
+      chartBlock('Late deliveries', data.lateDeliveries, data.lateByDay, 'No late deliveries in this period.'),
+    ].join('');
+  }
+
+  $('#chart-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    loadCharts().catch((err) => {
+      const wrap = $('#chart-columns');
+      if (wrap) wrap.innerHTML = `<p class="chart-empty">${escapeHtml(err.message)}</p>`;
+    });
+  });
 
   function monthLabel(yyyyMm) {
     const [y, m] = yyyyMm.split('-');
@@ -324,7 +381,7 @@
   async function loadOrders() {
     const tbody = $('#orders-tbody');
     if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="8" class="table-loading">Loading…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="table-loading">Loading…</td></tr>';
 
     const filterHint = $('#orders-filter-hint');
     if (filterHint) {
@@ -346,7 +403,7 @@
     const data = await api(`/orders?${params}`);
 
     if (!data.rows.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="table-loading">No orders match this filter.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="table-loading">No orders match this filter.</td></tr>';
     } else {
       tbody.innerHTML = data.rows.map((o) => `
         <tr>
@@ -356,6 +413,7 @@
           <td>${escapeHtml(o.product_name)} <span style="color:var(--fg-muted)">(${o.sku})</span></td>
           <td>${o.qty}</td>
           <td><span class="status-pill ${o.status}">${o.status}</span>${o.issue_note ? ` <span title="${escapeHtml(o.issue_note)}" style="cursor:help;color:var(--fg-muted)">ⓘ</span>` : ''}</td>
+          <td>${o.due_date || '—'}</td>
           <td>${o.order_date}</td>
           <td><button class="track-btn" data-track="${o.id}" data-ref="${o.order_ref}">Track</button></td>
         </tr>
@@ -565,25 +623,11 @@
   $('#close-tracking')?.addEventListener('click', () => { trackingOverlay.hidden = true; });
   trackingOverlay?.addEventListener('click', (e) => { if (e.target === trackingOverlay) trackingOverlay.hidden = true; });
 
-  // ---------- Upload orders (CSV) ----------
+  // ---------- Upload orders (spreadsheet template) ----------
 
   const uploadOverlay = $('#upload-orders-overlay');
-  let parsedUploadRows = [];
-
-  function parseOrdersCsv(text) {
-    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    if (!lines.length) return [];
-    const looksLikeHeader = /customer/i.test(lines[0]) && /country|market/i.test(lines[0]);
-    const dataLines = looksLikeHeader ? lines.slice(1) : lines;
-
-    return dataLines.map((line) => {
-      const [customerName, country, sku, qty, orderDate] = line.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
-      return { customerName, country: (country || '').toUpperCase(), sku, qty: qty ? parseInt(qty, 10) : 1, orderDate: orderDate || undefined };
-    });
-  }
 
   $('#open-upload-orders')?.addEventListener('click', () => {
-    parsedUploadRows = [];
     $('#upload-orders-file').value = '';
     $('#upload-orders-summary').hidden = true;
     $('#upload-orders-error').hidden = true;
@@ -593,36 +637,63 @@
   $('#cancel-upload-orders')?.addEventListener('click', () => { uploadOverlay.hidden = true; });
   uploadOverlay?.addEventListener('click', (e) => { if (e.target === uploadOverlay) uploadOverlay.hidden = true; });
 
-  $('#upload-orders-file')?.addEventListener('change', async (e) => {
+  $('#download-order-template')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const res = await fetch(`${API}/orders/template`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status === 401) { doLogout(); return; }
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'nimbustrade-order-template.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  $('#upload-orders-file')?.addEventListener('change', (e) => {
     const file = e.target.files[0];
     const summaryEl = $('#upload-orders-summary');
     const errEl = $('#upload-orders-error');
     errEl.hidden = true;
-    if (!file) return;
-    try {
-      const text = await file.text();
-      parsedUploadRows = parseOrdersCsv(text);
-      summaryEl.hidden = false;
-      summaryEl.textContent = `${parsedUploadRows.length} row(s) ready to import.`;
-      $('#submit-upload-orders').disabled = parsedUploadRows.length === 0;
-    } catch (err) {
-      errEl.textContent = 'Could not read that file.';
-      errEl.hidden = false;
-    }
+    summaryEl.hidden = !file;
+    $('#submit-upload-orders').disabled = !file;
+    if (file) summaryEl.textContent = `${file.name} selected. The server checks every row before anything is created.`;
   });
 
   $('#submit-upload-orders')?.addEventListener('click', async () => {
     const errEl = $('#upload-orders-error');
     const summaryEl = $('#upload-orders-summary');
+    const file = $('#upload-orders-file').files[0];
     errEl.hidden = true;
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
     try {
-      const result = await api('/orders/import', { method: 'POST', body: JSON.stringify({ rows: parsedUploadRows }) });
+      const res = await fetch(`${API}/orders/upload`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 401) { doLogout(); return; }
+      const lines = (body.errors || []).map((row) => `Row ${row.row}: ${row.error}`);
+      if (!res.ok) {
+        errEl.textContent = body.error || 'Upload failed';
+        errEl.hidden = false;
+        if (lines.length) {
+          summaryEl.hidden = false;
+          summaryEl.textContent = lines.join('\n');
+        }
+        return;
+      }
       summaryEl.hidden = false;
-      summaryEl.textContent = `Imported ${result.created} order(s).` +
-        (result.errors.length ? `\n${result.errors.length} row(s) failed:\n` + result.errors.map((e) => `Row ${e.row}: ${e.error}`).join('\n') : '');
+      summaryEl.textContent = `Imported ${body.created} order(s).` + (lines.length ? `\n${lines.join('\n')}` : '');
       loadDashboard();
       loadOrders();
-      if (!result.errors.length) setTimeout(() => { uploadOverlay.hidden = true; }, 1200);
+      if (!lines.length) setTimeout(() => { uploadOverlay.hidden = true; }, 1200);
     } catch (err) {
       errEl.textContent = err.message;
       errEl.hidden = false;
