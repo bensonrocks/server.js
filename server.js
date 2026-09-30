@@ -635,7 +635,7 @@ const upload = multer({
 //                             run sheets) which document.write inline <style>
 //                             and an inline print button. Removing it means
 //                             refactoring those first — tracked, not silent.
-//   img-src CARTO           — the Transport map's CARTO basemap (OSM data).
+//   img-src Esri            — the Transport map's Esri World Street Map (no API key).
 //   fonts.googleapis/gstatic— the marketing pages (landing, overview) only.
 //   frame-src 'self' blob:  — the label lightbox iframe shows our own PDFs.
 const CSP = [
@@ -646,7 +646,7 @@ const CSP = [
   "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https://fonts.gstatic.com",
-  "img-src 'self' data: blob: https://basemaps.cartocdn.com",
+  "img-src 'self' data: blob: https://server.arcgisonline.com",
   "connect-src 'self'",
   "form-action 'self'",
   "frame-src 'self' blob:",
