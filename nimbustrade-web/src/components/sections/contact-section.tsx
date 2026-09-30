@@ -43,7 +43,7 @@ export function ContactSection() {
     <section className="mx-auto max-w-7xl px-6 py-24">
       <div className="grid grid-cols-1 gap-12 lg:grid-cols-[1fr_1.1fr]">
         <Reveal>
-          <span className="text-xs font-bold uppercase tracking-wider text-brand">Contact</span>
+          <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Contact</span>
           <h2 className="mt-3 font-display text-4xl font-bold text-ink">Talk to the desk.</h2>
           <p className="mt-4 max-w-md text-lg leading-relaxed text-ink-muted">
             Send a message here, or reach us directly through any of the channels below.

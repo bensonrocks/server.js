@@ -11,9 +11,9 @@ export const metadata: Metadata = {
 export default function QuotePage() {
   return (
     <section className="mx-auto max-w-7xl px-6 py-20">
-      <div className="mx-auto mb-12 max-w-2xl text-center">
-        <span className="text-xs font-bold uppercase tracking-wider text-brand">Get a quote</span>
-        <h1 className="mt-3 font-display text-4xl font-bold text-ink sm:text-5xl">
+      <div className="mb-12 max-w-2xl">
+        <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Get a quote</span>
+        <h1 className="mt-3 font-display text-4xl font-semibold text-ink sm:text-5xl">
           Tell us what you need moved or stored.
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">

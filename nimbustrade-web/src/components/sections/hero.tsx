@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, PlayCircle } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SELF_RUN_MARKETS, PARTNER_MARKETS, formatMarketList } from "@/lib/site-config";
 
@@ -12,8 +12,14 @@ const MANIFEST_FACTS = [
 
 export function Hero() {
   return (
-    <section className="relative overflow-hidden border-b border-border bg-paper">
-      <div className="mx-auto grid max-w-7xl gap-x-12 gap-y-10 px-6 pb-14 pt-16 lg:grid-cols-[7fr_5fr] lg:pb-0 lg:pt-24">
+    <section className="border-b border-border bg-paper">
+      <div className="bg-brand-strong text-white">
+        <div className="mx-auto flex max-w-7xl flex-col gap-2 px-6 py-3 font-mono text-[11px] uppercase tracking-[0.14em] sm:flex-row sm:items-center sm:justify-between">
+          <p>Operating desk · Singapore</p>
+          <p className="text-white/70">62 Ubi Road 1 · #06-01 · 408734</p>
+        </div>
+      </div>
+      <div className="mx-auto grid max-w-7xl gap-x-12 gap-y-10 px-6 pb-14 pt-16 lg:grid-cols-[7fr_5fr] lg:pb-0 lg:pt-20">
         <div className="lg:pb-20">
           <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">
             NimbusTrade Solutions — Singapore
@@ -36,7 +42,7 @@ export function Hero() {
               href="/solutions"
               className="inline-flex items-center gap-2 text-sm font-semibold text-ink underline decoration-border-strong underline-offset-4 transition-colors hover:text-brand hover:decoration-brand"
             >
-              <PlayCircle className="h-4 w-4" /> Explore solutions
+              Explore solutions
             </Link>
           </div>
         </div>

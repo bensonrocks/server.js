@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Mail, Phone, MapPin } from "lucide-react";
+import { BrandLogo } from "@/components/brand-logo";
 
 const FOOTER_NAV = [
   {
@@ -29,34 +29,34 @@ const FOOTER_NAV = [
 
 export function SiteFooter() {
   return (
-    <footer className="border-t border-border bg-paper-alt">
+    <footer className="border-t border-border bg-paper">
       <div className="mx-auto max-w-7xl px-6 py-16">
         <div className="grid grid-cols-1 gap-12 lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div>
-            <img src="/logo.png" alt="NimbusTrade Solutions" className="h-16 w-auto" />
+            <BrandLogo variant="footer" />
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-ink-muted">
               A Singapore-based 4PL control tower coordinating warehousing, fulfilment, and
               cross-border freight for growing brands.
             </p>
-            <div className="mt-6 space-y-2 text-sm text-ink-muted">
-              <div className="flex items-center gap-2">
-                <MapPin className="h-4 w-4 shrink-0 text-brand" />
-                <span>62 Ubi Road 1, Oxley Bizhub 2, #06-01, Singapore 408734</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Phone className="h-4 w-4 shrink-0 text-brand" />
-                <span>+65 8877 6106</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Mail className="h-4 w-4 shrink-0 text-brand" />
-                <span>info@nimbustrade.co</span>
-              </div>
-            </div>
+            <address className="mt-6 space-y-1 text-sm not-italic leading-relaxed text-ink-muted">
+              <p>62 Ubi Road 1, Oxley Bizhub 2</p>
+              <p>#06-01, Singapore 408734</p>
+              <p>
+                <a href="tel:+6588776106" className="hover:text-ink">
+                  +65 8877 6106
+                </a>
+              </p>
+              <p>
+                <a href="mailto:info@nimbustrade.co" className="hover:text-ink">
+                  info@nimbustrade.co
+                </a>
+              </p>
+            </address>
           </div>
 
           {FOOTER_NAV.map((col) => (
             <div key={col.heading}>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-ink">
+              <h3 className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">
                 {col.heading}
               </h3>
               <ul className="mt-4 space-y-3">
@@ -64,7 +64,7 @@ export function SiteFooter() {
                   <li key={link.href}>
                     <Link
                       href={link.href}
-                      className="text-sm text-ink-muted transition-colors hover:text-brand"
+                      className="text-sm text-ink transition-colors hover:text-brand"
                     >
                       {link.label}
                     </Link>
@@ -75,23 +75,20 @@ export function SiteFooter() {
           ))}
         </div>
 
-        <div className="mt-14 flex flex-col gap-4 border-t border-border pt-8 text-xs text-ink-muted sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-14 flex flex-col gap-3 border-t border-border pt-6 text-xs text-ink-muted sm:flex-row sm:items-center sm:justify-between">
           <p>&copy; {new Date().getFullYear()} NimbusTrade Solutions. All rights reserved.</p>
-          <div className="flex items-center gap-4">
-            <a
-              href="/client-access"
-              className="shrink-0 font-semibold text-ink-muted transition-colors hover:text-brand"
-            >
-              Client Access
-            </a>
-            <a
-              href="/staff-access"
-              className="shrink-0 font-semibold text-ink-muted transition-colors hover:text-brand"
-            >
-              Staff Access
-            </a>
-          </div>
+          <a href="/client-access/" className="hover:text-ink">
+            Client login
+          </a>
         </div>
+        <p className="mt-8 text-center">
+          <a
+            href="/staff-access"
+            className="text-[11px] font-normal text-ink-faint hover:text-ink-muted"
+          >
+            Administrator
+          </a>
+        </p>
       </div>
     </footer>
   );
