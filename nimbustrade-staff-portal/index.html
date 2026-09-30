@@ -114,6 +114,26 @@
           </table>
         </div>
       </section>
+
+      <section class="panel" id="panel-charts">
+        <div class="panel-head">
+          <h3>Delivery performance</h3>
+          <p class="panel-sub">Counted from stored orders. Days are Singapore time.</p>
+        </div>
+        <form class="chart-filters" id="chart-form">
+          <label>Client
+            <select id="chart-client"><option value="">All clients</option></select>
+          </label>
+          <label>Orders on <input type="date" id="chart-day"></label>
+          <label>From <input type="date" id="chart-from"></label>
+          <label>To <input type="date" id="chart-to"></label>
+          <button type="submit" class="btn btn-ghost-sm">Update</button>
+        </form>
+        <div class="chart-kpis" id="chart-kpis"></div>
+        <div class="chart-columns" id="chart-columns">
+          <p class="table-loading">Loading…</p>
+        </div>
+      </section>
     </section>
 
     <!-- ---------- Map ---------- -->
