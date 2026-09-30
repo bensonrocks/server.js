@@ -4033,6 +4033,7 @@
   let transportDateFilter = 'today';   // 'today' | 'yesterday' | 'week' | 'month' | 'all'
 
   let transportMainMap = null;
+  let transportMapRefitTimer = null;
   let transportMarkers = [];
   let driverMarkers = [];
   let showingDrivers = false;
@@ -4228,6 +4229,84 @@
     });
   }
 
+  // Leaflet throws "reading '_leaflet_pos'" from _move when _mapPane was
+  // deleted. fitBounds zoom animation schedules _onZoomTransitionEnd on a
+  // 250ms timeout that map.remove() does not cancel (Leaflet#9575). Opening
+  // Fix Schedule also resizes the window, so a pending invalidateSize/fit
+  // can run against a detached or zero-size container.
+  function leafletMapReady(map) {
+    if (!map || !map._mapPane || !map._panes || typeof map.getContainer !== 'function') return false;
+    let el;
+    try { el = map.getContainer(); } catch (e) { return false; }
+    if (!el || !document.body.contains(el)) return false;
+    if (el.clientWidth === 0 || el.clientHeight === 0) return false;
+    return true;
+  }
+
+  function installLeafletPaneGuard() {
+    const Lref = window.L;
+    if (!Lref || !Lref.Map || Lref.Map.__idealonePaneGuard) return;
+    const proto = Lref.Map.prototype;
+    const origMove = proto._move;
+    proto._move = function () {
+      if (!this._mapPane || !this._panes) return this;
+      const el = this._container;
+      if (!el || !document.body.contains(el)) return this;
+      return origMove.apply(this, arguments);
+    };
+    const origInvalidate = proto.invalidateSize;
+    proto.invalidateSize = function () {
+      if (!this._mapPane || !this._panes) return this;
+      const el = this._container;
+      if (!el || !document.body.contains(el)) return this;
+      if (el.clientWidth === 0 || el.clientHeight === 0) return this;
+      return origInvalidate.apply(this, arguments);
+    };
+    Lref.Map.__idealonePaneGuard = true;
+  }
+
+
+  // Leaflet popup containers stop mousedown and the map ignores clicks inside
+  // them, so a document-level click listener often never sees "Details / Fix
+  // Postal". Bind on the popup element itself (capture) and open the dialog
+  // directly. Delete / Deliver / On the road keep their document listeners.
+  let _deliveryDetailOpenAt = 0;
+  let _deliveryDetailOpenId = '';
+  function requestDeliveryDetail(jobId) {
+    if (!jobId) return;
+    const now = Date.now();
+    if (jobId === _deliveryDetailOpenId && now - _deliveryDetailOpenAt < 600) return;
+    _deliveryDetailOpenId = jobId;
+    _deliveryDetailOpenAt = now;
+    openDeliveryDetail(jobId);
+  }
+  function wireTransportMapPopups(map) {
+    if (!map || map._idealonePopupWired) return;
+    map._idealonePopupWired = true;
+    map.on('popupopen', (ev) => {
+      const el = ev.popup && ev.popup.getElement && ev.popup.getElement();
+      if (!el || el._idealoneDetailsWired) return;
+      el._idealoneDetailsWired = true;
+      const openDetails = (e) => {
+        const btn = e.target && e.target.closest && e.target.closest('.popup-details-btn');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        requestDeliveryDetail(btn.getAttribute('data-jobid'));
+      };
+      el.addEventListener('pointerup', openDetails, true);
+      el.addEventListener('click', openDetails, true);
+    });
+  }
+
+  function releaseLeafletMap(map) {
+    if (!map) return;
+    // Must run before remove(): the zoom-end timeout only checks this flag.
+    map._animatingZoom = false;
+    try { map._stop(); } catch (e) {}
+    try { map.remove(); } catch (e) {}
+  }
+
   function initTransportMainMap() {
     const mapContainer = document.getElementById('transportMainMap');
     if (!mapContainer) return;
@@ -4236,17 +4315,26 @@
       renderTransportTableFallback();
       return;
     }
+    installLeafletPaneGuard();
 
     // Singapore center coordinates
     const singaporeCenter = [1.3521, 103.8198];
 
-    // (Re)create the Leaflet map — destroy any previous instance first
-    if (transportMainMap) {
-      transportMainMap.remove();
-      transportMainMap = null;
+    // (Re)create the Leaflet map — destroy any previous instance first.
+    // Clear the refit timer so it cannot invalidateSize/fitBounds on the
+    // map we are about to remove (that path calls _move after _mapPane is gone).
+    if (transportMapRefitTimer) {
+      clearTimeout(transportMapRefitTimer);
+      transportMapRefitTimer = null;
     }
+    releaseLeafletMap(transportMainMap);
+    transportMainMap = null;
     mapContainer.innerHTML = '';
-    transportMainMap = L.map(mapContainer).setView(singaporeCenter, 11);
+    try { delete mapContainer._leaflet_id; } catch (e) { mapContainer._leaflet_id = undefined; }
+    // Hidden tab / zero-size container: do not setView yet.
+    if (!document.body.contains(mapContainer) || mapContainer.clientWidth === 0 || mapContainer.clientHeight === 0) return;
+    transportMainMap = L.map(mapContainer, { zoomAnimation: false, fadeAnimation: false }).setView(singaporeCenter, 11, { animate: false });
+    wireTransportMapPopups(transportMainMap);
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 19,
       attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
@@ -4303,7 +4391,7 @@
       const canDeliver = req.status !== 'delivered' && req.status !== 'cancelled';
       const isAdmin = currentUser?.role === 'admin';
       marker.bindPopup(detailsHtml
-        + `<button class="popup-details-btn" data-jobid="${esc(req.id)}" style="margin-top:.5rem;width:100%;padding:.4rem;background:#1d4ed8;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">📝 Details / Fix Postal</button>`
+        + `<button type="button" class="popup-details-btn" data-jobid="${esc(req.id)}" style="margin-top:.5rem;width:100%;padding:.4rem;background:#1d4ed8;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">📝 Details / Fix Postal</button>`
         + (req.status === 'confirmed'
           ? `<button class="popup-onroad-btn" data-id="${esc(req.id)}" style="margin-top:.35rem;width:100%;padding:.4rem;background:#f59e0b;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">🚚 Picked Up — On the Road</button>`
           : '')
@@ -4311,7 +4399,7 @@
           ? `<button class="popup-deliver-btn" data-id="${esc(req.id)}" style="margin-top:.5rem;width:100%;padding:.4rem;background:#16a34a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">✓ Mark Delivered</button>`
           : '')
         + (isAdmin
-          ? `<button class="popup-delete-btn" data-id="${esc(req.id)}" style="margin-top:.35rem;width:100%;padding:.35rem;background:#fff;color:#ef4444;border:1px solid #ef4444;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer">🗑 Delete Job</button>`
+          ? `<button type="button" class="popup-delete-btn" data-id="${esc(req.id)}" style="margin-top:.35rem;width:100%;padding:.35rem;background:#fff;color:#ef4444;border:1px solid #ef4444;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer">🗑 Delete Job</button>`
           : ''));
 
       transportMarkers.push(marker);
@@ -4319,12 +4407,19 @@
     });
 
     const fit = () => {
-      if (bounds.length > 0) transportMainMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 });
+      if (!leafletMapReady(transportMainMap) || bounds.length === 0) return;
+      transportMainMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 14, animate: false });
     };
     fit();
     // The tab container may have been hidden/resizing during init (common on
-    // mobile) — Leaflet then computes wrong bounds. Re-measure and re-fit.
-    setTimeout(() => { transportMainMap.invalidateSize(); fit(); }, 300);
+    // mobile) — Leaflet then computes wrong bounds. Re-measure and re-fit
+    // only while the map is still in the document and has a real size.
+    transportMapRefitTimer = setTimeout(() => {
+      transportMapRefitTimer = null;
+      if (!leafletMapReady(transportMainMap)) return;
+      transportMainMap.invalidateSize({ animate: false });
+      fit();
+    }, 300);
   }
 
   function handleTransportRequest(id) {
@@ -4360,7 +4455,8 @@
   let transportMap = null;
   let transportMapMarkers = [];
 
-  function initTransportMap(req) {
+  function initTransportMap(req, attempt) {
+    attempt = attempt || 0;
     const mapEl = document.getElementById('transportMap');
     if (!mapEl || !window.L) return;
 
@@ -4402,10 +4498,19 @@
       return;
     }
 
-    // (Re)create the modal map fresh each time
-    if (transportMap) { transportMap.remove(); transportMap = null; }
+    // (Re)create the modal map fresh each time, only once the modal is visible.
+    // setView/fitBounds while display:none leaves panes missing and the next
+    // _move throws reading _leaflet_pos.
+    if (document.getElementById('transportDetailModal')?.classList.contains('hidden')) return;
+    if (!document.body.contains(mapEl) || mapEl.clientWidth === 0 || mapEl.clientHeight === 0) {
+      if (attempt < 8) requestAnimationFrame(() => initTransportMap(req, attempt + 1));
+      return;
+    }
+    installLeafletPaneGuard();
+    if (transportMap) { releaseLeafletMap(transportMap); transportMap = null; }
     mapEl.innerHTML = '';
-    transportMap = L.map(mapEl).setView([stops[0].lat, stops[0].lng], 13);
+    try { delete mapEl._leaflet_id; } catch (e) { mapEl._leaflet_id = undefined; }
+    transportMap = L.map(mapEl, { zoomAnimation: false, fadeAnimation: false }).setView([stops[0].lat, stops[0].lng], 13, { animate: false });
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 19,
       attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
@@ -4428,7 +4533,7 @@
       bounds.push([stop.lat, stop.lng]);
     });
 
-    transportMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
+    if (leafletMapReady(transportMap)) transportMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 15, animate: false });
   }
 
   // TMS Import handlers
@@ -4696,7 +4801,7 @@
   function displayDriverLocations() {
     driverMarkers.forEach(m => m.remove());
     driverMarkers = [];
-    if (!transportMainMap || !window.L) return;
+    if (!leafletMapReady(transportMainMap) || !window.L) return;
 
     // Real drivers from Driver Details; no live GPS yet, so spread them near
     // the city centre and show their assigned-job counts.
@@ -4749,6 +4854,14 @@
   async function openFixScheduleModal() {
     const overlay = document.getElementById('fixScheduleOverlay');
     const listContainer = document.getElementById('fixScheduleList');
+
+    // The map stays behind this overlay. Do not setView, fitBounds, or
+    // invalidateSize it — opening the modal resizes the window, and a
+    // pending refit would call _move while Leaflet panes are mid-update.
+    if (transportMapRefitTimer) {
+      clearTimeout(transportMapRefitTimer);
+      transportMapRefitTimer = null;
+    }
 
     overlay.classList.remove('hidden');
     listContainer.innerHTML = '<p style="text-align:center">Loading schedules...</p>';
@@ -6158,7 +6271,7 @@
       modal.remove();
       if (resolvedCount) {
         await renderTransportTab();
-        if (!document.getElementById('routePlanningModal').classList.contains('hidden')) optimizeRoutes();
+        if (document.getElementById('routePlanningModal') && !document.getElementById('routePlanningModal').classList.contains('hidden')) optimizeRoutes();
       }
     };
     modal.querySelector('#resolveStoresCloseBtn').addEventListener('click', close);
@@ -6376,17 +6489,14 @@
   // ── Delivery detail — click a stop/job to see the full summary and fix
   //    its postal code (which also updates the Address Book master list) ─────
   async function openDeliveryDetail(jobId) {
-    const job = transportRequests.find(r => r.id === jobId) || _transportCacheAll.find(r => r.id === jobId);
+    const job = (transportRequests || []).find(r => r.id === jobId)
+      || (Array.isArray(_transportCacheAll) ? _transportCacheAll.find(r => r.id === jobId) : null);
     if (!job) { alert('Job not found'); return; }
 
-    // Which Address Book entry did this job resolve through?
-    let book = [];
-    try { book = await (await fetch('/api/address-book')).json(); } catch {}
+    // Show the postal-fix dialog immediately. Waiting on /api/address-book
+    // before any DOM made this button look dead when that fetch was slow.
+    let entry = null;
     const nrm = s => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
-    const q = nrm(job.clientName), qr = nrm(job.referenceId);
-    const entry = book.find(e =>
-      nrm(e.name) === q || nrm(e.code) === q || nrm(e.name) === qr || nrm(e.code) === qr ||
-      (e.chain && (nrm(`${e.chain} ${e.name}`) === q || nrm(`${e.name} ${e.chain}`) === q)));
 
     const drv = (window.drivers || []).find(d => d.id === job.assignedDriver);
     const row = (label, val) => `<div style="display:flex;gap:.6rem;font-size:12px;padding:.28rem 0;border-bottom:1px solid #f1f5f9">
@@ -6403,7 +6513,7 @@
         </div>
         ${row('Job ID', `<code>${esc(job.id)}</code>`)}
         ${row('Order ref', esc(job.referenceId || ''))}
-        ${row('Matched store', entry ? `${esc([entry.chain, entry.name].filter(Boolean).join(' '))}${entry.aliasOf ? ` <span style="color:#64748b;font-weight:400">(alias of ${esc(entry.aliasOf)})</span>` : ''}${entry.code ? ` <code style="font-size:10px">${esc(entry.code)}</code>` : ''}` : '<span style="color:#ef4444">not in Address Book</span>')}
+        ${row('Matched store', '<span id="ddMatchedStore" style="color:#64748b;font-weight:500">Loading Address Book…</span>')}
         ${row('Address', esc(job.shipping?.addressLine1 || entry?.address || ''))}
         ${row('Phone', esc(job.shipping?.phone || ''))}
         ${row('Cartons', String(job.packages || 1))}
@@ -6428,9 +6538,10 @@
               style="flex:1;padding:.5rem;border:1px solid #cbd5e1;border-radius:4px;font-size:13px;font-family:monospace" />
             <button class="btn-primary btn-sm" id="ddZipSaveBtn">💾 Update</button>
           </div>
-          <p class="hint" style="font-size:11px;margin:.4rem 0 0 0">Updating fixes this delivery AND the Address Book master entry${entry ? ` ("${esc(entry.name)}")` : ` (a new entry "${esc(job.clientName)}" is created)`} — future uploads use the corrected postal.</p>
+          <p class="hint" id="ddZipHint" style="font-size:11px;margin:.4rem 0 0 0">Updating fixes this delivery and the Address Book — future uploads use the corrected postal.</p>
         </div>
       </div>`;
+    document.getElementById('deliveryDetailModal')?.remove();
     document.body.appendChild(modal);
     modal.querySelector('#ddCloseBtn').addEventListener('click', () => modal.remove());
     modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
@@ -6456,15 +6567,41 @@
       } catch (err) { alert('❌ ' + err.message); btn.disabled = false; btn.textContent = '💾 Update'; return; }
       modal.remove();
       await renderTransportTab();
-      if (!document.getElementById('routePlanningModal').classList.contains('hidden')) optimizeRoutes();
+      if (document.getElementById('routePlanningModal') && !document.getElementById('routePlanningModal').classList.contains('hidden')) optimizeRoutes();
       alert(`✓ Postal updated to ${zip} — delivery fixed and Address Book master list updated.`);
     });
+
+    try {
+      const resp = await fetch('/api/address-book');
+      const data = resp.ok ? await resp.json() : [];
+      const book = Array.isArray(data) ? data : [];
+      const q = nrm(job.clientName), qr = nrm(job.referenceId);
+      entry = book.find(e =>
+        nrm(e.name) === q || nrm(e.code) === q || nrm(e.name) === qr || nrm(e.code) === qr ||
+        (e.chain && (nrm(`${e.chain} ${e.name}`) === q || nrm(`${e.name} ${e.chain}`) === q))) || null;
+    } catch { entry = null; }
+    if (modal.isConnected) {
+      const slot = modal.querySelector('#ddMatchedStore');
+      if (slot) {
+        slot.style.color = '';
+        slot.style.fontWeight = '';
+        slot.innerHTML = entry
+          ? `${esc([entry.chain, entry.name].filter(Boolean).join(' '))}${entry.aliasOf ? ` <span style="color:#64748b;font-weight:400">(alias of ${esc(entry.aliasOf)})</span>` : ''}${entry.code ? ` <code style="font-size:10px">${esc(entry.code)}</code>` : ''}`
+          : '<span style="color:#ef4444">not in Address Book</span>';
+      }
+      const hint = modal.querySelector('#ddZipHint');
+      if (hint) hint.textContent = entry
+        ? `Updating fixes this delivery AND the Address Book master entry ("${entry.name}") — future uploads use the corrected postal.`
+        : `Updating fixes this delivery AND creates an Address Book entry ("${job.clientName || job.id}") — future uploads use the corrected postal.`;
+    }
   }
 
   // Clickable stops in the planner table + details button in map popups
+  // Planner table rows still bubble to document. Popup buttons are handled in
+  // wireTransportMapPopups because Leaflet does not let that click out.
   document.addEventListener('click', e => {
     const el = e.target.closest('.route-stop-client, .popup-details-btn');
-    if (el?.dataset.jobid) openDeliveryDetail(el.dataset.jobid);
+    if (el?.dataset.jobid) requestDeliveryDetail(el.dataset.jobid);
   });
 
   // ── Address Book — fixed-location cross-reference (store → address) ────────
