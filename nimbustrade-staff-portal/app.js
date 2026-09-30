@@ -379,10 +379,10 @@
       `).join('');
       tbody.querySelectorAll('[data-add-login]').forEach((btn) => {
         btn.addEventListener('click', () => {
+          $('#add-user-form').reset();
           $('#add-user-client-id').value = btn.dataset.addLogin;
           $('#add-user-client-name').textContent = btn.dataset.name;
           $('#add-user-error').hidden = true;
-          $('#add-user-form').reset();
           $('#add-user-overlay').hidden = false;
         });
       });
