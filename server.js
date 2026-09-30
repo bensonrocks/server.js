@@ -161,14 +161,21 @@ const UPLOAD_MAX_ROWS  = 5000;
 // ── MySQL TMS Database (IDEALTMS: Route Planning, Drivers, Vehicles) ────────
 let mysqlPool = null;
 async function initMysqlPool() {
+  // Keep the pool private until the handshake finishes. It used to be assigned
+  // first, so any TMS query (and the pool's own queued getConnection) waited
+  // on a dead host. mysql2 ignores `connectionTimeout`; the real option is
+  // `connectTimeout`. Login, HTML, and /api/auth never await this function.
+  let pool = null;
+  const CONNECT_MS = 2000;
+  let timer;
   try {
     const mysqlHost = process.env.MYSQLHOST || 'reseau.proxy.rlwy.net';
-    const mysqlPort = process.env.MYSQLPORT || 54260;
+    const mysqlPort = Number(process.env.MYSQLPORT || 54260);
     const mysqlUser = process.env.MYSQLUSER || 'root';
     const mysqlPassword = process.env.MYSQLPASSWORD || '';
     const mysqlDb = process.env.MYSQL_DATABASE || 'railway';
 
-    mysqlPool = mysql.createPool({
+    pool = mysql.createPool({
       host: mysqlHost,
       port: mysqlPort,
       user: mysqlUser,
@@ -177,26 +184,29 @@ async function initMysqlPool() {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
-      connectionTimeout: 5000,
+      connectTimeout: CONNECT_MS,
       enableKeepAlive: true,
     });
 
-    // Test connection with timeout
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Connection timeout after 5s')), 5000)
-    );
-
-    const connPromise = mysqlPool.getConnection();
-    const conn = await Promise.race([connPromise, timeoutPromise]);
-    console.log('[MySQL] TMS database connected');
+    const conn = await Promise.race([
+      pool.getConnection(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Connection timeout after ' + (CONNECT_MS / 1000) + 's')), CONNECT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
     conn.release();
-
-    // Initialize tables
-    await initTmsTables();
+    mysqlPool = pool;
+    pool = null;
+    console.log('[MySQL] TMS database connected');
+    // Schema init stays off the request path; a slow DDL must not sit on login.
+    initTmsTables().catch(err => console.error('[MySQL] Schema initialization error:', err.message));
     return true;
   } catch (err) {
+    if (timer) clearTimeout(timer);
     console.warn('[MySQL] Connection unavailable (TMS features disabled):', err.message);
     mysqlPool = null;
+    if (pool) pool.end().catch(() => {});
     return false;
   }
 }
