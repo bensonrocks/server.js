@@ -48,7 +48,7 @@ const domClick = (page, sel) => page.evaluate(s => { const el = document.querySe
     ok(!bar.hidden && bar.count === '3 selected', `the bulk bar shows with 3 selected (${bar.count})`);
     ok(bar.text === '🖨 Print Waybills (3)' && !bar.disabled, `the button reads "${bar.text}" and is enabled`);
     ok(bar.onScreen, 'the button is fully on screen');
-    if (role === 'warehouse') ok(bar.buttons.join() === 'ordersBulkPrint,ordersBulkCartonLabels,ordersBulkClear', `WAREHOUSE's bar carries Print Waybills + Carton Labels + Clear and nothing else (${bar.buttons.join(', ')})`);
+    if (role === 'warehouse') ok(bar.buttons.join() === 'ordersBulkPrint,ordersBulkCartonLabels,ordersBulkHandover,ordersBulkClear', `WAREHOUSE's bar carries Print Waybills + Carton Labels + HandOver List + Clear and nothing else (${bar.buttons.join(', ')})`);
     else ok(bar.buttons.includes('ordersBulkPrint') && bar.buttons.includes('ordersBulkDelete'), `admin's full bar carries it too (${bar.buttons.length} buttons)`);
     await page.screenshot({ path: path.join(SHOTS, `${tag}-bar.png`) });
 

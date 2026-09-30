@@ -1386,6 +1386,7 @@ body.log-open { overflow: hidden; }
 .orders-bulk-bar .btn-sm { padding: .3rem .7rem; }
 .orders-bulk-bar .btn-danger { background: #b91c1c; color: #fff; border: none; }
 .orders-bulk-bar .btn-danger:disabled { opacity: .5; cursor: not-allowed; }
+.orders-bulk-bar .btn-secondary:disabled { opacity: .55; cursor: not-allowed; }
 .orders-table { width: 100%; border-collapse: collapse; font-size: .83rem; }
 .orders-table thead { background: var(--surface-2); }
 .orders-table thead th {
@@ -3886,3 +3887,107 @@ tr.pa-split-row td { border-top: 0; }
 .gi-backfill-list code { font-size: .8rem; }
 .gi-backfill-warn { margin-top: .6rem; font-weight: 700; color: #b45309; }
 .gi-backfill-note { margin-top: .4rem; font-size: .85rem; opacity: .85; }
+
+/* HandOver List — printable sheet over the Orders list. Scoped so it does
+   not restyle the rest of the app. Print rules apply only while this
+   overlay is open, so carton and waybill iframe prints are left alone. */
+.handover-overlay {
+  position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: var(--z-modal);
+  display: flex; align-items: flex-start; justify-content: center; overflow: auto;
+  padding: 1.5rem;
+}
+.handover-overlay.hidden { display: none; }
+.handover-sheet {
+  width: min(860px, 100%); max-width: 100%; background: #fff; color: #111;
+  border-radius: 4px; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+  padding: 18mm 16mm 16mm; position: relative; min-width: 0;
+}
+#handoverOverlay .sheet-tools {
+  display: flex; justify-content: space-between; align-items: center; gap: .5rem;
+  margin: -8mm -6mm 8mm; padding-bottom: .6rem; border-bottom: 1px dashed #cbd5e1;
+}
+#handoverOverlay .sheet-tools-note { font-size: .8rem; color: #64748b; }
+#handoverOverlay .sheet-tools-actions { display: flex; gap: .4rem; flex-shrink: 0; }
+#handoverOverlay h1 { font-size: 22pt; letter-spacing: .01em; margin: 0; font-weight: 800; }
+#handoverOverlay .sheet-brand { font-size: 9pt; font-weight: 800; letter-spacing: .14em; color: #1e3a8a; }
+#handoverOverlay .sheet-meta { margin: .35rem 0 1rem; font-size: 11pt; color: #334155; }
+#handoverOverlay .sheet-meta b { color: #0f172a; }
+#handoverOverlay .handover-tz { color: #64748b; }
+#handoverOverlay .scope-note { font-size: 9pt; color: #64748b; margin-top: .25rem; }
+#handoverOverlay .group-toggle { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin: .15rem 0 .85rem; }
+#handoverOverlay .group-toggle .glabel { font-size: .72rem; font-weight: 700; letter-spacing: 1px; color: #64748b; }
+#handoverOverlay .group-toggle button {
+  background: #fff; border: 1px solid #cbd5e1; color: #475569;
+  font-size: .78rem; font-weight: 700; padding: .28rem .75rem; border-radius: 99px; cursor: pointer;
+}
+#handoverOverlay .group-toggle button.on { background: #0f172a; border-color: #0f172a; color: #fff; }
+#handoverOverlay .ch-head {
+  margin: 1.1rem 0 .35rem; font-size: 12pt; font-weight: 800; letter-spacing: .06em;
+  border-bottom: 2px solid #0f172a; padding-bottom: .15rem;
+  display: flex; justify-content: space-between; gap: .75rem;
+}
+#handoverOverlay .ch-sub {
+  margin: .65rem 0 .2rem .15rem; font-size: 11pt; font-weight: 700; color: #1e3a8a;
+  display: flex; justify-content: space-between; gap: .75rem;
+  border-bottom: 1px solid #bfdbfe; padding-bottom: .1rem;
+}
+#handoverOverlay table { width: 100%; border-collapse: collapse; font-size: 11pt; }
+#handoverOverlay th {
+  text-align: left; font-size: 8.5pt; letter-spacing: .06em; text-transform: uppercase;
+  color: #475569; border-bottom: 1px solid #94a3b8; padding: .35rem .4rem;
+}
+#handoverOverlay td { border-bottom: 1px solid #e2e8f0; padding: .42rem .4rem; vertical-align: top; }
+#handoverOverlay td.num, #handoverOverlay th.num { text-align: right; white-space: nowrap; }
+#handoverOverlay .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5pt; word-break: break-all; }
+#handoverOverlay .sign-block { margin-top: .9rem; border: 1px solid #0f172a; padding: .7rem .8rem .9rem; break-inside: avoid; }
+#handoverOverlay .sign-block h3 { font-size: 10pt; margin: 0 0 .55rem; text-transform: uppercase; letter-spacing: .04em; }
+#handoverOverlay .sign-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 1rem; }
+#handoverOverlay .sign-line { border-bottom: 1px solid #0f172a; height: 28px; margin-bottom: .2rem; }
+#handoverOverlay .sign-lbl { font-size: 8.5pt; color: #334155; }
+#handoverOverlay .is-hidden { display: none !important; }
+#handoverOverlay .sign-choice { display: flex; gap: .4rem; margin-bottom: .65rem; flex-wrap: wrap; }
+#handoverOverlay .sign-choice button {
+  border: 1.5px solid #0f172a; background: #fff; color: #0f172a;
+  border-radius: 99px; padding: .28rem .75rem; font-size: .78rem; font-weight: 700; cursor: pointer;
+}
+#handoverOverlay .sign-choice button.on { background: #0f172a; color: #fff; }
+#handoverOverlay .sign-pad {
+  display: block; width: 100%; height: 140px; max-width: 100%; touch-action: none; cursor: crosshair;
+  background: #fafafa; border: 1px dashed #64748b; border-radius: 6px;
+}
+#handoverOverlay .sign-screen-fields { display: flex; gap: .6rem; align-items: flex-end; margin-top: .55rem; flex-wrap: wrap; }
+#handoverOverlay .sign-screen-fields label { display: flex; flex-direction: column; gap: .15rem; font-size: 8.5pt; color: #334155; flex: 1; min-width: 140px; }
+#handoverOverlay .sign-screen-fields input[type=text] { border: 1px solid #cbd5e1; border-radius: 6px; padding: .35rem .5rem; font-size: 11pt; color: #0f172a; background: #fff; }
+#handoverOverlay .sign-time {
+  border: 1px solid #e2e8f0; border-radius: 6px; padding: .35rem .5rem; font-size: 11pt;
+  background: #f8fafc; color: #0f172a; min-height: 2rem;
+}
+#handoverOverlay .sign-actions { display: flex; gap: .4rem; margin-top: .55rem; }
+#handoverOverlay .captured { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+#handoverOverlay .captured img { width: 240px; max-width: 100%; height: 96px; object-fit: contain; border: 1px solid #0f172a; background: #fff; }
+#handoverOverlay .captured-meta { font-size: 11pt; }
+#handoverOverlay .captured-meta div { margin-top: .15rem; }
+#handoverOverlay .captured-badge {
+  display: inline-block; font-size: 8pt; font-weight: 800; letter-spacing: .06em;
+  color: #166534; background: #f0fdf4; border: 1px solid #86efac; padding: .15em .55em; border-radius: 99px;
+}
+#handoverOverlay .grand { margin-top: 1rem; font-size: 13pt; font-weight: 800; text-align: right; }
+@media (max-width: 768px) {
+  .handover-overlay { padding: .5rem; }
+  .handover-sheet { padding: 1rem .85rem 1.25rem; }
+  #handoverOverlay .sheet-tools { margin: 0 0 .75rem; flex-wrap: wrap; }
+  #handoverOverlay .sign-grid { grid-template-columns: 1fr; }
+  #handoverOverlay h1 { font-size: 18pt; }
+}
+@media print {
+  body:has(#handoverOverlay:not(.hidden)) { overflow: visible; height: auto; background: #fff; }
+  body:has(#handoverOverlay:not(.hidden)) .app-shell { display: none !important; }
+  body:has(#handoverOverlay:not(.hidden)) #handoverOverlay {
+    position: static; background: #fff; padding: 0; overflow: visible; display: block !important;
+  }
+  body:has(#handoverOverlay:not(.hidden)) .handover-sheet { box-shadow: none; width: 100%; padding: 0; }
+  body:has(#handoverOverlay:not(.hidden)) #handoverOverlay .sheet-tools,
+  body:has(#handoverOverlay:not(.hidden)) #handoverOverlay .group-toggle,
+  body:has(#handoverOverlay:not(.hidden)) #handoverOverlay .sign-choice,
+  body:has(#handoverOverlay:not(.hidden)) #handoverOverlay .sign-live { display: none !important; }
+}

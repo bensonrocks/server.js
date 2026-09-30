@@ -2816,6 +2816,7 @@
         <button id="ordersBulkWave" class="btn-primary btn-sm" title="Create a wave pick from the selected orders — it appears in Wave Management like any other wave">&#127754; Create Wave</button>
         <button id="ordersBulkPrint" class="btn-secondary btn-sm" title="Print the WAYBILL label for every selected order in ONE print run — the carrier's label where one is attached (every parcel), the batch waybill PDF where one was uploaded, otherwise a SYSTEM label in its place so no order comes out blank.">&#128438; Print Waybills</button>
         <button id="ordersBulkCartonLabels" class="btn-secondary btn-sm" title="Reprint the CARTON labels for the selected orders — every box, with its contents. Completed orders included: they print the final CTN n / m.">&#127991; Carton Labels</button>
+        <button id="ordersBulkHandover" class="btn-secondary btn-sm" type="button" title="HandOver List for the selected COMPLETED orders in the current SHOW window (Today / Yesterday / Last 7 Days / All / Date Range, Asia/Singapore). One sheet for the platform driver to sign. Does not change orders.">HandOver List</button>
         <button id="ordersBulkFulfil" class="btn-secondary btn-sm" title="Download an XLSX of what the selected orders (or the whole client filter + date range) can fulfil from current stock, and what is short">&#128202; Can-Fulfil Report</button>
         <button id="ordersBulkTxn" class="btn-secondary btn-sm" title="Download this client's transaction statement — everything in and out over the date range, with opening and closing balances">&#129534; Transactions</button>
         <button id="ordersBulkComplete" class="btn-secondary btn-sm" title="Complete the selected orders WITHOUT scanning — Administrator password required. Stock deducts and synced orders report back to their store exactly as a scanned completion would.">&#9989; Complete (skip scan)</button>
@@ -2829,6 +2830,7 @@
         <span id="ordersBulkCount" class="obb-count">0 selected</span>
         <button id="ordersBulkPrint" class="btn-secondary btn-sm" title="Print the WAYBILL label for every selected order in ONE print run — the carrier's label where one is attached (every parcel), the batch waybill PDF where one was uploaded, otherwise a SYSTEM label in its place so no order comes out blank.">&#128438; Print Waybills</button>
         <button id="ordersBulkCartonLabels" class="btn-secondary btn-sm" title="Reprint the CARTON labels for the selected orders — every box, with its contents. Completed orders included: they print the final CTN n / m.">&#127991; Carton Labels</button>
+        <button id="ordersBulkHandover" class="btn-secondary btn-sm" type="button" title="HandOver List for the selected COMPLETED orders in the current SHOW window (Today / Yesterday / Last 7 Days / All / Date Range, Asia/Singapore). One sheet for the platform driver to sign. Does not change orders.">HandOver List</button>
         <button id="ordersBulkClear" class="btn-secondary btn-sm">Clear</button>
       </div>`;
     document.getElementById('ordersDashList').innerHTML = `
@@ -2986,9 +2988,342 @@
   // ── Orders mass-select + group actions ─────────────────────────────────────
   // Row checkboxes + a header "select all" feed orderSelection; a floating bar
   // exposes group actions. Admins get the full bar; WAREHOUSE gets a reduced
-  // one carrying only 🖨 Print Waybills + 🏷 Carton Labels (per the user, the
-  // floor prints labels too) — the admin actions are absent from their DOM,
-  // and the server enforces each role-gated route regardless.
+  // one carrying 🖨 Print Waybills + 🏷 Carton Labels + HandOver List (the
+  // floor prints these too; the sheet writes nothing) — the admin actions
+  // are absent from their DOM, and the server enforces each role-gated route.
+  //
+  // HandOver List — completed ecommerce orders only, already on screen.
+  // The SHOW chips (Today / Yesterday / Last 7 Days / All / Date Range, SGT)
+  // decide which completed rows can be ticked; this sheet does not add a
+  // second date control and it never writes an order, a label, or a scan.
+  let handoverGroupMode = 'both';
+  const handoverCaptures = new Map();
+  let handoverRows = [];
+  let handoverClock = null;
+
+  function handoverPlatform(o) {
+    const raw = String(o.platform || '').trim();
+    if (!raw) return 'Unspecified';
+    const folded = raw.toLowerCase().replace(/[\s_-]+/g, '');
+    if (folded.includes('shopee')) return 'Shopee';
+    if (folded.includes('lazada')) return 'Lazada';
+    if (folded.includes('tiktok')) return 'TikTok';
+    return raw;
+  }
+  function handoverClient(o) {
+    const n = String(o.client_name || '').trim();
+    return n || '—';
+  }
+  function handoverTracking(o) {
+    const w = String(o.waybill_number || '').trim();
+    if (w) return w;
+    const all = waybillsOf(o);
+    return all[0] || '—';
+  }
+  // A stored carton count is the physical boxes. Attached label pages are the
+  // next honest signal. Anything else is 1 — never a sum of line quantities
+  // and never a count invented from the waybill list.
+  function handoverParcels(o) {
+    const cartons = Array.isArray(o.cartons) ? o.cartons.filter(Boolean).length : 0;
+    if (cartons > 0) return cartons;
+    const pages = Number(o.label_pages) || 0;
+    if (pages > 0) return pages;
+    return 1;
+  }
+  function handoverParcelWord(n) { return `${n} parcel${n === 1 ? '' : 's'}`; }
+  function handoverShowLabel() {
+    if (ordersDateFilter === 'today') return 'Today';
+    if (ordersDateFilter === 'yesterday') return 'Yesterday';
+    if (ordersDateFilter === 'week') return 'Last 7 Days';
+    if (ordersDateFilter === 'all') return 'All';
+    if (ordersDateFilter === 'range') return `${ordersDateFrom || '…'} to ${ordersDateTo || '…'}`;
+    return 'Today';
+  }
+  function handoverDateLine(rows) {
+    const dayOf = v => v ? new Date(v).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }) : '';
+    const days = [...new Set(rows.map(o => dayOf(o.endTime || o.uploadedAt)).filter(Boolean))];
+    if (days.length === 1) {
+      const [y, m, d] = days[0].split('-').map(Number);
+      const shown = new Date(Date.UTC(y, m - 1, d, 4, 0, 0)).toLocaleDateString('en-GB', {
+        timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', year: 'numeric',
+      });
+      return shown;
+    }
+    return `mixed dates in the current SHOW filter (${handoverShowLabel()})`;
+  }
+  function handoverSgtNow() {
+    return new Date().toLocaleString('en-GB', {
+      timeZone: 'Asia/Singapore', hour12: false,
+      day: 'numeric', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  }
+  function handoverBucket(rows, keyFn) {
+    const m = new Map();
+    rows.forEach(o => {
+      const k = keyFn(o);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(o);
+    });
+    return m;
+  }
+  function handoverOrderedKeys(map, kind) {
+    const pref = ['Shopee', 'Lazada', 'TikTok'];
+    return [...map.keys()].sort((a, b) => {
+      if (kind === 'platform') {
+        const rank = k => {
+          const i = pref.indexOf(k);
+          if (i >= 0) return i;
+          if (k === 'Unspecified') return 1000;
+          return 100;
+        };
+        const ra = rank(a), rb = rank(b);
+        if (ra !== rb) return ra - rb;
+      }
+      return String(a).localeCompare(String(b), undefined, { sensitivity: 'base' });
+    });
+  }
+  function handoverOrderTable(rows) {
+    return `<table>
+      <thead><tr><th>#</th><th>Order number</th><th>Tracking</th><th class="num">Parcels</th></tr></thead>
+      <tbody>
+        ${rows.map((o, i) => `<tr><td>${i + 1}</td><td class="mono">${esc(o.order_number)}</td><td class="mono">${esc(handoverTracking(o))}</td><td class="num">${handoverParcels(o)}</td></tr>`).join('')}
+      </tbody>
+    </table>`;
+  }
+  function handoverSignHtml(label) {
+    const who = esc(label);
+    const cap = handoverCaptures.get(label);
+    if (cap) {
+      return `<div class="sign-block" data-who="${who}" data-locked="1">
+        <h3>${who} — handover receipt</h3>
+        <div class="sign-captured">
+          <span class="captured-badge">CAPTURED</span>
+          <div class="captured">
+            <img alt="${who} signature" src="${cap.png}" />
+            <div class="captured-meta">
+              <div><b>Printed name:</b> ${esc(cap.name)}</div>
+              <div><b>Time:</b> ${esc(cap.when)} <span class="handover-tz">(Asia/Singapore)</span></div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+    return `<div class="sign-block" data-who="${who}">
+      <h3>${who} — handover receipt</h3>
+      <div class="sign-choice">
+        <button type="button" class="mode-btn on" data-mode="paper">Print and sign</button>
+        <button type="button" class="mode-btn" data-mode="screen">Sign on screen</button>
+      </div>
+      <div class="sign-paper">
+        <div class="sign-grid">
+          <div><div class="sign-line"></div><div class="sign-lbl">Signature</div></div>
+          <div><div class="sign-line"></div><div class="sign-lbl">Printed name</div></div>
+          <div><div class="sign-line"></div><div class="sign-lbl">Time</div></div>
+        </div>
+      </div>
+      <div class="sign-live is-hidden">
+        <canvas class="sign-pad" width="720" height="140" aria-label="Sign on screen"></canvas>
+        <div class="sign-screen-fields">
+          <label>Printed name<input type="text" class="sign-name" autocomplete="off" placeholder="Driver name" /></label>
+          <label>Time<span class="sign-time">—</span></label>
+        </div>
+        <div class="sign-actions">
+          <button type="button" class="btn-secondary btn-sm sign-clear">Clear</button>
+          <button type="button" class="btn-primary btn-sm sign-save">Done / Save</button>
+        </div>
+      </div>
+      <div class="sign-captured is-hidden"></div>
+    </div>`;
+  }
+  function handoverSectionHead(name, n, nested) {
+    const cls = nested ? 'ch-sub' : 'ch-head';
+    const shown = nested ? esc(name) : esc(name).toUpperCase();
+    return `<div class="${cls}"><span>${shown}</span><span>${handoverParcelWord(n)}</span></div>`;
+  }
+  function handoverRenderGrouped(rows) {
+    const sum = list => list.reduce((s, o) => s + handoverParcels(o), 0);
+    if (handoverGroupMode === 'client') {
+      const m = handoverBucket(rows, handoverClient);
+      return handoverOrderedKeys(m, 'client').map(name => {
+        const list = m.get(name);
+        return `${handoverSectionHead(name, sum(list), false)}
+          ${handoverOrderTable(list)}
+          ${handoverSignHtml(name + ' driver')}`;
+      }).join('');
+    }
+    const m = handoverBucket(rows, handoverPlatform);
+    return handoverOrderedKeys(m, 'platform').map(name => {
+      const list = m.get(name);
+      if (handoverGroupMode === 'platform') {
+        return `${handoverSectionHead(name, sum(list), false)}
+          ${handoverOrderTable(list)}
+          ${handoverSignHtml(name + ' driver')}`;
+      }
+      const clients = handoverBucket(list, handoverClient);
+      const nested = handoverOrderedKeys(clients, 'client').map(c => {
+        const cr = clients.get(c);
+        return `${handoverSectionHead(c, sum(cr), true)}${handoverOrderTable(cr)}`;
+      }).join('');
+      return `${handoverSectionHead(name, sum(list), false)}
+        ${nested}
+        ${handoverSignHtml(name + ' driver')}`;
+    }).join('');
+  }
+  function wireHandoverSignBlock(block) {
+    if (block.dataset.locked) return;
+    const paper = block.querySelector('.sign-paper');
+    const live = block.querySelector('.sign-live');
+    const captured = block.querySelector('.sign-captured');
+    const canvas = block.querySelector('.sign-pad');
+    const ctx = canvas.getContext('2d');
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#0f172a';
+    let drawing = false;
+    let dirty = false;
+    const pos = e => {
+      const r = canvas.getBoundingClientRect();
+      const w = r.width || canvas.width;
+      const h = r.height || canvas.height;
+      return [(e.clientX - r.left) * (canvas.width / w), (e.clientY - r.top) * (canvas.height / h)];
+    };
+    canvas.addEventListener('pointerdown', e => {
+      if (block.dataset.locked) return;
+      drawing = true;
+      dirty = true;
+      canvas.setPointerCapture(e.pointerId);
+      const [x, y] = pos(e);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+    });
+    canvas.addEventListener('pointermove', e => {
+      if (!drawing) return;
+      const [x, y] = pos(e);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    });
+    const stop = () => { drawing = false; };
+    canvas.addEventListener('pointerup', stop);
+    canvas.addEventListener('pointercancel', stop);
+    block.querySelector('.sign-clear').addEventListener('click', () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      dirty = false;
+    });
+    block.querySelectorAll('.mode-btn').forEach(btn => btn.addEventListener('click', () => {
+      if (block.dataset.locked) return;
+      block.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('on', b === btn));
+      const screen = btn.dataset.mode === 'screen';
+      paper.classList.toggle('is-hidden', screen);
+      live.classList.toggle('is-hidden', !screen);
+      if (screen) {
+        const t = block.querySelector('.sign-time');
+        if (t) t.textContent = handoverSgtNow();
+      }
+    }));
+    block.querySelector('.sign-save').addEventListener('click', () => {
+      const name = block.querySelector('.sign-name').value.trim();
+      if (!dirty) { alert('Draw a signature on the pad first.'); return; }
+      if (!name) { alert('Enter a printed name before saving.'); return; }
+      const when = handoverSgtNow();
+      const who = block.dataset.who;
+      handoverCaptures.set(who, { png: canvas.toDataURL('image/png'), name, when });
+      block.dataset.locked = '1';
+      captured.innerHTML = `
+        <span class="captured-badge">CAPTURED</span>
+        <div class="captured">
+          <img alt="${esc(who)} signature" src="${canvas.toDataURL('image/png')}" />
+          <div class="captured-meta">
+            <div><b>Printed name:</b> ${esc(name)}</div>
+            <div><b>Time:</b> ${esc(when)} <span class="handover-tz">(Asia/Singapore)</span></div>
+          </div>
+        </div>`;
+      captured.classList.remove('is-hidden');
+      live.classList.add('is-hidden');
+      paper.classList.add('is-hidden');
+      block.querySelector('.sign-choice').classList.add('is-hidden');
+    });
+  }
+  function startHandoverClock() {
+    if (handoverClock) return;
+    const tick = () => {
+      const overlay = document.getElementById('handoverOverlay');
+      if (!overlay || overlay.classList.contains('hidden')) return;
+      overlay.querySelectorAll('.sign-block:not([data-locked]) .sign-live:not(.is-hidden) .sign-time')
+        .forEach(el => { el.textContent = handoverSgtNow(); });
+    };
+    handoverClock = setInterval(tick, 1000);
+  }
+  function ensureHandoverOverlay() {
+    let el = document.getElementById('handoverOverlay');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'handoverOverlay';
+    el.className = 'handover-overlay hidden';
+    el.innerHTML = '<div class="handover-sheet" id="handoverSheet"></div>';
+    el.addEventListener('click', e => { if (e.target === el) el.classList.add('hidden'); });
+    document.body.appendChild(el);
+    return el;
+  }
+  function paintHandoverSheet() {
+    const rows = handoverRows;
+    const total = rows.reduce((s, o) => s + handoverParcels(o), 0);
+    const dateLine = handoverDateLine(rows);
+    const modeBtn = (k, lbl) => `<button type="button" data-group="${k}" class="${handoverGroupMode === k ? 'on' : ''}">${lbl}</button>`;
+    const overlay = ensureHandoverOverlay();
+    document.getElementById('handoverSheet').innerHTML = `
+      <div class="sheet-tools">
+        <span class="sheet-tools-note">Print preview · ${rows.length} order${rows.length === 1 ? '' : 's'}</span>
+        <span class="sheet-tools-actions">
+          <button class="btn-secondary btn-sm" type="button" id="handoverClose">Close</button>
+          <button class="btn-primary btn-sm" type="button" id="handoverPrint">Print</button>
+        </span>
+      </div>
+      <div class="sheet-brand">IDEALONE · UNITED LOGISTICS &amp; DISTRIBUTION</div>
+      <h1>HandOver List</h1>
+      <div class="sheet-meta">
+        <div><b>Date:</b> ${esc(dateLine)} <span class="handover-tz">(Asia/Singapore)</span></div>
+        <div><b>Status:</b> Completed</div>
+        <div class="scope-note">Platform ecommerce pickup (Shopee / Lazada / TikTok). Not packed-in-progress work. Not transport jobs.</div>
+      </div>
+      <div class="group-toggle" id="handoverGroupToggle">
+        <span class="glabel">GROUP:</span>
+        ${modeBtn('platform', 'By platform')}
+        ${modeBtn('client', 'By client')}
+        ${modeBtn('both', 'Both')}
+      </div>
+      <div id="handoverBody">${handoverRenderGrouped(rows)}</div>
+      <div class="grand">Total parcels: ${total}</div>`;
+    overlay.classList.remove('hidden');
+    document.getElementById('handoverClose').onclick = () => overlay.classList.add('hidden');
+    document.getElementById('handoverPrint').onclick = () => window.print();
+    document.querySelectorAll('#handoverGroupToggle [data-group]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        handoverGroupMode = btn.dataset.group;
+        paintHandoverSheet();
+      });
+    });
+    document.querySelectorAll('#handoverOverlay .sign-block').forEach(wireHandoverSignBlock);
+    startHandoverClock();
+  }
+  function openHandoverList(rows) {
+    handoverGroupMode = 'both';
+    handoverCaptures.clear();
+    handoverRows = rows.slice();
+    paintHandoverSheet();
+  }
+  function handoverCompletedSelection() {
+    const nums = [...document.querySelectorAll('.ord-select:checked')].map(cb => cb.dataset.order);
+    const fromDom = nums
+      .map(nm => loadedOrders.find(o => o.order_number === nm))
+      .filter(o => o && o.scan_status === 'done' && !o.reference_only);
+    if (fromDom.length || nums.length) return fromDom;
+    return [...orderSelection]
+      .map(nm => loadedOrders.find(o => o.order_number === nm))
+      .filter(o => o && o.scan_status === 'done' && !o.reference_only);
+  }
+
   function updateOrdersBulkBar() {
     const bar = document.getElementById('ordersBulkBar');
     if (!bar) return;
@@ -3040,6 +3375,16 @@
         .filter(o => o && !o.archived && !o.reference_only);
       wbBtn.disabled = printable.length === 0;
       wbBtn.textContent = `\u{1F5A8} Print Waybills${printable.length ? ` (${printable.length})` : ''}`;
+    }
+    // HandOver List stays labelled exactly that. It enables only when the
+    // selection includes a completed work order (Done). In-progress ticks,
+    // cancelled rows and channel reference copies leave it disabled.
+    const hoBtn = document.getElementById('ordersBulkHandover');
+    if (hoBtn) {
+      const doneSel = [...orderSelection]
+        .map(nm => loadedOrders.find(o => o.order_number === nm))
+        .filter(o => o && o.scan_status === 'done' && !o.reference_only);
+      hoBtn.disabled = doneSel.length === 0;
     }
     // "Create Wave" takes orders that still have picking to do and are not
     // already inside a live wave.
@@ -3102,6 +3447,14 @@
       openReclassifyModal(done.map(o => o.order_number));
     });
     // CARTON LABELS from the list — completed orders deliberately included.
+    document.getElementById('ordersBulkHandover')?.addEventListener('click', () => {
+      const done = handoverCompletedSelection();
+      if (!done.length) {
+        alert('HandOver List is for completed orders.');
+        return;
+      }
+      openHandoverList(done);
+    });
     document.getElementById('ordersBulkCartonLabels')?.addEventListener('click', async () => {
       const btn = document.getElementById('ordersBulkCartonLabels');
       const picked = [...orderSelection]
