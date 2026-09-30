@@ -460,6 +460,8 @@ table.orders-table td:nth-child(1) { font-family: var(--font-mono); font-size: 1
   align-items: flex-end;
   gap: 32px;
   padding: 12px 6px 4px;
+  min-width: 0;
+  overflow-x: auto;
 }
 .month-col {
   display: flex;
@@ -756,6 +758,8 @@ table.rates-table td:first-child { font-family: var(--font-body); font-weight: 6
 }
 
 @media (max-width: 720px) {
+  .monthly-bars { gap: 16px; }
+  .month-col { flex: 0 0 auto; min-width: 84px; max-width: none; }
   .app-shell { flex-direction: column; }
   .side-rail {
     position: sticky;
