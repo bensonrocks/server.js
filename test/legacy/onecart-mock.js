@@ -66,7 +66,7 @@ function send(res, status, body, extra = {}) {
   });
   res.end(JSON.stringify(body));
 }
-const fail = (res, status, code, message) => send(res, status, { error: { code, message, details: [], request_id: 'req_' + Math.random().toString(16).slice(2, 10) } });
+const fail = (res, status, code, message, details = []) => send(res, status, { error: { code, message, details, request_id: 'req_' + Math.random().toString(16).slice(2, 10) } });
 function page(res, rows, q) {
   const per = Math.min(100, Math.max(1, Number(q.get('per_page') || 25)));
   const pg  = Math.max(1, Number(q.get('page') || 1));
@@ -89,11 +89,11 @@ const deliveryView = o => ({ id: o.id, order_no: o.order_no, platform: o.platfor
   first_name: o.first_name, last_name: o.last_name, shipping_address: o.shipping_address, payment_details: { method: 'online' },
   shipping_postal_code: o.shipping_postal_code, shipping_phone_number: o.shipping_phone_number, line_items: o.line_items });
 
-// Minimal multipart/form-data parser — text fields only (print_awbs is the
-// one call the real client sends this way; every field it posts is a plain
-// string, never a file), repeated field names collected into an array so
-// `json.order_ids` reads exactly like the JSON-body shape every other route
-// here already expects.
+// Minimal multipart/form-data parser. print_awbs used to post this way
+// (order_ids repeated as a string). The live spec consumes JSON, and this
+// mock now answers that old shape with the same 400 VALIDATION_ERROR OneCart
+// returns, so a client that goes back to multipart fails the suite. The
+// parser stays so the recorded call still shows what was sent.
 function parseMultipart(buf, boundary) {
   // Object.create(null): `name` comes straight off the request body, and a
   // plain {} would let a field literally called "__proto__" reach the
@@ -155,7 +155,7 @@ http.createServer(async (req, res) => {
 
   // ── the API ──────────────────────────────────────────────────────────────
   if (!p.startsWith('/api/v2/')) return fail(res, 404, 'NOT_FOUND', 'unknown path');
-  calls.push({ method: req.method, path: p, query: Object.fromEntries(q.entries()), body: json, at: Date.now() });
+  calls.push({ method: req.method, path: p, query: Object.fromEntries(q.entries()), body: json, contentType: ct, at: Date.now() });
   if (req.headers.authorization !== KEY) return fail(res, 401, 'UNAUTHORIZED', 'Missing or invalid API key');
   if (rateLimitOnce) { rateLimitOnce = false; return send(res, 429, { error: { code: 'RATE_LIMITED', message: 'Too many requests', request_id: 'req_rl' } }, { 'Retry-After': '7', 'X-RateLimit-Remaining': '0' }); }
   const api = p.slice('/api/v2'.length);
@@ -178,7 +178,22 @@ http.createServer(async (req, res) => {
     return page(res, rows.map(o => orderView(o, q.get('_fields'))), q);
   }
   if (api === '/orders/print_awbs' && req.method === 'POST') {
-    const ids = (json.order_ids || []).map(Number);
+    // The live operation consumes application/json and order_ids is an array
+    // of int32. Multipart, or a JSON array of numeric strings, is the 400
+    // VALIDATION_ERROR StellarKBeauty's Get Labels received.
+    if (!/^application\/json\b/i.test(ct)) {
+      return fail(res, 400, 'VALIDATION_ERROR', 'Validation failed', [
+        { field: 'order_ids', message: 'must be sent as a JSON array of integers' },
+      ]);
+    }
+    const rawIds = json.order_ids;
+    const idsOk = Array.isArray(rawIds) && rawIds.every(n => typeof n === 'number' && Number.isInteger(n));
+    if (!idsOk) {
+      return fail(res, 400, 'VALIDATION_ERROR', 'Validation failed', [
+        { field: 'order_ids', message: 'must be an array of integers' },
+      ]);
+    }
+    const ids = rawIds;
     const missing = ids.filter(id => !orders.find(o => o.id === id));
     if (missing.length) return fail(res, 404, 'NOT_FOUND', `Orders not found: ${missing.join(', ')}`);
     const print_jobs = {};

@@ -130,7 +130,7 @@ const WB7 = 'LZSGD1017777777';
   const g1 = await getLabels(admin, SID);
   ok(g1.ok && g1.requested === 3, `asked for all three copies (${g1.requested})`);
   const awb1 = await awbCalls();
-  ok(awb1.length === awb0 + 1 && JSON.stringify((awb1[awb1.length - 1].body.order_ids || []).slice().sort()) === JSON.stringify([9001, 9002, 9003]), `print_awbs called once for exactly those ids (${JSON.stringify(awb1[awb1.length - 1]?.body.order_ids)})`);
+  ok(awb1.length === awb0 + 1 && /^application\/json\b/i.test(awb1[awb1.length - 1].contentType || '') && (awb1[awb1.length - 1].body.order_ids || []).every(n => typeof n === 'number' && Number.isInteger(n)) && JSON.stringify((awb1[awb1.length - 1].body.order_ids || []).slice().sort()) === JSON.stringify([9001, 9002, 9003]), `print_awbs called once as JSON integers for exactly those ids (${awb1[awb1.length - 1]?.contentType} ${JSON.stringify(awb1[awb1.length - 1]?.body.order_ids)})`);
   const att = g1.attached || [];
   ok(att.length === 2, `2 of 3 attached (${att.length}: ${JSON.stringify(att)})`);
   ok(att.some(a => a.order === NO1 && !a.landedOn), `${NO1}'s label is on BETIME's order of the same number`);
@@ -192,7 +192,7 @@ const WB7 = 'LZSGD1017777777';
   const p2 = await pull(admin, SID);
   ok(p2.imported === 1, `the new copy imported (${p2.imported})`);
   const awbI2 = await awbCalls();
-  ok(awbI2.length === awbI + 1 && JSON.stringify(awbI2[awbI2.length - 1].body.order_ids) === '[9007]', 'print_awbs asked for the NEW copy only');
+  ok(awbI2.length === awbI + 1 && /^application\/json\b/i.test(awbI2[awbI2.length - 1].contentType || '') && JSON.stringify(awbI2[awbI2.length - 1].body.order_ids) === '[9007]', 'print_awbs asked for the NEW copy only, as a JSON integer');
   ok(p2.labels && p2.labels.requested === 1 && p2.labels.attached === 0 && p2.labels.held === 1 && p2.labels.noLabel === 0, `the pull reports the label fetched and HELD, not missing (${JSON.stringify(p2.labels)})`);
   await sleep(8000);   // the pull's own sweep runs 5s later — the page must survive it
   const db3 = await readDb();

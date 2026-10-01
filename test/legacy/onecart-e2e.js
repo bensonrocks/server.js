@@ -194,7 +194,7 @@ async function makePdfs() {
   ok(lb.attached.length === 3 && lb.noLabel.length === 0 && lb.unusable.length === 0, `all 3 attached — a URL label, a base64 label and a per-package TikTok label (${JSON.stringify(lb)})`);
   calls = await mockCalls();
   const pj = calls.find(c => c.path.endsWith('/print_awbs'));
-  ok(!!pj && JSON.stringify(pj.body.order_ids.slice().sort()) === JSON.stringify([9001, 9002, 9003]), `print_awbs called with exactly those ids (${pj && JSON.stringify(pj.body.order_ids)})`);
+  ok(!!pj && /^application\/json\b/i.test(pj.contentType || '') && Array.isArray(pj.body.order_ids) && pj.body.order_ids.every(n => typeof n === 'number' && Number.isInteger(n)) && JSON.stringify(pj.body.order_ids.slice().sort()) === JSON.stringify([9001, 9002, 9003]), `print_awbs called as JSON integers for exactly those ids (${pj && pj.contentType} ${pj && JSON.stringify(pj.body.order_ids)})`);
   await sleep(1200);
   const dbL = await readDb();
   ok(!!dbL.orderLabels?.['585836014589150279'] && !!dbL.orderLabels?.['260907ABCDEF01'] && !!dbL.orderLabels?.['172397910455623'], 'each order has its label on disk');
@@ -232,7 +232,7 @@ async function makePdfs() {
   ok(p7.imported === 1 && p7.labels && p7.labels.attached === 1 && p7.labels.requested === 1, `new order imported and its label fetched at intake (${JSON.stringify(p7.labels)})`);
   calls = await mockCalls();
   const pj2 = calls.filter(c => c.path.endsWith('/print_awbs'));
-  ok(pj2.length === before + 1 && JSON.stringify(pj2[pj2.length - 1].body.order_ids) === '[9007]', 'print_awbs asked for the NEW order only');
+  ok(pj2.length === before + 1 && /^application\/json\b/i.test(pj2[pj2.length - 1].contentType || '') && JSON.stringify(pj2[pj2.length - 1].body.order_ids) === '[9007]', 'print_awbs asked for the NEW order only, as a JSON integer');
   await sleep(1000);
   ok(!!(await readDb()).orderLabels?.['9007NEWORDER'], 'its label is on the order');
   ok(byNo(await orders(admin), '9007NEWORDER')?.waybill_number === 'LZSGD7777', 'and its tracking number came with it');
