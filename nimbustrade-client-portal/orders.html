@@ -76,6 +76,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M9 12h6M9 16h6M9 8h2"/></svg>
       <span>Reports</span>
     </a>
+    <a href="companies.html" class="rail-link rail-admin" id="rail-admin" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg>
+      <span>Companies</span>
+    </a>
   </nav>
   <main class="app-main">
     <div class="app-toolbar">
@@ -84,6 +88,30 @@
         <h2>Orders — quick reference</h2>
       </div>
     </div>
+
+    <section class="panel" id="panel-uploads">
+      <div class="panel-head">
+        <h3>Submissions</h3>
+        <p class="panel-sub">Files waiting for an administrator, and the ones already decided.</p>
+      </div>
+      <div class="table-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>File</th>
+              <th>Rows</th>
+              <th>Status</th>
+              <th>Note</th>
+              <th>Submitted</th>
+            </tr>
+          </thead>
+          <tbody id="uploads-tbody">
+            <tr><td colspan="6" class="table-loading">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <!-- Orders table -->
     <section class="panel" id="panel-orders">

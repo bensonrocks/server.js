@@ -1156,6 +1156,8 @@ function withNTAuth(req, res, next) {
   const session = ntAuth.validateToken(token);
   if (!session) return res.status(401).json({ error: 'Authentication required' });
   req.ntClientId = session.clientId;
+  req.ntUserId = session.userId;
+  req.ntUsername = session.username;
   next();
 }
 
@@ -1173,6 +1175,131 @@ app.post('/client-access/api/logout', withNTAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+function withNTAdmin(req, res, next) {
+  withNTAuth(req, res, () => {
+    if (req.ntClientId !== 'admin') {
+      res.status(403).json({ error: 'Administrator access required' });
+      return;
+    }
+    next();
+  });
+}
+
+function ntBoundedText(value, max) {
+  const s = String(value == null ? '' : value).trim();
+  if (!s || s.length > max) return '';
+  return s;
+}
+
+function ntHttpError(res, e) {
+  const status = e.status || 500;
+  const message = status < 500 ? (e.message || 'Request failed') : 'Could not complete that request';
+  res.status(status).json({ error: message });
+}
+
+function ntSendXlsx(res, buf, filename) {
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buf);
+}
+
+function ntQueueSpreadsheet(req, res, kind, parseFn) {
+  ntOrderUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: 'Could not read that file' });
+    if (!req.file) return res.status(400).json({ error: 'Choose a spreadsheet to upload' });
+    const parsed = parseFn(req.file.buffer);
+    if (parsed.unreadable) {
+      return res.status(400).json({ error: parsed.errors[0].error, created: 0, queued: false, errors: parsed.errors });
+    }
+    if (parsed.rows.length > 1000) return res.status(400).json({ error: 'Max 1000 rows per upload' });
+    if (!parsed.rows.length) return res.json({ queued: false, created: 0, errors: parsed.errors });
+    const upload = ntStore.queueUpload(req.ntClientId, kind, req.file.originalname, parsed.rows);
+    res.json({ queued: true, created: 0, upload, errors: parsed.errors });
+  });
+}
+
+app.get('/client-access/api/me', withNTAuth, (req, res) => {
+  const me = ntStore.getClientIdentity(req.ntClientId);
+  if (!me) return res.status(401).json({ error: 'Authentication required' });
+  res.json(me);
+});
+
+app.get('/client-access/api/admin/companies', withNTAdmin, (req, res) => {
+  res.json(ntStore.listCompaniesForAdmin());
+});
+
+app.post('/client-access/api/admin/companies', withNTAdmin, (req, res) => {
+  const body = req.body || {};
+  const companyName = ntBoundedText(body.companyName, 120);
+  const displayName = ntBoundedText(body.displayName, 120);
+  const username = ntBoundedText(body.username, 60);
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (!companyName || !displayName || !username || !/^\S{1,60}$/.test(username)) {
+    return res.status(400).json({ error: 'Company name, display name, and a username without spaces are required' });
+  }
+  if (!password || password.length > 200) {
+    return res.status(400).json({ error: 'A password is required' });
+  }
+  try {
+    res.status(201).json(ntStore.createCompanyLogin(companyName, displayName, username, password));
+  } catch (e) {
+    if (e.status === 409 || /UNIQUE|duplicate key/i.test(e.message || '')) {
+      return res.status(409).json({ error: 'That username is already in use' });
+    }
+    res.status(500).json({ error: 'Could not create that company' });
+  }
+});
+
+app.get('/client-access/api/admin/companies/:id', withNTAdmin, (req, res) => {
+  const company = ntStore.getCompanyForAdmin(req.params.id);
+  if (!company) return res.status(404).json({ error: 'Company not found' });
+  res.json(company);
+});
+
+app.get('/client-access/api/admin/uploads', withNTAdmin, (req, res) => {
+  res.json(ntStore.listPendingUploadsForAdmin());
+});
+
+app.post('/client-access/api/admin/uploads/:id/decide', withNTAdmin, (req, res) => {
+  const body = req.body || {};
+  try {
+    res.json(ntStore.decideUpload(req.params.id, {
+      action: body.action,
+      note: body.note,
+      decidedBy: req.ntUsername || '',
+    }));
+  } catch (e) {
+    ntHttpError(res, e);
+  }
+});
+
+app.get('/client-access/api/admin/orders', withNTAdmin, (req, res) => {
+  const clientId = req.query.clientId && req.query.clientId !== '__all__' ? req.query.clientId : undefined;
+  res.json(ntStore.listAllOrders({
+    clientId,
+    page: parseInt(req.query.page) || 1,
+    pageSize: Math.min(parseInt(req.query.pageSize) || 50, 200),
+  }));
+});
+
+app.post('/client-access/api/admin/orders/:id/advance', withNTAdmin, (req, res) => {
+  try {
+    res.json(ntStore.advanceOrderForAdmin(req.params.id));
+  } catch (e) {
+    ntHttpError(res, e);
+  }
+});
+
+app.get('/client-access/api/admin/charts', withNTAdmin, (req, res) => {
+  const clientId = req.query.clientId && req.query.clientId !== '__all__' ? req.query.clientId : undefined;
+  res.json(ntStore.getCharts({
+    clientId,
+    from: req.query.from,
+    to: req.query.to,
+    day: req.query.day,
+  }));
+});
+
 function ntSgDay() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
 }
@@ -1182,6 +1309,7 @@ app.get('/client-access/api/dashboard', withNTAuth, (req, res) => {
     counts: ntStore.getDashboardCounts(req.ntClientId),
     countries: ntStore.getCountryBreakdown(req.ntClientId),
     months: ntStore.getMonthlyBreakdown(req.ntClientId),
+    today: ntStore.todaySnapshot(req.ntClientId),
   });
 });
 
@@ -1218,23 +1346,28 @@ app.get('/client-access/api/orders/template', withNTAuth, (req, res) => {
   res.send(buf);
 });
 
+app.get('/client-access/api/orders/bwl-template', withNTAuth, (req, res) => {
+  ntSendXlsx(res, ntTemplate.buildBwlTemplate(), 'bwl-order-template.xlsx');
+});
+
 app.post('/client-access/api/orders/upload', withNTAuth, (req, res) => {
-  ntOrderUpload.single('file')(req, res, (err) => {
-    if (err) return res.status(400).json({ error: 'Could not read that file' });
-    if (!req.file) return res.status(400).json({ error: 'Choose a spreadsheet to upload' });
-    const parsed = ntTemplate.parseOrdersWorkbook(req.file.buffer);
-    if (parsed.unreadable) {
-      return res.status(400).json({ error: parsed.errors[0].error, created: 0, errors: parsed.errors });
-    }
-    if (parsed.rows.length > 1000) return res.status(400).json({ error: 'Max 1000 rows per upload' });
-    if (!parsed.rows.length) return res.json({ created: 0, orders: [], errors: parsed.errors });
-    const inserted = ntStore.bulkCreateOrders(req.ntClientId, parsed.rows);
-    res.json({
-      created: inserted.created,
-      orders: inserted.orders || [],
-      errors: parsed.errors.concat(inserted.errors),
-    });
-  });
+  ntQueueSpreadsheet(req, res, 'orders', (buf) => ntTemplate.parseOrdersWorkbook(buf));
+});
+
+app.get('/client-access/api/uploads', withNTAuth, (req, res) => {
+  res.json(ntStore.listUploadsForClient(req.ntClientId));
+});
+
+app.get('/client-access/api/item-master', withNTAuth, (req, res) => {
+  res.json(ntStore.listItemMaster(req.ntClientId));
+});
+
+app.get('/client-access/api/item-master/template', withNTAuth, (req, res) => {
+  ntSendXlsx(res, ntTemplate.buildItemMasterTemplate(), 'item-master-template.xlsx');
+});
+
+app.post('/client-access/api/item-master/upload', withNTAuth, (req, res) => {
+  ntQueueSpreadsheet(req, res, 'items', (buf) => ntTemplate.parseItemMasterWorkbook(buf));
 });
 
 app.get('/client-access/api/charts', withNTAuth, (req, res) => {
@@ -1312,6 +1445,14 @@ app.get('/client-access/api/rates', withNTAuth, (req, res) => {
 
 app.get('/client-access/api/inbound', withNTAuth, (req, res) => {
   res.json(ntStore.listInboundForClient(req.ntClientId));
+});
+
+app.get('/client-access/api/inbound/template', withNTAuth, (req, res) => {
+  ntSendXlsx(res, ntTemplate.buildInboundTemplate(), 'inbound-template.xlsx');
+});
+
+app.post('/client-access/api/inbound/upload', withNTAuth, (req, res) => {
+  ntQueueSpreadsheet(req, res, 'inbound', (buf) => ntTemplate.parseInboundWorkbook(buf));
 });
 
 app.get('/client-access/api/inbound/:id/tracking', withNTAuth, async (req, res) => {
