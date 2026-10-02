@@ -1212,9 +1212,16 @@ function ntQueueSpreadsheet(req, res, kind, parseFn) {
       return res.status(400).json({ error: parsed.errors[0].error, created: 0, queued: false, errors: parsed.errors });
     }
     if (parsed.rows.length > 1000) return res.status(400).json({ error: 'Max 1000 rows per upload' });
-    if (!parsed.rows.length) return res.json({ queued: false, created: 0, errors: parsed.errors });
-    const upload = ntStore.queueUpload(req.ntClientId, kind, req.file.originalname, parsed.rows);
-    res.json({ queued: true, created: 0, upload, errors: parsed.errors });
+    let rows = parsed.rows;
+    let errors = parsed.errors || [];
+    if (kind === 'orders') {
+      const combined = ntStore.combineOrderRows(rows);
+      rows = combined.rows;
+      errors = errors.concat(combined.errors);
+    }
+    if (!rows.length) return res.json({ queued: false, created: 0, errors });
+    const upload = ntStore.queueUpload(req.ntClientId, kind, req.file.originalname, rows);
+    res.json({ queued: true, created: 0, upload, errors });
   });
 }
 
@@ -1310,6 +1317,7 @@ app.get('/client-access/api/dashboard', withNTAuth, (req, res) => {
     countries: ntStore.getCountryBreakdown(req.ntClientId),
     months: ntStore.getMonthlyBreakdown(req.ntClientId),
     today: ntStore.todaySnapshot(req.ntClientId),
+    pending: ntStore.pendingOrderSummary(req.ntClientId),
   });
 });
 

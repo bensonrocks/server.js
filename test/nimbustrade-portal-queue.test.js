@@ -186,4 +186,77 @@ describe('NimbusTrade upload queue', () => {
     assert.equal(list[0].country, 'SG');
     assert.equal(store.listInboundForClient(store.createClient('Empty inbound').id).length, 0);
   });
+
+  test('rows that share an order number become one order with product lines', () => {
+    const client = store.createClient('Combine Co');
+    const flat = [
+      { rowNumber: 1, customerName: 'Nina Cole', country: 'SG', sku: 'SKU-A', productName: 'Serum A', qty: 1, orderRef: 'BWL-COMBO-1', detail: { address1: '1 Combine Walk', price: 12 } },
+      { rowNumber: 2, customerName: 'Nina Cole', country: 'SG', sku: 'SKU-A', productName: 'Serum A later', qty: 2, orderRef: 'BWL-COMBO-1', detail: { price: 99 } },
+      { rowNumber: 3, customerName: 'Nina Cole', country: 'SG', sku: 'SKU-B', productName: 'Cream B', qty: 3, orderRef: 'BWL-COMBO-1' },
+      { rowNumber: 4, customerName: 'Omar Shah', country: 'MY', sku: 'SKU-C', productName: 'Toner C', qty: 1, orderRef: 'BWL-COMBO-2' },
+    ];
+    const once = store.combineOrderRows(flat);
+    assert.equal(once.errors.length, 0);
+    assert.equal(once.rows.length, 2);
+    assert.equal(once.rows[0].detail.lines.length, 2);
+    assert.equal(once.rows[0].detail.lines[0].sku, 'SKU-A');
+    assert.equal(once.rows[0].detail.lines[0].qty, 3);
+    assert.equal(once.rows[0].detail.lines[0].productName, 'Serum A');
+    assert.equal(once.rows[0].detail.lines[0].price, 12);
+    assert.equal(once.rows[0].qty, 6);
+    const twice = store.combineOrderRows(once.rows);
+    assert.equal(twice.rows.length, 2);
+    assert.equal(twice.rows[0].detail.lines.length, 2);
+    assert.equal(twice.rows[0].qty, 6);
+
+    const before = store.pendingOrderSummary(client.id);
+    assert.equal(before.orders, 0);
+    const queued = store.queueUpload(client.id, 'orders', 'delivery-adv.xlsx', flat);
+    const waiting = store.pendingOrderSummary(client.id);
+    assert.equal(waiting.orders, 2);
+    assert.equal(waiting.lines, 3);
+    assert.deepEqual(waiting.files, ['delivery-adv.xlsx']);
+    const preview = store.listPendingUploadsForAdmin().find((u) => u.id === queued.id);
+    assert.equal(preview.row_count, 2);
+    assert.equal(preview.line_count, 3);
+    const shown = preview.preview.find((r) => r.orderRef === 'BWL-COMBO-1');
+    assert.equal(shown.lines.length, 2);
+    assert.equal(shown.lines[1].sku, 'SKU-B');
+    assert.equal(JSON.stringify(shown).includes('Combine Walk'), false);
+    assert.equal(JSON.stringify(shown).includes('price'), false);
+
+    const applied = store.decideUpload(queued.id, { action: 'approve', decidedBy: 'staff' });
+    assert.equal(applied.applied, 2);
+    assert.equal(store.pendingOrderSummary(client.id).orders, 0);
+    const found = store.listOrders(client.id, { search: 'SKU-B' });
+    assert.equal(found.total, 1);
+    assert.equal(found.rows[0].order_ref, 'BWL-COMBO-1');
+    assert.equal(found.rows[0].qty, 6);
+    assert.equal(found.rows[0].detail.lines.length, 2);
+    assert.equal(found.rows[0].detail.lines[0].qty, 3);
+    const today = store.todaySnapshot(client.id);
+    assert.equal(today.counts.processing, 2);
+    assert.equal(today.counts.total, 2);
+    assert.equal(store.listOrders(client.id, { search: 'BWL-COMBO-1' }).total, 1);
+    const adminHit = store.listAllOrders({ clientId: client.id, search: 'SKU-B' });
+    assert.equal(adminHit.total, 1);
+
+    const clash = store.queueUpload(client.id, 'orders', 'clash.xlsx', [
+      { rowNumber: 4, customerName: 'Ann Lee', country: 'SG', sku: 'SKU-A', qty: 1, orderRef: 'BWL-CLASH' },
+      { rowNumber: 5, customerName: 'Bob Lee', country: 'MY', sku: 'SKU-A', qty: 1, orderRef: 'BWL-CLASH' },
+    ]);
+    assert.throws(
+      () => store.decideUpload(clash.id, { action: 'approve' }),
+      (e) => e.status === 400 && /Row 5:/.test(e.message) && /BWL-CLASH/.test(e.message)
+    );
+    assert.equal(store.listOrders(client.id, { search: 'BWL-CLASH' }).total, 0);
+    assert.equal(store.listUploadsForClient(client.id).find((u) => u.id === clash.id).status, 'pending');
+
+    const generic = store.combineOrderRows([
+      { rowNumber: 1, customerName: 'G1', country: 'SG', sku: 'SKU-G1', qty: 1 },
+      { rowNumber: 2, customerName: 'G2', country: 'SG', sku: 'SKU-G2', qty: 1 },
+    ]);
+    assert.equal(generic.rows.length, 2);
+    assert.equal(generic.errors.length, 0);
+  });
 });

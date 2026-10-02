@@ -186,7 +186,7 @@
           <td>${escapeHtml(o.client_name || '')}</td>
           <td>${escapeHtml(o.country_name || '')}</td>
           <td>${escapeHtml(o.customer_name || '')}</td>
-          <td>${escapeHtml(o.product_name || '')} <span style="color:var(--fg-muted)">(${escapeHtml(o.sku || '')})</span></td>
+          <td>${productCellHtml(o)}</td>
           <td>${escapeHtml(o.qty)}</td>
           <td><span class="status-pill ${escapeHtml(o.flow_status || '')}">${escapeHtml(o.status_label || o.status || '')}</span></td>
           <td>${escapeHtml(o.due_date || '—')}</td>
@@ -376,6 +376,24 @@
       $('#stat-processing').textContent = Number(counts.processing || 0).toLocaleString();
       $('#stat-ready').textContent = Number(counts.ready_to_ship || 0).toLocaleString();
       $('#stat-shipped').textContent = Number(counts.shipped || 0).toLocaleString();
+      const waiting = $('#stat-waiting');
+      if (waiting) {
+        const pending = data.pending || { orders: 0, lines: 0, files: [] };
+        waiting.textContent = Number(pending.orders || 0).toLocaleString();
+        const wnote = $('#waiting-note');
+        if (wnote) {
+          const nOrders = Number(pending.orders || 0);
+          if (!nOrders) {
+            wnote.hidden = true;
+            wnote.textContent = '';
+          } else {
+            const files = (pending.files || []).filter(Boolean).slice(0, 5);
+            const fileBit = files.length ? ` in ${files.join(', ')}` : '';
+            wnote.hidden = false;
+            wnote.textContent = `${Number(pending.lines || 0).toLocaleString()} product lines as ${nOrders.toLocaleString()} orders${fileBit} — not live until an administrator approves them.`;
+          }
+        }
+      }
       renderMonthlyBars(data.months);
     }
     const note = $('#all-time-note');
@@ -401,7 +419,7 @@
         <td><code>${escapeHtml(o.order_ref)}</code></td>
         <td>${escapeHtml(o.country_name || '')}</td>
         <td>${escapeHtml(o.customer_name || '')}</td>
-        <td>${escapeHtml(o.product_name || '')} <span style="color:var(--fg-muted)">(${escapeHtml(o.sku || '')})</span></td>
+        <td>${productCellHtml(o)}</td>
         <td>${escapeHtml(o.qty)}</td>
         <td><span class="status-pill ${escapeHtml(o.flow_status || '')}">${escapeHtml(o.status_label || o.status || '')}</span></td>
         <td>${escapeHtml(o.order_date || '')}</td>
@@ -745,7 +763,7 @@
           <td><code>${escapeHtml(o.order_ref)}</code></td>
           <td>${escapeHtml(o.country_name)}</td>
           <td>${escapeHtml(o.customer_name)}</td>
-          <td>${escapeHtml(o.product_name)} <span style="color:var(--fg-muted)">(${escapeHtml(o.sku)})</span></td>
+          <td>${productCellHtml(o)}</td>
           <td>${o.qty}</td>
           <td><span class="status-pill ${escapeHtml(o.flow_status || '')}">${escapeHtml(o.status_label || o.status)}</span>${o.issue_note ? ` <span title="${escapeHtml(o.issue_note)}" style="cursor:help;color:var(--fg-muted)">ⓘ</span>` : ''}</td>
           <td>${escapeHtml(o.due_date || '—')}</td>
@@ -783,11 +801,23 @@
     if (address) rows.push(['Address', address]);
     if (detail.email) rows.push(['Email', detail.email]);
     if (detail.phone) rows.push(['Phone', detail.phone]);
+    const lines = Array.isArray(detail.lines) && detail.lines.length > 1 ? detail.lines : null;
+    rows.push(['Market', o.country_name]);
+    if (lines) {
+      lines.forEach((line, i) => {
+        const name = (line && (line.productName || line.sku)) || '';
+        const sku = (line && line.sku) || '';
+        rows.push([`Line ${i + 1}`, `${name} (${sku}) × ${line && line.qty != null ? line.qty : ''}`]);
+      });
+      rows.push(['Quantity', o.qty]);
+    } else {
+      rows.push(
+        ['SKU', o.sku],
+        ['Product', o.product_name],
+        ['Quantity', o.qty],
+      );
+    }
     rows.push(
-      ['Market', o.country_name],
-      ['SKU', o.sku],
-      ['Product', o.product_name],
-      ['Quantity', o.qty],
       ['Order date', o.order_date],
       ['Due', o.due_date || '—'],
       ['Status', o.status_label],
@@ -835,6 +865,21 @@
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function productCellHtml(o) {
+    const lines = o && o.detail && Array.isArray(o.detail.lines) ? o.detail.lines : [];
+    const name = escapeHtml((o && o.product_name) || '');
+    const sku = escapeHtml((o && o.sku) || '');
+    const extra = lines.length > 1 ? ` <span class="line-count">${lines.length} lines</span>` : '';
+    return `${name} <span style="color:var(--fg-muted)">(${sku})</span>${extra}`;
+  }
+
+  function uploadCountText(u) {
+    if (u && u.kind === 'orders' && u.line_count != null && Number(u.line_count) !== Number(u.row_count)) {
+      return `${u.row_count} orders · ${u.line_count} lines`;
+    }
+    return String(u && u.row_count != null ? u.row_count : '');
   }
 
   // ---------- Inventory ----------
@@ -1072,6 +1117,7 @@
         errEl.hidden = false;
       }
       fillUploadSummary(summaryEl, body);
+      if (res.ok && body.queued && uploadOverlay) uploadOverlay.hidden = true;
       loadDashboard();
       loadOrders();
       loadClientUploads();
@@ -1086,10 +1132,13 @@
     const errors = body.errors || [];
     const orders = body.orders || [];
     const queued = !!body.queued;
-    const n = queued ? (body.upload && body.upload.row_count) || 0 : created;
+    const ordersN = queued ? Number(body.upload && body.upload.row_count) || 0 : created;
+    const linesN = queued ? Number(body.upload && body.upload.line_count) || ordersN : created;
     const leadText = queued
-      ? `Submitted ${n} row(s) for approval. They appear in your orders after an administrator approves them.`
-      : `Imported ${created} order(s).`;
+      ? `Submitted ${linesN} product lines as ${ordersN} orders. They are waiting for approval and are not live yet.`
+      : (errors.length && !created)
+        ? 'Nothing was submitted.'
+        : `Imported ${created} order(s).`;
     if (summaryEl) {
       summaryEl.replaceChildren();
       const lead = document.createElement('span');
@@ -1112,14 +1161,22 @@
       summaryEl.hidden = false;
     }
     const pageResult = $('#upload-result');
-    if (pageResult && pageResult !== summaryEl) pageResult.textContent = leadText;
+    if (pageResult && pageResult !== summaryEl) {
+      const skipped = queued && errors.length ? ` ${errors.length} row(s) were skipped.` : '';
+      pageResult.textContent = leadText + skipped;
+    }
   }
 
   const UPLOAD_KIND = { orders: 'Outbound orders', items: 'Item master', inbound: 'Inbound' };
 
   function previewText(kind, row) {
     if (!row) return '';
-    if (kind === 'orders') return [row.orderRef, row.sku && `${row.sku} ×${row.qty || ''}`].filter(Boolean).join(' · ');
+    if (kind === 'orders') {
+      const lineText = Array.isArray(row.lines) && row.lines.length
+        ? row.lines.map((l) => l && l.sku && `${l.sku} ×${l.qty || ''}`).filter(Boolean).join(', ')
+        : (row.sku && `${row.sku} ×${row.qty || ''}`);
+      return [row.orderRef, lineText].filter(Boolean).join(' · ');
+    }
     if (kind === 'items') return [row.sku, row.description].filter(Boolean).join(' · ');
     if (kind === 'inbound') return [row.reference, row.contents && `${row.contents} ×${row.expectedQty || ''}`].filter(Boolean).join(' · ');
     return '';
@@ -1140,7 +1197,7 @@
         <td>${escapeHtml(u.client_name || '')}</td>
         <td>${escapeHtml(UPLOAD_KIND[u.kind] || u.kind)}</td>
         <td>${escapeHtml(u.filename || '')}</td>
-        <td>${escapeHtml(u.row_count)}</td>
+        <td>${escapeHtml(uploadCountText(u))}</td>
         <td>${escapeHtml(preview)}${more}</td>
         <td><div class="row-actions">
           <input class="pending-note" maxlength="400" placeholder="Note" />
