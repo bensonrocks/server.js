@@ -76,6 +76,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M9 12h6M9 16h6M9 8h2"/></svg>
       <span>Reports</span>
     </a>
+    <a href="companies.html" class="rail-link rail-admin" id="rail-admin" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg>
+      <span>Companies</span>
+    </a>
   </nav>
   <main class="app-main">
     <div class="app-toolbar">
@@ -84,6 +88,35 @@
         <h2>Inventory balance by location</h2>
       </div>
     </div>
+
+    <section class="panel" id="panel-item-master">
+      <div class="panel-head">
+        <h3>Item master</h3>
+        <div class="upload-actions">
+          <a href="#" class="btn btn-ghost-sm" id="download-item-template">Download template</a>
+          <input type="file" id="item-master-file" accept=".xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+          <button type="button" class="btn btn-primary" id="upload-item-master">Submit for approval</button>
+        </div>
+      </div>
+      <p class="panel-sub" id="item-upload-result">SKU, description, batch, and serial. Remark 1 and Remark 2 are optional. An administrator approves the file before the rows appear here.</p>
+      <div class="table-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Description</th>
+              <th>Batch</th>
+              <th>Serial</th>
+              <th>Remark 1</th>
+              <th>Remark 2</th>
+            </tr>
+          </thead>
+          <tbody id="item-master-tbody">
+            <tr><td colspan="6" class="table-loading">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <!-- Inventory -->
     <section class="panel" id="panel-inventory">

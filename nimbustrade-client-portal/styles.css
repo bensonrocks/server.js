@@ -172,9 +172,18 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
-.login-error, .modal-error {
+.login-error, .modal-error, .company-error {
   color: var(--red);
   background: var(--red-tint);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 12.5px;
+  margin-top: 14px;
+}
+
+.form-ok {
+  color: var(--green);
+  background: var(--green-tint);
   border-radius: var(--radius);
   padding: 10px 12px;
   font-size: 12.5px;
@@ -645,6 +654,19 @@ table.orders-table td:nth-child(1) { font-family: var(--font-mono); font-size: 1
   font-size: 12px;
   color: var(--fg-muted);
   white-space: pre-line;
+}
+.today-note { margin: 0 0 14px; color: var(--fg-muted); font-size: 13px; }
+.upload-actions, .row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.pending-note {
+  font-family: var(--font-body);
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  min-width: 0;
+  width: 160px;
 }
 
 /* ---------- Tracking ---------- */

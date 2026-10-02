@@ -117,7 +117,250 @@
     if ($('#inventory-grid')) loadInventory();
     if ($('#rates-table-wrap')) loadRates();
     if ($('#reports-market-tbody')) loadReports();
+    if ($('#item-master-tbody')) loadItemMaster();
+    if ($('#chart-columns')) {
+      loadCharts().catch((err) => {
+        const wrap = $('#chart-columns');
+        if (wrap) wrap.innerHTML = `<p class="chart-empty">${escapeHtml(err.message)}</p>`;
+      });
+    }
+    if ($('#admin-chart-columns') && !$('#company-picker')) {
+      loadAdminCharts('').catch((err) => {
+        const wrap = $('#admin-chart-columns');
+        if (wrap) wrap.innerHTML = `<p class="chart-empty">${escapeHtml(err.message)}</p>`;
+      });
+    }
+    if ($('#uploads-tbody')) loadClientUploads();
+    revealAdminRail();
   }
+
+  async function revealAdminRail() {
+    const link = $('#rail-admin');
+    const workspace = $('#company-workspace');
+    const denied = $('#company-denied');
+    const loading = $('#company-loading');
+    try {
+      const me = await api('/me');
+      const isAdmin = me.clientId === 'admin';
+      if (link) link.hidden = !isAdmin;
+      if (workspace || denied) {
+        if (isAdmin) {
+          if (denied) denied.hidden = true;
+          if (workspace) workspace.hidden = false;
+          await loadCompaniesAdmin();
+        } else {
+          if (workspace) workspace.hidden = true;
+          if (denied) denied.hidden = false;
+        }
+      }
+    } catch (_) {
+      if (link) link.hidden = true;
+      if (workspace) workspace.hidden = true;
+      if (denied) denied.hidden = false;
+    } finally {
+      if (loading) loading.hidden = true;
+    }
+  }
+
+  function clearCompanyView() {
+    const detail = $('#company-detail');
+    if (detail) detail.hidden = true;
+  }
+
+  function renderCompanyOrders(orders, opts) {
+    const tbody = $('#company-orders');
+    if (!tbody) return;
+    const all = !!(opts && opts.all);
+    const rows = (orders && orders.rows) || [];
+    orderById = new Map(rows.map((o) => [o.id, o]));
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="10" class="table-loading">${all ? 'No orders yet.' : 'No orders for this company yet.'}</td></tr>`;
+    } else {
+      tbody.innerHTML = rows.map((o) => {
+        const next = o.next_label
+          ? `<button type="button" class="btn btn-ghost-sm advance-order" data-advance="${escapeHtml(o.id)}">${escapeHtml(o.next_label)}</button>`
+          : '—';
+        return `
+        <tr data-id="${escapeHtml(o.id)}">
+          <td><code>${escapeHtml(o.order_ref)}</code></td>
+          <td>${escapeHtml(o.client_name || '')}</td>
+          <td>${escapeHtml(o.country_name || '')}</td>
+          <td>${escapeHtml(o.customer_name || '')}</td>
+          <td>${escapeHtml(o.product_name || '')} <span style="color:var(--fg-muted)">(${escapeHtml(o.sku || '')})</span></td>
+          <td>${escapeHtml(o.qty)}</td>
+          <td><span class="status-pill ${escapeHtml(o.flow_status || '')}">${escapeHtml(o.status_label || o.status || '')}</span></td>
+          <td>${escapeHtml(o.due_date || '—')}</td>
+          <td>${escapeHtml(o.order_date || '')}</td>
+          <td>${next}</td>
+        </tr>`;
+      }).join('');
+      tbody.querySelectorAll('tr[data-id]').forEach((row) => {
+        row.addEventListener('click', () => openOrderDetail(row.dataset.id));
+      });
+      tbody.querySelectorAll('.advance-order').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          advanceOrder(btn.dataset.advance);
+        });
+      });
+    }
+    const note = $('#company-orders-note');
+    if (note) {
+      const total = orders ? Number(orders.total) || 0 : 0;
+      note.textContent = total > rows.length
+        ? `Showing the ${rows.length} most recent of ${total} orders.`
+        : `${total} order${total === 1 ? '' : 's'}`;
+    }
+  }
+
+  async function advanceOrder(id) {
+    const errEl = $('#company-error');
+    if (errEl) errEl.hidden = true;
+    try {
+      await api('/admin/orders/' + encodeURIComponent(id) + '/advance', { method: 'POST', body: '{}' });
+      const picker = $('#company-picker');
+      if (picker && picker.value) await showCompany(picker.value);
+    } catch (err) {
+      if (errEl) {
+        errEl.textContent = err.message;
+        errEl.hidden = false;
+      }
+    }
+  }
+
+  function renderCompanyDetail(data) {
+    const detail = $('#company-detail');
+    if (!detail || !data) return;
+    detail.hidden = false;
+    const counts = data.counts || {};
+    const countsEl = $('#company-counts');
+    if (countsEl) {
+      const tiles = [
+        ['Total', counts.total || 0, ''],
+        ['Processing', counts.processing || 0, 'stat-processing'],
+        ['Ready to ship', counts.ready_to_ship || 0, 'stat-ready'],
+        ['Shipped', counts.shipped || 0, 'stat-shipped'],
+      ];
+      countsEl.innerHTML = tiles.map(([label, n, cls]) => `
+        <div class="stat-tile ${cls}">
+          <span class="stat-dot"></span>
+          <span class="stat-label">${escapeHtml(label)}</span>
+          <span class="stat-value">${Number(n).toLocaleString()}</span>
+        </div>
+      `).join('');
+    }
+    const usersEl = $('#company-users');
+    if (usersEl) {
+      const users = data.users || [];
+      usersEl.innerHTML = users.length
+        ? users.map((u) => `
+          <tr>
+            <td>${escapeHtml(u.name || '')}</td>
+            <td><code>${escapeHtml(u.username || '')}</code></td>
+            <td>${u.active ? 'Active' : 'Off'}</td>
+          </tr>
+        `).join('')
+        : '<tr><td colspan="3" class="table-loading">No login on this company.</td></tr>';
+    }
+    renderCompanyOrders(data.orders);
+  }
+
+  async function showCompany(id) {
+    if (!id) { clearCompanyView(); return; }
+    if (id === '__all__') {
+      const orders = await api('/admin/orders?pageSize=50');
+      const detail = $('#company-detail');
+      if (detail) detail.hidden = false;
+      const usersWrap = $('#company-users-wrap');
+      if (usersWrap) usersWrap.hidden = true;
+      const counts = $('#company-counts');
+      if (counts) counts.hidden = true;
+      renderCompanyOrders(orders, { all: true });
+      await loadAdminCharts('');
+      return;
+    }
+    const usersWrap = $('#company-users-wrap');
+    if (usersWrap) usersWrap.hidden = false;
+    const counts = $('#company-counts');
+    if (counts) counts.hidden = false;
+    const data = await api('/admin/companies/' + encodeURIComponent(id));
+    renderCompanyDetail(data);
+    await loadAdminCharts(id);
+  }
+
+  async function loadCompaniesAdmin() {
+    const picker = $('#company-picker');
+    if (!picker) return;
+    const list = await api('/admin/companies');
+    const current = picker.value;
+    picker.replaceChildren();
+    const allOpt = document.createElement('option');
+    allOpt.value = '__all__';
+    allOpt.textContent = 'All companies';
+    picker.appendChild(allOpt);
+    for (const c of list) {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      picker.appendChild(opt);
+    }
+    if (current === '__all__' || (current && list.some((c) => c.id === current))) {
+      picker.value = current;
+    } else {
+      picker.value = '__all__';
+    }
+    await showCompany(picker.value);
+    await loadPendingUploads();
+  }
+
+  $('#company-picker')?.addEventListener('change', () => {
+    const errEl = $('#company-error');
+    if (errEl) errEl.hidden = true;
+    showCompany($('#company-picker').value).catch((err) => {
+      if (errEl) {
+        errEl.textContent = err.message;
+        errEl.hidden = false;
+      }
+    });
+  });
+
+  $('#company-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = $('#company-error');
+    const okEl = $('#company-ok');
+    if (errEl) errEl.hidden = true;
+    if (okEl) okEl.hidden = true;
+    const passwordEl = $('#company-password');
+    const companyName = $('#company-name').value.trim();
+    try {
+      const created = await api('/admin/companies', {
+        method: 'POST',
+        body: JSON.stringify({
+          companyName,
+          displayName: $('#company-display').value.trim(),
+          username: $('#company-username').value.trim(),
+          password: passwordEl ? passwordEl.value : '',
+        }),
+      });
+      if (passwordEl) passwordEl.value = '';
+      $('#company-form').reset();
+      if (okEl) {
+        okEl.textContent = `${created.company.name} is set up. They sign in to this same portal and see only their own orders.`;
+        okEl.hidden = false;
+      }
+      await loadCompaniesAdmin();
+      const picker = $('#company-picker');
+      if (picker && created.company && created.company.id) {
+        picker.value = created.company.id;
+        await showCompany(created.company.id);
+      }
+    } catch (err) {
+      if (errEl) {
+        errEl.textContent = err.message;
+        errEl.hidden = false;
+      }
+    }
+  });
 
   // ---------- Dashboard (stats + map) ----------
 
@@ -128,18 +371,45 @@
       needsShipments ? api('/inbound') : Promise.resolve([]),
     ]);
     if ($('#stat-total')) {
-      $('#stat-total').textContent = data.counts.total.toLocaleString();
-      $('#stat-processing').textContent = data.counts.processing.toLocaleString();
-      $('#stat-ready').textContent = data.counts.ready_to_ship.toLocaleString();
-      $('#stat-shipped').textContent = data.counts.shipped.toLocaleString();
+      const counts = ($('#today-orders') && data.today) ? data.today.counts : data.counts;
+      $('#stat-total').textContent = Number(counts.total || 0).toLocaleString();
+      $('#stat-processing').textContent = Number(counts.processing || 0).toLocaleString();
+      $('#stat-ready').textContent = Number(counts.ready_to_ship || 0).toLocaleString();
+      $('#stat-shipped').textContent = Number(counts.shipped || 0).toLocaleString();
       renderMonthlyBars(data.months);
     }
-    if ($('#chart-columns')) {
-      loadCharts().catch((err) => {
-        $('#chart-columns').innerHTML = `<p class="chart-empty">${escapeHtml(err.message)}</p>`;
-      });
+    const note = $('#all-time-note');
+    if (note && data.counts) {
+      const c = data.counts;
+      note.textContent = `All time: ${Number(c.total || 0).toLocaleString()} orders — ${Number(c.processing || 0).toLocaleString()} processing, ${Number(c.ready_to_ship || 0).toLocaleString()} ready to ship, ${Number(c.shipped || 0).toLocaleString()} shipped.`;
     }
+    if ($('#today-orders')) renderTodayOrders(data.today);
     if (needsShipments) renderMap(data.countries, shipments);
+  }
+
+  function renderTodayOrders(today) {
+    const tbody = $('#today-orders');
+    if (!tbody) return;
+    const rows = (today && today.orders) || [];
+    orderById = new Map(rows.map((o) => [o.id, o]));
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="table-loading">No orders dated today. Uploads appear here after an administrator approves them.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map((o) => `
+      <tr data-id="${escapeHtml(o.id)}">
+        <td><code>${escapeHtml(o.order_ref)}</code></td>
+        <td>${escapeHtml(o.country_name || '')}</td>
+        <td>${escapeHtml(o.customer_name || '')}</td>
+        <td>${escapeHtml(o.product_name || '')} <span style="color:var(--fg-muted)">(${escapeHtml(o.sku || '')})</span></td>
+        <td>${escapeHtml(o.qty)}</td>
+        <td><span class="status-pill ${escapeHtml(o.flow_status || '')}">${escapeHtml(o.status_label || o.status || '')}</span></td>
+        <td>${escapeHtml(o.order_date || '')}</td>
+      </tr>
+    `).join('');
+    tbody.querySelectorAll('tr[data-id]').forEach((row) => {
+      row.addEventListener('click', () => openOrderDetail(row.dataset.id));
+    });
   }
 
   function chartBars(series) {
@@ -158,38 +428,73 @@
     }</div>`;
   }
 
-  async function loadCharts() {
-    const wrap = $('#chart-columns');
+  const CLIENT_CHARTS = {
+    day: '#chart-day', from: '#chart-from', to: '#chart-to',
+    kpis: '#chart-kpis', columns: '#chart-columns', path: '/charts',
+  };
+  const ADMIN_CHARTS = {
+    day: '#admin-chart-day', from: '#admin-chart-from', to: '#admin-chart-to',
+    kpis: '#admin-chart-kpis', columns: '#admin-chart-columns', path: '/admin/charts',
+  };
+
+  async function paintCharts(ids, clientId) {
+    const wrap = $(ids.columns);
     if (!wrap) return;
-    const day = $('#chart-day')?.value || '';
-    const from = $('#chart-from')?.value || '';
-    const to = $('#chart-to')?.value || '';
+    const day = $(ids.day)?.value || '';
+    const from = $(ids.from)?.value || '';
+    const to = $(ids.to)?.value || '';
     const params = new URLSearchParams();
     if (day) params.set('day', day);
     if (from) params.set('from', from);
     if (to) params.set('to', to);
-    const data = await api(`/charts?${params}`);
-    if ($('#chart-day') && !$('#chart-day').value) $('#chart-day').value = data.day;
-    if ($('#chart-from') && !$('#chart-from').value) $('#chart-from').value = data.from;
-    if ($('#chart-to') && !$('#chart-to').value) $('#chart-to').value = data.to;
-    $('#chart-kpis').innerHTML = [
-      ['Orders on this day', data.ordersInDay],
-      ['Orders in period', data.ordersInPeriod],
-      ['Shipped', data.deliveriesCompleted],
-      ['Late deliveries', data.lateDeliveries],
-    ].map(([label, n]) => `<div class="chart-kpi"><span>${escapeHtml(label)}</span><strong>${Number(n).toLocaleString()}</strong></div>`).join('');
+    if (clientId && clientId !== '__all__') params.set('clientId', clientId);
+    const data = await api(`${ids.path}?${params}`);
+    if ($(ids.day) && !$(ids.day).value) $(ids.day).value = data.day;
+    if ($(ids.from) && !$(ids.from).value) $(ids.from).value = data.from;
+    if ($(ids.to) && !$(ids.to).value) $(ids.to).value = data.to;
+    const mix = data.statusMix || {};
+    const kpis = $(ids.kpis);
+    if (kpis) {
+      kpis.innerHTML = [
+        ['Orders on this day', data.ordersInDay],
+        ['Orders in period', data.ordersInPeriod],
+        ['Deliveries shipped', data.deliveriesCompleted],
+        ['Late deliveries', data.lateDeliveries],
+        ['Processing', mix.processing || 0],
+        ['Ready to ship', mix.ready_to_ship || 0],
+        ['Status mix · Shipped', mix.shipped || 0],
+      ].map(([label, n]) => `<div class="chart-kpi"><span>${escapeHtml(label)}</span><strong>${Number(n).toLocaleString()}</strong></div>`).join('');
+    }
     wrap.innerHTML = [
       chartBlock('Orders on this day', data.ordersInDay, data.ordersOnDay, 'No orders on this day.'),
       chartBlock('Orders over the period', data.ordersInPeriod, data.ordersByDay, 'No orders in this period.'),
-      chartBlock('Shipped', data.deliveriesCompleted, data.deliveriesByDay, 'No shipped orders in this period.'),
+      chartBlock('Deliveries', data.deliveriesCompleted, data.deliveriesByDay, 'No shipped orders in this period.'),
       chartBlock('Late deliveries', data.lateDeliveries, data.lateByDay, 'No late deliveries in this period.'),
     ].join('');
+  }
+
+  function loadCharts() {
+    return paintCharts(CLIENT_CHARTS);
+  }
+
+  function loadAdminCharts(clientId) {
+    return paintCharts(ADMIN_CHARTS, clientId);
   }
 
   $('#chart-form')?.addEventListener('submit', (e) => {
     e.preventDefault();
     loadCharts().catch((err) => {
       const wrap = $('#chart-columns');
+      if (wrap) wrap.innerHTML = `<p class="chart-empty">${escapeHtml(err.message)}</p>`;
+    });
+  });
+
+  $('#admin-chart-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const picker = $('#company-picker');
+    const clientId = picker ? picker.value : '';
+    loadAdminCharts(clientId).catch((err) => {
+      const wrap = $('#admin-chart-columns');
       if (wrap) wrap.innerHTML = `<p class="chart-empty">${escapeHtml(err.message)}</p>`;
     });
   });
@@ -470,8 +775,15 @@
     $('#order-detail-status').textContent = o.status_label || '';
     const body = $('#order-detail-body');
     body.replaceChildren();
+    const detail = o.detail || {};
+    const address = [detail.address1, detail.address2, detail.city, detail.state, detail.postal].filter(Boolean).join(', ');
     const rows = [
       ['Customer', o.customer_name],
+    ];
+    if (address) rows.push(['Address', address]);
+    if (detail.email) rows.push(['Email', detail.email]);
+    if (detail.phone) rows.push(['Phone', detail.phone]);
+    rows.push(
       ['Market', o.country_name],
       ['SKU', o.sku],
       ['Product', o.product_name],
@@ -481,7 +793,7 @@
       ['Status', o.status_label],
       ['Carrier', o.carrier || '—'],
       ['Waybill', o.waybill_number || '—'],
-    ];
+    );
     if (o.issue_note) rows.push(['Note', o.issue_note]);
     for (const [label, value] of rows) {
       const dt = document.createElement('dt');
@@ -713,20 +1025,14 @@
   $('#cancel-upload-orders')?.addEventListener('click', () => { uploadOverlay.hidden = true; });
   uploadOverlay?.addEventListener('click', (e) => { if (e.target === uploadOverlay) uploadOverlay.hidden = true; });
 
-  $('#download-order-template')?.addEventListener('click', async (e) => {
+  $('#download-order-template')?.addEventListener('click', (e) => {
     e.preventDefault();
-    const res = await fetch(`${API}/orders/template`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.status === 401) { doLogout(); return; }
-    if (!res.ok) return;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'nimbustrade-order-template.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadAuthed('/orders/template', 'nimbustrade-order-template.xlsx');
+  });
+
+  $('#download-bwl-template')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    downloadAuthed('/orders/bwl-template', 'bwl-order-template.xlsx');
   });
 
   $('#upload-orders-file')?.addEventListener('change', (e) => {
@@ -765,36 +1071,228 @@
         errEl.textContent = body.error || 'Upload failed';
         errEl.hidden = false;
       }
-      fillUploadSummary(summaryEl, body.created || 0, lines, body.orders);
+      fillUploadSummary(summaryEl, body);
       loadDashboard();
       loadOrders();
+      loadClientUploads();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.hidden = false;
     }
   });
 
-  function fillUploadSummary(summaryEl, created, errors, orders) {
-    summaryEl.replaceChildren();
-    const lead = document.createElement('span');
-    lead.textContent = `Imported ${created} order(s).`;
-    summaryEl.appendChild(lead);
-    for (const row of errors || []) {
-      summaryEl.appendChild(document.createElement('br'));
-      const line = document.createElement('span');
-      line.textContent = `Row ${row.row}: ${row.error}`;
-      summaryEl.appendChild(line);
+  function fillUploadSummary(summaryEl, body) {
+    const created = body.created || 0;
+    const errors = body.errors || [];
+    const orders = body.orders || [];
+    const queued = !!body.queued;
+    const n = queued ? (body.upload && body.upload.row_count) || 0 : created;
+    const leadText = queued
+      ? `Submitted ${n} row(s) for approval. They appear in your orders after an administrator approves them.`
+      : `Imported ${created} order(s).`;
+    if (summaryEl) {
+      summaryEl.replaceChildren();
+      const lead = document.createElement('span');
+      lead.textContent = leadText;
+      summaryEl.appendChild(lead);
+      for (const row of errors) {
+        summaryEl.appendChild(document.createElement('br'));
+        const line = document.createElement('span');
+        line.textContent = `Row ${row.row}: ${row.error}`;
+        summaryEl.appendChild(line);
+      }
+      const ids = orders.map((o) => o.id).filter(Boolean);
+      if (ids.length && !queued) {
+        summaryEl.appendChild(document.createElement('br'));
+        const a = document.createElement('a');
+        a.href = `orders.html?ids=${encodeURIComponent(ids.join(','))}`;
+        a.textContent = 'Open these orders';
+        summaryEl.appendChild(a);
+      }
+      summaryEl.hidden = false;
     }
-    const ids = (orders || []).map((o) => o.id).filter(Boolean);
-    if (ids.length) {
-      summaryEl.appendChild(document.createElement('br'));
-      const a = document.createElement('a');
-      a.href = `orders.html?ids=${encodeURIComponent(ids.join(','))}`;
-      a.textContent = 'Open these orders';
-      summaryEl.appendChild(a);
-    }
-    summaryEl.hidden = false;
+    const pageResult = $('#upload-result');
+    if (pageResult && pageResult !== summaryEl) pageResult.textContent = leadText;
   }
+
+  const UPLOAD_KIND = { orders: 'Outbound orders', items: 'Item master', inbound: 'Inbound' };
+
+  function previewText(kind, row) {
+    if (!row) return '';
+    if (kind === 'orders') return [row.orderRef, row.sku && `${row.sku} ×${row.qty || ''}`].filter(Boolean).join(' · ');
+    if (kind === 'items') return [row.sku, row.description].filter(Boolean).join(' · ');
+    if (kind === 'inbound') return [row.reference, row.contents && `${row.contents} ×${row.expectedQty || ''}`].filter(Boolean).join(' · ');
+    return '';
+  }
+
+  async function loadPendingUploads() {
+    const tbody = $('#pending-uploads');
+    if (!tbody) return;
+    const rows = await api('/admin/uploads');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="table-loading">Nothing waiting for approval.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map((u) => {
+      const preview = (u.preview || []).map((r) => previewText(u.kind, r)).filter(Boolean).slice(0, 3).join('; ');
+      const more = (u.preview || []).length > 3 ? '…' : '';
+      return `<tr>
+        <td>${escapeHtml(u.client_name || '')}</td>
+        <td>${escapeHtml(UPLOAD_KIND[u.kind] || u.kind)}</td>
+        <td>${escapeHtml(u.filename || '')}</td>
+        <td>${escapeHtml(u.row_count)}</td>
+        <td>${escapeHtml(preview)}${more}</td>
+        <td><div class="row-actions">
+          <input class="pending-note" maxlength="400" placeholder="Note" />
+          <button type="button" class="btn btn-primary" data-decide="approve" data-id="${escapeHtml(u.id)}">Approve</button>
+          <button type="button" class="btn btn-ghost-sm" data-decide="reject" data-id="${escapeHtml(u.id)}">Reject</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+    tbody.querySelectorAll('[data-decide]').forEach((btn) => {
+      btn.addEventListener('click', () => decideUpload(btn));
+    });
+  }
+
+  async function decideUpload(btn) {
+    const errEl = $('#company-error');
+    const noteEl = btn.closest('tr')?.querySelector('.pending-note');
+    const note = noteEl ? noteEl.value : '';
+    try {
+      await api('/admin/uploads/' + encodeURIComponent(btn.dataset.id) + '/decide', {
+        method: 'POST',
+        body: JSON.stringify({ action: btn.dataset.decide, note }),
+      });
+      await loadPendingUploads();
+      const picker = $('#company-picker');
+      if (picker && picker.value) await showCompany(picker.value);
+    } catch (err) {
+      if (errEl) { errEl.textContent = err.message; errEl.hidden = false; }
+    }
+  }
+
+  async function downloadAuthed(path, filename) {
+    const res = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status === 401) { doLogout(); return; }
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function postSpreadsheet(path, file) {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch(`${API}${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401) { doLogout(); throw new Error('Signed out'); }
+    if (!res.ok && !(body.errors && body.errors.length)) throw new Error(body.error || 'Upload failed');
+    return body;
+  }
+
+  async function loadClientUploads() {
+    const tbody = $('#uploads-tbody');
+    if (!tbody) return;
+    const rows = await api('/uploads');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="table-loading">No submissions yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map((u) => `
+      <tr>
+        <td>${escapeHtml(UPLOAD_KIND[u.kind] || u.kind)}</td>
+        <td>${escapeHtml(u.filename || '')}</td>
+        <td>${escapeHtml(u.row_count)}</td>
+        <td>${escapeHtml(u.status || '')}</td>
+        <td>${escapeHtml(u.note || '—')}</td>
+        <td>${escapeHtml(u.created_at || '')}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function loadItemMaster() {
+    const tbody = $('#item-master-tbody');
+    if (!tbody) return;
+    const rows = await api('/item-master');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="table-loading">No SKUs yet. Download the template and submit it for approval.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map((r) => `
+      <tr>
+        <td><code>${escapeHtml(r.sku)}</code></td>
+        <td>${escapeHtml(r.description || '')}</td>
+        <td>${escapeHtml(r.batch_details || '—')}</td>
+        <td>${escapeHtml(r.serial_number || '—')}</td>
+        <td>${escapeHtml(r.remark_1 || '—')}</td>
+        <td>${escapeHtml(r.remark_2 || '—')}</td>
+      </tr>
+    `).join('');
+  }
+
+  $('#download-item-template')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    downloadAuthed('/item-master/template', 'item-master-template.xlsx');
+  });
+
+  $('#upload-item-master')?.addEventListener('click', async () => {
+    const file = $('#item-master-file')?.files[0];
+    const result = $('#item-upload-result');
+    if (!file) {
+      if (result) result.textContent = 'Choose an item master file first.';
+      return;
+    }
+    try {
+      const body = await postSpreadsheet('/item-master/upload', file);
+      const n = (body.upload && body.upload.row_count) || 0;
+      const lead = body.queued
+        ? `Submitted ${n} SKU row(s) for approval. They appear here after an administrator approves them.`
+        : (body.error || 'Nothing was submitted.');
+      if (result) result.textContent = lead;
+      const errs = body.errors || [];
+      if (errs.length && result) result.textContent += ' ' + errs.map((r) => `Row ${r.row}: ${r.error}`).join(' ');
+      await loadItemMaster();
+    } catch (err) {
+      if (result) result.textContent = err.message;
+    }
+  });
+
+  $('#download-inbound-template')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    downloadAuthed('/inbound/template', 'inbound-template.xlsx');
+  });
+
+  $('#upload-inbound')?.addEventListener('click', async () => {
+    const file = $('#inbound-file')?.files[0];
+    const result = $('#inbound-upload-result');
+    if (!file) {
+      if (result) result.textContent = 'Choose an inbound file first.';
+      return;
+    }
+    try {
+      const body = await postSpreadsheet('/inbound/upload', file);
+      const n = (body.upload && body.upload.row_count) || 0;
+      const lead = body.queued
+        ? `Submitted ${n} inbound row(s) for approval. They appear in this list after an administrator approves them.`
+        : (body.error || 'Nothing was submitted.');
+      if (result) result.textContent = lead;
+      const errs = body.errors || [];
+      if (errs.length && result) result.textContent += ' ' + errs.map((r) => `Row ${r.row}: ${r.error}`).join(' ');
+      if (typeof loadReports === 'function') loadReports();
+    } catch (err) {
+      if (result) result.textContent = err.message;
+    }
+  });
 
   // ---------- Export CSV ----------
 
