@@ -93,15 +93,15 @@
           <input type="search" id="order-search" placeholder="Search ref, customer, SKU…" />
           <select id="status-filter">
             <option value="">All statuses</option>
-            <option value="dropped">Dropped</option>
             <option value="processing">Processing</option>
-            <option value="completed">Completed</option>
-            <option value="issue">Issue</option>
+            <option value="ready_to_ship">Ready to ship</option>
+            <option value="shipped">Shipped</option>
           </select>
           <a class="btn btn-ghost-sm" id="export-orders-btn" href="#" download>Export CSV</a>
         </div>
       </div>
       <p class="map-hint" id="orders-filter-hint" hidden>Filtered to <strong><span class="filter-country"></span></strong> (from the map) — <button id="orders-clear-filter">Clear filter</button></p>
+      <p class="map-hint" id="orders-upload-hint" hidden>Showing the orders from your upload — <button type="button" id="orders-clear-upload">Show all orders</button></p>
       <div class="table-wrap">
         <table class="orders-table">
           <thead>
@@ -125,6 +125,18 @@
       <div class="pagination" id="pagination"></div>
     </section>
   </main>
+  </div>
+</div>
+
+<!-- ---------- Order detail ---------- -->
+<div class="modal-overlay" id="order-detail-overlay" hidden>
+  <div class="modal-card">
+    <h3 id="order-detail-ref">Order</h3>
+    <p class="modal-sub" id="order-detail-status"></p>
+    <dl class="order-detail-list" id="order-detail-body"></dl>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost-sm" id="close-order-detail">Close</button>
+    </div>
   </div>
 </div>
 

@@ -16,6 +16,8 @@
   let token = localStorage.getItem('nt-client-token') || '';
   let clientName = localStorage.getItem('nt-client-name') || '';
   let selectedCountry = new URLSearchParams(window.location.search).get('country') || '';
+  let uploadIds = new URLSearchParams(window.location.search).get('ids') || '';
+  let orderById = new Map();
   let currentPage = 1;
   let inventoryLocations = [];
   let selectedInvLocation = null;
@@ -26,6 +28,31 @@
 
   function authHeaders() {
     return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  }
+
+  function sgDay(d = new Date()) {
+    return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+  }
+
+  function formatEventTime(value) {
+    const s = String(value || '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/);
+    if (m) {
+      const dt = new Date(`${m[1]}T${m[2]}Z`);
+      if (!Number.isNaN(dt.getTime())) {
+        return dt.toLocaleString('en-SG', { timeZone: 'Asia/Singapore', hour12: false });
+      }
+    }
+    return s;
+  }
+
+  function syncOrdersQuery() {
+    const params = new URLSearchParams();
+    if (selectedCountry) params.set('country', selectedCountry);
+    if (uploadIds) params.set('ids', uploadIds);
+    const qs = params.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
   }
 
   // ---------- Theme (always light — no dark mode) ----------
@@ -102,10 +129,9 @@
     ]);
     if ($('#stat-total')) {
       $('#stat-total').textContent = data.counts.total.toLocaleString();
-      $('#stat-dropped').textContent = data.counts.dropped.toLocaleString();
       $('#stat-processing').textContent = data.counts.processing.toLocaleString();
-      $('#stat-completed').textContent = data.counts.completed.toLocaleString();
-      $('#stat-issue').textContent = data.counts.issue.toLocaleString();
+      $('#stat-ready').textContent = data.counts.ready_to_ship.toLocaleString();
+      $('#stat-shipped').textContent = data.counts.shipped.toLocaleString();
       renderMonthlyBars(data.months);
     }
     if ($('#chart-columns')) {
@@ -149,13 +175,13 @@
     $('#chart-kpis').innerHTML = [
       ['Orders on this day', data.ordersInDay],
       ['Orders in period', data.ordersInPeriod],
-      ['Deliveries completed', data.deliveriesCompleted],
+      ['Shipped', data.deliveriesCompleted],
       ['Late deliveries', data.lateDeliveries],
     ].map(([label, n]) => `<div class="chart-kpi"><span>${escapeHtml(label)}</span><strong>${Number(n).toLocaleString()}</strong></div>`).join('');
     wrap.innerHTML = [
       chartBlock('Orders on this day', data.ordersInDay, data.ordersOnDay, 'No orders on this day.'),
       chartBlock('Orders over the period', data.ordersInPeriod, data.ordersByDay, 'No orders in this period.'),
-      chartBlock('Deliveries completed', data.deliveriesCompleted, data.deliveriesByDay, 'No deliveries completed in this period.'),
+      chartBlock('Shipped', data.deliveriesCompleted, data.deliveriesByDay, 'No shipped orders in this period.'),
       chartBlock('Late deliveries', data.lateDeliveries, data.lateByDay, 'No late deliveries in this period.'),
     ].join('');
   }
@@ -197,12 +223,7 @@
   }
 
   function statusOf(c) {
-    // Rate-based, not raw-count-based: a handful of exceptions across three
-    // months of hundreds of orders per market is normal operations, not a
-    // market in trouble — only flag markets meaningfully above that baseline.
-    const issueRate = c.total > 0 ? c.issue / c.total : 0;
-    if (issueRate > 0.035) return 'red';
-    if (c.processing > 0 || c.dropped > 0) return 'amber';
+    if ((c.processing || 0) > 0 || (c.ready_to_ship || 0) > 0) return 'amber';
     return 'green';
   }
 
@@ -281,10 +302,9 @@
       const marker = L.marker([c.lat, c.lng], { icon: markerIcon(status, selected, size) });
       marker.bindPopup(`
         <span class="nt-popup-title">${c.countryName}</span>
-        <div class="nt-popup-row"><span>Dropped</span><span>${c.dropped}</span></div>
         <div class="nt-popup-row"><span>Processing</span><span>${c.processing}</span></div>
-        <div class="nt-popup-row"><span>Completed</span><span>${c.completed}</span></div>
-        <div class="nt-popup-row"><span>Issues</span><span>${c.issue}</span></div>
+        <div class="nt-popup-row"><span>Ready to ship</span><span>${c.ready_to_ship}</span></div>
+        <div class="nt-popup-row"><span>Shipped</span><span>${c.shipped}</span></div>
       `, { className: 'nt-popup' });
       marker.on('click', () => selectMarket(c.country));
       if (selected) selectedMarker = marker;
@@ -374,7 +394,13 @@
   $('#orders-clear-filter')?.addEventListener('click', () => {
     selectedCountry = '';
     currentPage = 1;
-    history.replaceState(null, '', window.location.pathname);
+    syncOrdersQuery();
+    loadOrders();
+  });
+  $('#orders-clear-upload')?.addEventListener('click', () => {
+    uploadIds = '';
+    currentPage = 1;
+    syncOrdersQuery();
     loadOrders();
   });
 
@@ -392,6 +418,8 @@
         filterHint.hidden = true;
       }
     }
+    const uploadHint = $('#orders-upload-hint');
+    if (uploadHint) uploadHint.hidden = !uploadIds;
 
     const params = new URLSearchParams({ page: currentPage, pageSize: 25 });
     const search = $('#order-search').value.trim();
@@ -399,32 +427,80 @@
     if (search) params.set('search', search);
     if (status) params.set('status', status);
     if (selectedCountry) params.set('country', selectedCountry);
+    if (uploadIds) params.set('ids', uploadIds);
 
     const data = await api(`/orders?${params}`);
+    orderById = new Map((data.rows || []).map((o) => [o.id, o]));
 
     if (!data.rows.length) {
       tbody.innerHTML = '<tr><td colspan="9" class="table-loading">No orders match this filter.</td></tr>';
     } else {
       tbody.innerHTML = data.rows.map((o) => `
-        <tr>
-          <td><code>${o.order_ref}</code></td>
-          <td>${o.country_name}</td>
+        <tr data-id="${o.id}">
+          <td><code>${escapeHtml(o.order_ref)}</code></td>
+          <td>${escapeHtml(o.country_name)}</td>
           <td>${escapeHtml(o.customer_name)}</td>
-          <td>${escapeHtml(o.product_name)} <span style="color:var(--fg-muted)">(${o.sku})</span></td>
+          <td>${escapeHtml(o.product_name)} <span style="color:var(--fg-muted)">(${escapeHtml(o.sku)})</span></td>
           <td>${o.qty}</td>
-          <td><span class="status-pill ${o.status}">${o.status}</span>${o.issue_note ? ` <span title="${escapeHtml(o.issue_note)}" style="cursor:help;color:var(--fg-muted)">ⓘ</span>` : ''}</td>
-          <td>${o.due_date || '—'}</td>
-          <td>${o.order_date}</td>
-          <td><button class="track-btn" data-track="${o.id}" data-ref="${o.order_ref}">Track</button></td>
+          <td><span class="status-pill ${escapeHtml(o.flow_status || '')}">${escapeHtml(o.status_label || o.status)}</span>${o.issue_note ? ` <span title="${escapeHtml(o.issue_note)}" style="cursor:help;color:var(--fg-muted)">ⓘ</span>` : ''}</td>
+          <td>${escapeHtml(o.due_date || '—')}</td>
+          <td>${escapeHtml(o.order_date)}</td>
+          <td><button class="track-btn" data-track="${o.id}" data-ref="${escapeHtml(o.order_ref)}">Track</button></td>
         </tr>
       `).join('');
+      tbody.querySelectorAll('tr[data-id]').forEach((row) => {
+        row.addEventListener('click', () => openOrderDetail(row.dataset.id));
+      });
       tbody.querySelectorAll('button[data-track]').forEach((btn) => {
-        btn.addEventListener('click', () => openTracking(btn.dataset.track, btn.dataset.ref));
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openTracking(btn.dataset.track, btn.dataset.ref);
+        });
       });
     }
 
     renderPagination(data.total, data.page, data.pageSize);
   }
+
+  function openOrderDetail(id) {
+    const o = orderById.get(id);
+    const overlay = $('#order-detail-overlay');
+    if (!o || !overlay) return;
+    $('#order-detail-ref').textContent = o.order_ref || 'Order';
+    $('#order-detail-status').textContent = o.status_label || '';
+    const body = $('#order-detail-body');
+    body.replaceChildren();
+    const rows = [
+      ['Customer', o.customer_name],
+      ['Market', o.country_name],
+      ['SKU', o.sku],
+      ['Product', o.product_name],
+      ['Quantity', o.qty],
+      ['Order date', o.order_date],
+      ['Due', o.due_date || '—'],
+      ['Status', o.status_label],
+      ['Carrier', o.carrier || '—'],
+      ['Waybill', o.waybill_number || '—'],
+    ];
+    if (o.issue_note) rows.push(['Note', o.issue_note]);
+    for (const [label, value] of rows) {
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = value == null || value === '' ? '—' : String(value);
+      body.appendChild(dt);
+      body.appendChild(dd);
+    }
+    overlay.hidden = false;
+  }
+
+  $('#close-order-detail')?.addEventListener('click', () => {
+    const overlay = $('#order-detail-overlay');
+    if (overlay) overlay.hidden = true;
+  });
+  $('#order-detail-overlay')?.addEventListener('click', (e) => {
+    if (e.target.id === 'order-detail-overlay') e.target.hidden = true;
+  });
 
   function renderPagination(total, page, pageSize) {
     const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -525,9 +601,9 @@
 
   $('#open-drop-order')?.addEventListener('click', () => {
     $('#drop-order-error').hidden = true;
-    $('#order-date').value = new Date().toISOString().slice(0, 10);
+    $('#order-date').value = sgDay();
     $('#drop-order-form').reset();
-    $('#order-date').value = new Date().toISOString().slice(0, 10);
+    $('#order-date').value = sgDay();
     dropOverlay.hidden = false;
   });
   $('#cancel-drop-order')?.addEventListener('click', () => { dropOverlay.hidden = true; });
@@ -578,12 +654,12 @@
         : 'No carrier assigned yet — order has not shipped.';
 
       const timelineHtml = `<ul class="tracking-timeline">${data.timeline.map((ev) => `
-        <li class="${ev.status === 'issue' ? 'issue' : 'done'}">
+        <li class="${ev.flow_status === 'shipped' ? 'done' : ''}">
           <span class="tracking-dot"></span>
           <div>
-            <div class="tracking-event-status">${ev.status}</div>
+            <div class="tracking-event-status">${escapeHtml(ev.status_label || ev.status)}</div>
             ${ev.note ? `<div class="tracking-event-note">${escapeHtml(ev.note)}</div>` : ''}
-            <div class="tracking-event-time">${ev.created_at}</div>
+            <div class="tracking-event-time">${escapeHtml(formatEventTime(ev.created_at))}</div>
           </div>
         </li>
       `).join('')}</ul>`;
@@ -679,26 +755,46 @@
       });
       const body = await res.json().catch(() => ({}));
       if (res.status === 401) { doLogout(); return; }
-      const lines = (body.errors || []).map((row) => `Row ${row.row}: ${row.error}`);
+      const lines = body.errors || [];
+      if (!res.ok && !lines.length) {
+        errEl.textContent = body.error || 'Upload failed';
+        errEl.hidden = false;
+        return;
+      }
       if (!res.ok) {
         errEl.textContent = body.error || 'Upload failed';
         errEl.hidden = false;
-        if (lines.length) {
-          summaryEl.hidden = false;
-          summaryEl.textContent = lines.join('\n');
-        }
-        return;
       }
-      summaryEl.hidden = false;
-      summaryEl.textContent = `Imported ${body.created} order(s).` + (lines.length ? `\n${lines.join('\n')}` : '');
+      fillUploadSummary(summaryEl, body.created || 0, lines, body.orders);
       loadDashboard();
       loadOrders();
-      if (!lines.length) setTimeout(() => { uploadOverlay.hidden = true; }, 1200);
     } catch (err) {
       errEl.textContent = err.message;
       errEl.hidden = false;
     }
   });
+
+  function fillUploadSummary(summaryEl, created, errors, orders) {
+    summaryEl.replaceChildren();
+    const lead = document.createElement('span');
+    lead.textContent = `Imported ${created} order(s).`;
+    summaryEl.appendChild(lead);
+    for (const row of errors || []) {
+      summaryEl.appendChild(document.createElement('br'));
+      const line = document.createElement('span');
+      line.textContent = `Row ${row.row}: ${row.error}`;
+      summaryEl.appendChild(line);
+    }
+    const ids = (orders || []).map((o) => o.id).filter(Boolean);
+    if (ids.length) {
+      summaryEl.appendChild(document.createElement('br'));
+      const a = document.createElement('a');
+      a.href = `orders.html?ids=${encodeURIComponent(ids.join(','))}`;
+      a.textContent = 'Open these orders';
+      summaryEl.appendChild(a);
+    }
+    summaryEl.hidden = false;
+  }
 
   // ---------- Export CSV ----------
 
@@ -710,6 +806,7 @@
     if (search) params.set('search', search);
     if (status) params.set('status', status);
     if (selectedCountry) params.set('country', selectedCountry);
+    if (uploadIds) params.set('ids', uploadIds);
 
     const res = await fetch(`${API}/orders/export?${params}`, { headers: authHeaders() });
     if (!res.ok) return;
@@ -717,7 +814,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `orders-${sgDay()}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -779,7 +876,7 @@
         <div class="billing-stat"><span>Orders this month</span><strong>${m.orders.toLocaleString()}</strong></div>
         <div class="billing-stat"><span>Items ordered (qty)</span><strong>${m.qty.toLocaleString()}</strong></div>
         <div class="billing-stat"><span>Avg items / order</span><strong>${m.avgItemsPerOrder.toFixed(2)}</strong></div>
-        <div class="billing-stat"><span>Despatched (non-dropped)</span><strong>${b.despatched.toLocaleString()}</strong></div>
+        <div class="billing-stat"><span>Shipped</span><strong>${b.despatched.toLocaleString()}</strong></div>
       </div>
 
       <div class="billing-detail-tables">
@@ -798,7 +895,7 @@
             </tr>
             <tr>
               <td>Domestic delivery — standard</td>
-              <td>${b.despatched.toLocaleString()} despatched × ${fmtUsd(b.deliveryRate)}</td>
+              <td>${b.despatched.toLocaleString()} shipped × ${fmtUsd(b.deliveryRate)}</td>
               <td>${fmtUsd(b.deliveryFee)}</td>
             </tr>
           </tbody>
@@ -917,28 +1014,28 @@
     const marketTbody = $('#reports-market-tbody');
     const inboundTbody = $('#reports-inbound-tbody');
     if (!marketTbody || !inboundTbody) return;
-    $('#reports-generated-at').textContent = `Generated ${new Date().toLocaleString()}`;
+    $('#reports-generated-at').textContent = `Generated ${new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', hour12: false })}`;
 
     try {
       const [dashboard, inbound] = await Promise.all([api('/dashboard'), api('/inbound')]);
       const markets = dashboard.countries;
 
       $('#reports-stat-outbound').textContent = dashboard.counts.total.toLocaleString();
-      $('#reports-stat-delivered').textContent = dashboard.counts.completed.toLocaleString();
-      $('#reports-stat-issues').textContent = dashboard.counts.issue.toLocaleString();
+      $('#reports-stat-processing').textContent = dashboard.counts.processing.toLocaleString();
+      $('#reports-stat-ready').textContent = dashboard.counts.ready_to_ship.toLocaleString();
+      $('#reports-stat-shipped').textContent = dashboard.counts.shipped.toLocaleString();
       $('#reports-stat-inbound').textContent = inbound.length.toLocaleString();
       $('#reports-stat-delayed').textContent = inbound.filter((s) => s.status === 'delayed').length.toLocaleString();
 
       marketTbody.innerHTML = markets.length ? markets.map((m) => `
         <tr>
           <td>${escapeHtml(m.countryName)}</td>
-          <td>${m.dropped}</td>
           <td>${m.processing}</td>
-          <td>${m.completed}</td>
-          <td>${m.issue}</td>
+          <td>${m.ready_to_ship}</td>
+          <td>${m.shipped}</td>
           <td>${m.total}</td>
         </tr>
-      `).join('') : '<tr><td colspan="6" class="table-loading">No orders yet.</td></tr>';
+      `).join('') : '<tr><td colspan="5" class="table-loading">No orders yet.</td></tr>';
 
       inboundTbody.innerHTML = inbound.length ? inbound.map((s) => `
         <tr>
@@ -961,7 +1058,7 @@
         btn.addEventListener('click', () => openShipmentTracking(btn.dataset.trackShipment, btn.dataset.ref));
       });
     } catch (err) {
-      marketTbody.innerHTML = `<tr><td colspan="6" class="table-loading">${escapeHtml(err.message)}</td></tr>`;
+      marketTbody.innerHTML = `<tr><td colspan="5" class="table-loading">${escapeHtml(err.message)}</td></tr>`;
       inboundTbody.innerHTML = `<tr><td colspan="12" class="table-loading">${escapeHtml(err.message)}</td></tr>`;
     }
   }
@@ -1037,7 +1134,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `report-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `report-${sgDay()}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();

@@ -323,6 +323,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .stat-processing .stat-dot { background: var(--amber); }
 .stat-completed .stat-dot { background: var(--green); }
 .stat-issue .stat-dot { background: var(--red); }
+.stat-ready .stat-dot { background: var(--amber); }
+.stat-shipped .stat-dot { background: var(--green); }
 
 .stat-label { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-muted); }
 .stat-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 25px; font-weight: 600; }
@@ -514,6 +516,8 @@ table.orders-table tbody tr:hover { background: var(--bg-alt); }
 .status-pill.processing { background: var(--amber-tint); color: var(--amber); }
 .status-pill.completed { background: var(--green-tint); color: var(--green); }
 .status-pill.issue { background: var(--red-tint); color: var(--red); }
+.status-pill.ready_to_ship { background: var(--accent-tint); color: var(--accent); }
+.status-pill.shipped { background: var(--green-tint); color: var(--green); }
 
 .table-loading { text-align: center; padding: 30px; color: var(--fg-muted); }
 
