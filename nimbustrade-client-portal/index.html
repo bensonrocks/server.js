@@ -114,8 +114,14 @@
         <span class="stat-label">Shipped</span>
         <span class="stat-value" id="stat-shipped">—</span>
       </div>
+      <div class="stat-tile stat-waiting">
+        <span class="stat-dot"></span>
+        <span class="stat-label">Waiting for approval</span>
+        <span class="stat-value" id="stat-waiting">—</span>
+      </div>
     </section>
 
+    <p class="today-note" id="waiting-note" hidden></p>
     <p class="today-note" id="all-time-note"></p>
 
     <section class="panel" id="panel-today">
@@ -211,7 +217,7 @@
   <div class="modal-card modal-card-wide">
     <h3>Upload orders</h3>
     <p class="modal-sub">
-      Download the BWL order sheet, one product line per row, and upload it here.
+      Product rows that share an order number become one order.
       An administrator approves the file before those orders appear.
       <a href="#" id="download-bwl-template">Download BWL template</a>
       · <a href="#" id="download-order-template">Download generic template</a>

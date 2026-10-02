@@ -308,6 +308,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .stat-tile {
   flex: 1;
+  min-width: 0;
   border-right: 1px solid var(--border);
   padding: 14px 18px;
   display: flex;
@@ -324,6 +325,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .stat-issue .stat-dot { background: var(--red); }
 .stat-ready .stat-dot { background: var(--amber); }
 .stat-shipped .stat-dot { background: var(--green); }
+.stat-waiting .stat-dot { background: var(--grey); }
+.line-count { color: var(--fg-muted); font-size: 12px; white-space: nowrap; }
 
 .stat-label { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-muted); }
 .stat-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 25px; font-weight: 600; }
