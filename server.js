@@ -38,7 +38,7 @@ const ntVendorAuth = require('./lib/nimbustrade-portal/vendor-auth');
 const ntStaffAuth  = require('./lib/nimbustrade-portal/staff-auth');
 const ntStore      = require('./lib/nimbustrade-portal/store');
 const ntTracking   = require('./lib/nimbustrade-portal/tracking');
-const { seedBWLDemo, seedPortalDemo } = require('./lib/nimbustrade-portal/seed');
+const { seedBWLDemo, seedPortalDemo, ensureAdminClient } = require('./lib/nimbustrade-portal/seed');
 const ntTemplate = require('./lib/nimbustrade-portal/order-template');
 const { seedBWLRateCard, computeLiveIndicative } = require('./lib/nimbustrade-portal/rate-card');
 
@@ -1678,6 +1678,12 @@ async function autoSyncAll() {
     }
   } catch (e) {
     console.warn('  NimbusTrade Client Access seed skipped:', e.message);
+  }
+  try {
+    const admin = ensureAdminClient();
+    if (admin.created) console.log('  NimbusTrade Client Access: created admin client');
+  } catch (e) {
+    console.warn('  NimbusTrade Client Access admin client skipped:', e.message);
   }
   ntStaffAuth.seedDefaultStaff();
 })();

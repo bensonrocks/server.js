@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS nt_sessions (
   user_id    TEXT NOT NULL,
   client_id  TEXT NOT NULL,
   username   TEXT NOT NULL,
-  expires_at INTEGER NOT NULL
+  expires_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS nt_locations (
@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS nt_vendor_sessions (
   token      TEXT PRIMARY KEY,
   vendor_id  TEXT NOT NULL,
   username   TEXT NOT NULL,
-  expires_at INTEGER NOT NULL
+  expires_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS nt_staff_users (
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS nt_staff_sessions (
   token      TEXT PRIMARY KEY,
   staff_id   TEXT NOT NULL,
   username   TEXT NOT NULL,
-  expires_at INTEGER NOT NULL
+  expires_at BIGINT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_nt_orders_client ON nt_orders(client_id);
