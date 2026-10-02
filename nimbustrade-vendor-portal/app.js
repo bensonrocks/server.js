@@ -70,10 +70,10 @@
 
   async function loadDashboard() {
     const counts = await api('/dashboard');
-    $('#stat-dropped').textContent = counts.dropped.toLocaleString();
+    $('#stat-total').textContent = counts.total.toLocaleString();
     $('#stat-processing').textContent = counts.processing.toLocaleString();
-    $('#stat-completed').textContent = counts.completed.toLocaleString();
-    $('#stat-issue').textContent = counts.issue.toLocaleString();
+    $('#stat-ready').textContent = counts.ready_to_ship.toLocaleString();
+    $('#stat-shipped').textContent = counts.shipped.toLocaleString();
   }
 
   let searchDebounce;
@@ -86,8 +86,6 @@
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
-
-  const STATUS_OPTIONS = ['dropped', 'processing', 'completed', 'issue'];
 
   async function loadOrders() {
     const tbody = $('#orders-tbody');
@@ -114,11 +112,9 @@
           <td>${o.order_date}</td>
           <td>
             <div class="status-update-cell">
-              <select class="status-select">
-                ${STATUS_OPTIONS.map((s) => `<option value="${s}" ${s === o.status ? 'selected' : ''}>${s}</option>`).join('')}
-              </select>
-              <input type="text" class="issue-note-input" placeholder="Issue note (optional)" value="${escapeHtml(o.issue_note || '')}" />
-              <button class="save-status-btn">Update</button>
+              <span class="status-pill ${escapeHtml(o.flow_status || '')}">${escapeHtml(o.status_label || o.status)}</span>
+              ${o.next_status ? `<input type="text" class="issue-note-input" placeholder="Note (optional)" />
+              <button type="button" class="advance-order-btn" data-next="${escapeHtml(o.next_status)}">Mark ${escapeHtml(String(o.next_label || '').toLowerCase())}</button>` : ''}
             </div>
           </td>
         </tr>
@@ -127,18 +123,21 @@
 
     tbody.querySelectorAll('tr[data-id]').forEach((row) => {
       const id = row.dataset.id;
-      const btn = row.querySelector('.save-status-btn');
+      const btn = row.querySelector('.advance-order-btn');
+      if (!btn) return;
       btn.addEventListener('click', async () => {
-        const status = row.querySelector('.status-select').value;
-        const issueNote = row.querySelector('.issue-note-input').value.trim();
-        btn.textContent = '…';
+        const status = btn.dataset.next;
+        const noteEl = row.querySelector('.issue-note-input');
+        const issueNote = noteEl ? noteEl.value.trim() : '';
+        btn.disabled = true;
         try {
-          await api(`/orders/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, issueNote }) });
-          btn.textContent = 'Update';
+          const body = { status };
+          if (issueNote) body.issueNote = issueNote;
+          await api(`/orders/${id}/status`, { method: 'PATCH', body: JSON.stringify(body) });
           loadDashboard();
           loadOrders();
         } catch (e) {
-          btn.textContent = 'Update';
+          btn.disabled = false;
           alert(e.message);
         }
       });

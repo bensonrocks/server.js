@@ -1173,6 +1173,10 @@ app.post('/client-access/api/logout', withNTAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+function ntSgDay() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+}
+
 app.get('/client-access/api/dashboard', withNTAuth, (req, res) => {
   res.json({
     counts: ntStore.getDashboardCounts(req.ntClientId),
@@ -1182,11 +1186,12 @@ app.get('/client-access/api/dashboard', withNTAuth, (req, res) => {
 });
 
 app.get('/client-access/api/orders', withNTAuth, (req, res) => {
-  const { country, status, search, page, pageSize } = req.query;
+  const { country, status, search, page, pageSize, ids } = req.query;
   res.json(ntStore.listOrders(req.ntClientId, {
     country: country || undefined,
     status: status || undefined,
     search: search || undefined,
+    ids: ids || undefined,
     page: parseInt(page) || 1,
     pageSize: Math.min(parseInt(pageSize) || 25, 100),
   }));
@@ -1222,9 +1227,13 @@ app.post('/client-access/api/orders/upload', withNTAuth, (req, res) => {
       return res.status(400).json({ error: parsed.errors[0].error, created: 0, errors: parsed.errors });
     }
     if (parsed.rows.length > 1000) return res.status(400).json({ error: 'Max 1000 rows per upload' });
-    if (!parsed.rows.length) return res.json({ created: 0, errors: parsed.errors });
+    if (!parsed.rows.length) return res.json({ created: 0, orders: [], errors: parsed.errors });
     const inserted = ntStore.bulkCreateOrders(req.ntClientId, parsed.rows);
-    res.json({ created: inserted.created, errors: parsed.errors.concat(inserted.errors) });
+    res.json({
+      created: inserted.created,
+      orders: inserted.orders || [],
+      errors: parsed.errors.concat(inserted.errors),
+    });
   });
 });
 
@@ -1238,12 +1247,7 @@ app.get('/client-access/api/charts', withNTAuth, (req, res) => {
 });
 
 app.patch('/client-access/api/orders/:id/status', withNTAuth, (req, res) => {
-  const { status, issueNote } = req.body || {};
-  try {
-    res.json(ntStore.updateOrderStatus(req.ntClientId, req.params.id, status, issueNote));
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+  res.status(403).json({ error: 'Order status is updated by staff' });
 });
 
 app.post('/client-access/api/orders/import', withNTAuth, (req, res) => {
@@ -1258,9 +1262,10 @@ app.post('/client-access/api/orders/import', withNTAuth, (req, res) => {
 });
 
 app.get('/client-access/api/orders/export', withNTAuth, (req, res) => {
-  const { country, status, search } = req.query;
+  const { country, status, search, ids } = req.query;
   const { rows } = ntStore.listOrders(req.ntClientId, {
-    country: country || undefined, status: status || undefined, search: search || undefined, all: true,
+    country: country || undefined, status: status || undefined, search: search || undefined,
+    ids: ids || undefined, all: true,
   });
   const header = ['Order Ref', 'Market', 'Customer', 'SKU', 'Product', 'Qty', 'Status', 'Carrier', 'Waybill', 'Due', 'Order Date'];
   const csvEscape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -1268,11 +1273,11 @@ app.get('/client-access/api/orders/export', withNTAuth, (req, res) => {
   for (const r of rows) {
     lines.push([
       r.order_ref, r.country_name, r.customer_name, r.sku, r.product_name,
-      r.qty, r.status, r.carrier, r.waybill_number, r.due_date, r.order_date,
+      r.qty, r.status_label || r.status, r.carrier, r.waybill_number, r.due_date, r.order_date,
     ].map(csvEscape).join(','));
   }
   res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="orders-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="orders-${ntSgDay()}.csv"`);
   res.send(lines.join('\n'));
 });
 
@@ -1334,9 +1339,9 @@ app.get('/client-access/api/reports/export', withNTAuth, (req, res) => {
   const csvEscape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
   const lines = ['OUTBOUND ORDERS BY MARKET'];
-  lines.push(['Market', 'Dropped', 'Processing', 'Completed', 'Issues', 'Total'].map(csvEscape).join(','));
+  lines.push(['Market', 'Processing', 'Ready to ship', 'Shipped', 'Total'].map(csvEscape).join(','));
   for (const m of byMarket) {
-    lines.push([m.countryName, m.dropped, m.processing, m.completed, m.issue, m.total].map(csvEscape).join(','));
+    lines.push([m.countryName, m.processing, m.ready_to_ship, m.shipped, m.total].map(csvEscape).join(','));
   }
   lines.push('');
   lines.push('INBOUND TO DC');
@@ -1348,7 +1353,7 @@ app.get('/client-access/api/reports/export', withNTAuth, (req, res) => {
   }
 
   res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="report-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="report-${ntSgDay()}.csv"`);
   res.send(lines.join('\n'));
 });
 

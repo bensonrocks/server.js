@@ -100,15 +100,20 @@
           <span class="stat-label">Outbound Orders</span>
           <span class="stat-value" id="reports-stat-outbound">—</span>
         </div>
-        <div class="stat-tile stat-completed">
+        <div class="stat-tile stat-processing">
           <span class="stat-dot"></span>
-          <span class="stat-label">Delivered</span>
-          <span class="stat-value" id="reports-stat-delivered">—</span>
+          <span class="stat-label">Processing</span>
+          <span class="stat-value" id="reports-stat-processing">—</span>
         </div>
-        <div class="stat-tile stat-issue">
+        <div class="stat-tile stat-ready">
           <span class="stat-dot"></span>
-          <span class="stat-label">With Issues</span>
-          <span class="stat-value" id="reports-stat-issues">—</span>
+          <span class="stat-label">Ready to ship</span>
+          <span class="stat-value" id="reports-stat-ready">—</span>
+        </div>
+        <div class="stat-tile stat-shipped">
+          <span class="stat-dot"></span>
+          <span class="stat-label">Shipped</span>
+          <span class="stat-value" id="reports-stat-shipped">—</span>
         </div>
         <div class="stat-tile" data-status="">
           <span class="stat-label">Inbound to DC</span>
@@ -129,15 +134,14 @@
           <thead>
             <tr>
               <th>Market</th>
-              <th>Dropped</th>
               <th>Processing</th>
-              <th>Completed</th>
-              <th>Issues</th>
+              <th>Ready to ship</th>
+              <th>Shipped</th>
               <th>Total</th>
             </tr>
           </thead>
           <tbody id="reports-market-tbody">
-            <tr><td colspan="6" class="table-loading">Loading…</td></tr>
+            <tr><td colspan="5" class="table-loading">Loading…</td></tr>
           </tbody>
         </table>
       </div>

@@ -123,22 +123,21 @@
 
   async function loadOverview() {
     const data = await api('/dashboard');
-    $('#ov-dropped').textContent = data.counts.dropped.toLocaleString();
     $('#ov-processing').textContent = data.counts.processing.toLocaleString();
-    $('#ov-completed').textContent = data.counts.completed.toLocaleString();
-    $('#ov-issue').textContent = data.counts.issue.toLocaleString();
+    $('#ov-ready').textContent = data.counts.ready_to_ship.toLocaleString();
+    $('#ov-shipped').textContent = data.counts.shipped.toLocaleString();
+    $('#ov-total').textContent = data.counts.total.toLocaleString();
 
     const tbody = $('#by-client-table tbody');
     if (!data.byClient.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="table-loading">No orders yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="table-loading">No orders yet.</td></tr>';
     } else {
       tbody.innerHTML = data.byClient.map((c) => `
         <tr>
           <td>${escapeHtml(c.clientName)}</td>
-          <td>${c.dropped}</td>
           <td>${c.processing}</td>
-          <td>${c.completed}</td>
-          <td>${c.issue}</td>
+          <td>${c.ready_to_ship}</td>
+          <td>${c.shipped}</td>
           <td><strong>${c.total}</strong></td>
         </tr>
       `).join('');
@@ -197,13 +196,13 @@
     $('#chart-kpis').innerHTML = [
       ['Orders on this day', data.ordersInDay],
       ['Orders in period', data.ordersInPeriod],
-      ['Deliveries completed', data.deliveriesCompleted],
+      ['Shipped', data.deliveriesCompleted],
       ['Late deliveries', data.lateDeliveries],
     ].map(([label, n]) => `<div class="chart-kpi"><span>${escapeHtml(label)}</span><strong>${Number(n).toLocaleString()}</strong></div>`).join('');
     wrap.innerHTML = [
       chartBlock('Orders on this day', data.ordersInDay, data.ordersOnDay, 'No orders on this day.'),
       chartBlock('Orders over the period', data.ordersInPeriod, data.ordersByDay, 'No orders in this period.'),
-      chartBlock('Deliveries completed', data.deliveriesCompleted, data.deliveriesByDay, 'No deliveries completed in this period.'),
+      chartBlock('Shipped', data.deliveriesCompleted, data.deliveriesByDay, 'No shipped orders in this period.'),
       chartBlock('Late deliveries', data.lateDeliveries, data.lateByDay, 'No late deliveries in this period.'),
     ].join('');
   }
@@ -223,9 +222,7 @@
   let mapLoaded = false;
 
   function statusOf(c) {
-    const issueRate = c.total > 0 ? c.issue / c.total : 0;
-    if (issueRate > 0.035) return 'red';
-    if (c.processing > 0 || c.dropped > 0) return 'amber';
+    if ((c.processing || 0) > 0 || (c.ready_to_ship || 0) > 0) return 'amber';
     return 'green';
   }
 
@@ -290,10 +287,9 @@
       const marker = L.marker([loc.lat, loc.lng], { icon: markerIcon(status, size) });
       marker.bindPopup(`
         <span class="nt-popup-title">${escapeHtml(loc.clientName)} — ${escapeHtml(loc.countryName)}</span>
-        <div class="nt-popup-row"><span>Dropped</span><span>${loc.dropped}</span></div>
         <div class="nt-popup-row"><span>Processing</span><span>${loc.processing}</span></div>
-        <div class="nt-popup-row"><span>Completed</span><span>${loc.completed}</span></div>
-        <div class="nt-popup-row"><span>Issues</span><span>${loc.issue}</span></div>
+        <div class="nt-popup-row"><span>Ready to ship</span><span>${loc.ready_to_ship}</span></div>
+        <div class="nt-popup-row"><span>Shipped</span><span>${loc.shipped}</span></div>
       `, { className: 'nt-popup' });
       marker.on('click', () => {
         $$('.tab-btn').forEach((b) => b.classList.remove('active'));
@@ -511,7 +507,6 @@
 
   // ---------- Orders (master log) ----------
 
-  const STATUS_OPTIONS = ['dropped', 'processing', 'completed', 'issue'];
   let searchDebounce;
   $('#order-search').addEventListener('input', () => {
     clearTimeout(searchDebounce);
@@ -523,7 +518,7 @@
 
   async function loadOrders() {
     const tbody = $('#orders-tbody');
-    tbody.innerHTML = '<tr><td colspan="8" class="table-loading">Loading…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="table-loading">Loading…</td></tr>';
 
     const params = new URLSearchParams({ page: ordersPage, pageSize: 25 });
     const search = $('#order-search').value.trim();
@@ -536,7 +531,7 @@
     const data = await api(`/orders?${params}`);
 
     if (!data.rows.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="table-loading">No orders match this filter.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="table-loading">No orders match this filter.</td></tr>';
     } else {
       tbody.innerHTML = data.rows.map((o) => `
         <tr data-id="${o.id}">
@@ -564,11 +559,10 @@
           </td>
           <td>
             <div class="status-update-cell">
-              <select class="status-select">
-                ${STATUS_OPTIONS.map((s) => `<option value="${s}" ${s === o.status ? 'selected' : ''}>${s}</option>`).join('')}
-              </select>
+              <span class="status-pill ${escapeHtml(o.flow_status || '')}">${escapeHtml(o.status_label || o.status)}</span>
+              ${o.next_status ? `<button type="button" class="advance-order-btn" data-next="${escapeHtml(o.next_status)}">Mark ${escapeHtml(String(o.next_label || '').toLowerCase())}</button>` : ''}
               <input type="text" class="issue-note-input" placeholder="Note" value="${escapeHtml(o.issue_note || '')}" />
-              <button class="save-order-btn">Save</button>
+              <button type="button" class="save-order-btn">Save</button>
             </div>
           </td>
         </tr>
@@ -577,24 +571,39 @@
 
     tbody.querySelectorAll('tr[data-id]').forEach((row) => {
       const id = row.dataset.id;
-      row.querySelector('.save-order-btn').addEventListener('click', async () => {
-        const btn = row.querySelector('.save-order-btn');
-        const status = row.querySelector('.status-select').value;
-        const issueNote = row.querySelector('.issue-note-input').value.trim();
-        const vendorId = row.querySelector('.vendor-select').value;
-        const carrier = row.querySelector('.carrier-select').value;
-        const waybillNumber = row.querySelector('.waybill-input').value.trim();
-        btn.textContent = '…';
-        try {
-          await api(`/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status, issueNote, vendorId, carrier, waybillNumber }) });
-          btn.textContent = 'Saved';
-          setTimeout(() => { btn.textContent = 'Save'; }, 1200);
-          loadOverview();
-        } catch (e) {
-          btn.textContent = 'Save';
-          alert(e.message);
-        }
-      });
+      const saveBtn = row.querySelector('.save-order-btn');
+      if (saveBtn) {
+        saveBtn.addEventListener('click', async () => {
+          const issueNote = row.querySelector('.issue-note-input').value.trim();
+          const vendorId = row.querySelector('.vendor-select').value;
+          const carrier = row.querySelector('.carrier-select').value;
+          const waybillNumber = row.querySelector('.waybill-input').value.trim();
+          saveBtn.textContent = '…';
+          try {
+            await api(`/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ issueNote, vendorId, carrier, waybillNumber }) });
+            saveBtn.textContent = 'Saved';
+            setTimeout(() => { saveBtn.textContent = 'Save'; }, 1200);
+            loadOverview();
+          } catch (e) {
+            saveBtn.textContent = 'Save';
+            alert(e.message);
+          }
+        });
+      }
+      const adv = row.querySelector('.advance-order-btn');
+      if (adv) {
+        adv.addEventListener('click', async () => {
+          adv.disabled = true;
+          try {
+            await api(`/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: adv.dataset.next }) });
+            loadOverview();
+            loadOrders();
+          } catch (e) {
+            adv.disabled = false;
+            alert(e.message);
+          }
+        });
+      }
     });
 
     renderOrdersPagination(data.total, data.page, data.pageSize);
