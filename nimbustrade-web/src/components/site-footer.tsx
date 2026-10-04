@@ -35,12 +35,11 @@ export function SiteFooter() {
           <div>
             <BrandLogo variant="footer" />
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-ink-muted">
-              A Singapore-based 4PL control tower coordinating warehousing, fulfilment, and
-              cross-border freight for growing brands.
+              One desk for retail enablement in Singapore and Malaysia, and for ecommerce
+              fulfillment worldwide, including the USA.
             </p>
             <address className="mt-6 space-y-1 text-sm not-italic leading-relaxed text-ink-muted">
-              <p>62 Ubi Road 1, Oxley Bizhub 2</p>
-              <p>#06-01, Singapore 408734</p>
+              <p>Singapore</p>
               <p>
                 <a href="tel:+6588776106" className="hover:text-ink">
                   +65 8877 6106

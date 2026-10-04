@@ -1,18 +1,17 @@
-import type { Metadata } from "next";
 import { Industries } from "@/components/sections/industries";
+import { marketingMeta } from "@/lib/site-config";
 
-export const metadata: Metadata = {
-  title: "Industries We Fulfill For Across Southeast Asia",
+export const metadata = marketingMeta({
+  title: "Industries we fulfill",
   description:
-    "Fashion, beauty, food & beverage, health & wellness, consumer electronics, and books & media — fulfillment built around each category's real operational requirements.",
-  alternates: { canonical: "/industries" },
-};
+    "Fulfillment for fashion, beauty, food, health, electronics, and media. Enquire about category handling, including FDA and similar compliance, from the Singapore desk.",
+  path: "/industries",
+});
 
 export default function IndustriesPage() {
   return (
     <div className="pt-6">
-      <h1 className="sr-only">Industries We Fulfill For Across Southeast Asia</h1>
-      <Industries />
+      <Industries heading="h1" />
     </div>
   );
 }

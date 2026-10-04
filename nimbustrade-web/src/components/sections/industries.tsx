@@ -1,18 +1,20 @@
 import { INDUSTRIES } from "@/data/industries";
 import { Reveal } from "@/components/reveal";
 
-export function Industries() {
+export function Industries({ heading = "h2" }: { heading?: "h1" | "h2" }) {
+  const Title = heading;
   return (
     <section className="border-y border-border bg-paper-alt">
       <div className="mx-auto max-w-7xl px-6 py-24">
         <Reveal className="max-w-2xl">
           <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Industries</span>
-          <h2 className="mt-3 font-display text-4xl font-semibold text-ink">
+          <Title className="mt-3 font-display text-4xl font-semibold text-ink">
             Built around categories with real operational quirks.
-          </h2>
+          </Title>
           <p className="mt-4 text-lg leading-relaxed text-ink-muted">
-            Every category below needs something different from a warehouse — here&rsquo;s what
-            we account for.
+            Every category below needs something different from a warehouse. Regulated
+            goods — FDA and similar — are handled on the compliance line, not left as
+            a separate vendor.
           </p>
         </Reveal>
 

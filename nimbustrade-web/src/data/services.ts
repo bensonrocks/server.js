@@ -25,7 +25,7 @@ export const SERVICES: Service[] = [
     name: "Warehousing",
     icon: Warehouse,
     summary:
-      "Self-run storage in Singapore and Malaysia, extending through NimbusTrade-appointed partner warehouses elsewhere — every one held to the same fulfillment standards.",
+      "Self-run storage in Singapore and Malaysia for retail and ecommerce, with appointed partner warehouses further afield. The same desk holds the standard.",
     benefit: "Pay for the space you use, not a fixed lease.",
     points: ["Bin and pallet storage", "Cycle counting", "Temperature-aware zoning"],
   },
@@ -52,8 +52,8 @@ export const SERVICES: Service[] = [
     name: "Distribution",
     icon: Truck,
     summary:
-      "Last-mile and regional distribution coordinated with local carrier partners, from Southeast Asia through to our wider international partner network.",
-    benefit: "A single delivery SLA across every market you sell into.",
+      "Last-mile and onward distribution, coordinated worldwide — including the USA — with the carriers appointed for each lane.",
+    benefit: "One desk for the delivery, wherever the lane runs.",
     points: ["Route planning", "Proof of delivery capture", "Regional carrier panel"],
   },
   {
@@ -61,7 +61,7 @@ export const SERVICES: Service[] = [
     name: "E-commerce operations",
     icon: ShoppingCart,
     summary:
-      "Marketplace and storefront order operations, supported via file upload so nothing needs re-keying — API sync where a connector is already in place.",
+      "Retail and ecommerce enablement for brands selling in Singapore and Malaysia: marketplace and storefront orders, by file upload or an existing connector.",
     benefit: "Orders flow to the warehouse floor without manual re-keying.",
     points: ["Order intake", "Inventory allocation", "Channel-level reporting"],
   },
@@ -70,7 +70,7 @@ export const SERVICES: Service[] = [
     name: "Cross-border logistics",
     icon: Globe2,
     summary:
-      "Multi-market shipping lanes for brands expanding beyond a single country, with local-market handoffs and Merchant/Importer of Record support to clear trade formalities in the destination market.",
+      "Shipping lanes beyond one country, including into the USA, with local handoffs and Merchant or Importer of Record support where the destination asks for an entity of record.",
     benefit: "Expand into a new market without hiring a local logistics team first.",
     points: [
       "Multi-country lanes",
@@ -84,9 +84,10 @@ export const SERVICES: Service[] = [
     name: "Customs & compliance",
     icon: FileCheck2,
     summary:
-      "Documentation and customs coordination handled alongside your shipment, not as a separate vendor relationship — including Merchant of Record and Importer of Record support where a market requires a local entity of record to trade.",
-    benefit: "Fewer parties to chase when a shipment is held at the border.",
+      "Customs paperwork and regulatory compliance handled with the shipment, including FDA and similar requirements, plus Merchant or Importer of Record support where a destination asks for an entity of record.",
+    benefit: "The border paperwork stays with the same desk as the freight.",
     points: [
+      "FDA and similar regulatory compliance",
       "HS code classification support",
       "Permit coordination",
       "Duty and tax documentation",

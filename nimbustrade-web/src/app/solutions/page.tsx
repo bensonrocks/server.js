@@ -1,18 +1,17 @@
-import type { Metadata } from "next";
 import { SolutionsSelector } from "@/components/sections/solutions-selector";
+import { marketingMeta } from "@/lib/site-config";
 
-export const metadata: Metadata = {
-  title: "Fulfillment Solutions for B2B & B2C Brands in Southeast Asia",
+export const metadata = marketingMeta({
+  title: "Choose a fulfillment service",
   description:
-    "Find the right fulfillment solution for your brand — warehousing, fulfilment, freight, distribution, e-commerce operations, cross-border expansion, customs, or platform integration.",
-  alternates: { canonical: "/solutions" },
-};
+    "Tell NimbusTrade what you need solved. Retail enablement in Singapore and Malaysia, ecommerce fulfillment worldwide including the USA, and compliance including FDA, from one desk.",
+  path: "/solutions",
+});
 
 export default function SolutionsPage() {
   return (
     <div className="pt-6">
-      <h1 className="sr-only">Fulfillment Solutions for B2B & B2C Brands in Southeast Asia</h1>
-      <SolutionsSelector />
+      <SolutionsSelector heading="h1" />
     </div>
   );
 }

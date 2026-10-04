@@ -3,4 +3,4 @@ Allow: /
 Disallow: /privacy
 Disallow: /terms
 
-Sitemap: https://nimbustrade.co/sitemap.xml
+Sitemap: https://www.nimbustrade.co/sitemap.xml

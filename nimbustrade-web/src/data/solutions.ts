@@ -34,9 +34,9 @@ export const SOLUTIONS: Solution[] = [
   {
     slug: "distribution",
     name: "Distribution",
-    question: "I need goods delivered across the region.",
+    question: "I need goods delivered, including outside the region.",
     description:
-      "Regional and last-mile delivery coordinated across a panel of local carrier partners under one SLA.",
+      "Last-mile and onward delivery, worldwide including the USA, coordinated with the carriers appointed for each lane.",
     included: ["Route planning", "Proof of delivery", "Regional carrier panel", "Delivery reporting"],
   },
   {
@@ -44,7 +44,7 @@ export const SOLUTIONS: Solution[] = [
     name: "E-commerce operations",
     question: "I sell on marketplaces and my own storefront.",
     description:
-      "Order and inventory intake across your marketplaces and storefront, supported via file upload so nothing needs re-keying — API sync where a connector is already in place.",
+      "Retail and ecommerce enablement for brands selling in Singapore and Malaysia — order and inventory intake by file upload, or API sync where a connector is already in place.",
     included: ["Order intake", "Inventory allocation", "Channel reporting", "Peak-sale scaling"],
   },
   {
@@ -52,7 +52,7 @@ export const SOLUTIONS: Solution[] = [
     name: "Cross-border expansion",
     question: "I want to sell into a new country.",
     description:
-      "A staged way into a new market's logistics — local handoff partners, and Merchant/Importer of Record support, without hiring a local team first.",
+      "A staged way into a new lane, including the USA — local handoff partners and Merchant or Importer of Record support, without hiring a local team first.",
     included: [
       "Multi-country lanes",
       "Local handoffs",
@@ -65,8 +65,9 @@ export const SOLUTIONS: Solution[] = [
     name: "Customs & compliance",
     question: "I need help with border documentation.",
     description:
-      "Customs coordination handled alongside the shipment itself, including Merchant/Importer of Record where your destination market requires a local entity of record.",
+      "Customs and regulatory compliance handled with the shipment, including FDA and similar work, and Merchant or Importer of Record where the destination asks for an entity of record.",
     included: [
+      "FDA and similar regulatory compliance",
       "HS classification support",
       "Permit coordination",
       "Duty documentation",

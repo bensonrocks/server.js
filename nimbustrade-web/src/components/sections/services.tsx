@@ -8,11 +8,12 @@ export function Services() {
       <Reveal className="max-w-2xl">
         <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Services</span>
         <h2 className="mt-3 font-display text-4xl font-semibold text-ink">
-          Eight service lines, run as one operation.
+          One operation, from the shelf to the border.
         </h2>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">
-          Each service below can stand alone or plug into the others — most clients start with
-          one or two and add more as they need them.
+          Retail enablement in Singapore and Malaysia, ecommerce fulfillment worldwide
+          including the USA, and the compliance that travels with the goods. Start with
+          one line or hand the desk the lot.
         </p>
       </Reveal>
 
