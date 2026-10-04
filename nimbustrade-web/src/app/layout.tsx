@@ -3,7 +3,7 @@ import { Source_Serif_4, Source_Sans_3, Source_Code_Pro } from "next/font/google
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, SITE_KEYWORDS } from "@/lib/site-config";
+import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, HOME_TITLE } from "@/lib/site-config";
 import { OrganizationJsonLd } from "@/components/structured-data";
 
 const sourceSerif = Source_Serif_4({
@@ -27,16 +27,15 @@ const sourceCode = Source_Code_Pro({
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: `${SITE_NAME} — Ecommerce Fulfillment Across Southeast Asia`,
+    default: HOME_TITLE,
     template: `%s | ${SITE_NAME}`,
   },
   description: SITE_DESCRIPTION,
-  keywords: SITE_KEYWORDS,
   applicationName: SITE_NAME,
   authors: [{ name: SITE_NAME }],
   category: "logistics",
   alternates: {
-    canonical: "/",
+    canonical: `${SITE_URL}/`,
   },
   icons: {
     icon: "/favicon.png",
@@ -45,9 +44,9 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_SG",
-    url: SITE_URL,
+    url: `${SITE_URL}/`,
     siteName: SITE_NAME,
-    title: `${SITE_NAME} — Ecommerce Fulfillment Across Southeast Asia`,
+    title: HOME_TITLE,
     description: SITE_DESCRIPTION,
     images: [
       {
@@ -60,7 +59,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: `${SITE_NAME} — Ecommerce Fulfillment Across Southeast Asia`,
+    title: HOME_TITLE,
     description: SITE_DESCRIPTION,
     images: ["/og-image.png"],
   },

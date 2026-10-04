@@ -1,12 +1,12 @@
-import type { Metadata } from "next";
 import { QuoteForm } from "@/components/sections/quote-form";
+import { marketingMeta } from "@/lib/site-config";
 
-export const metadata: Metadata = {
-  title: "Get a Fulfillment Quote for Southeast Asia",
+export const metadata = marketingMeta({
+  title: "Get a fulfillment quote",
   description:
-    "Get a fulfillment quote from NimbusTrade Solutions in six short steps — warehousing, freight, distribution, or e-commerce operations across our self-run Singapore and Malaysia network and our wider international partner markets.",
-  alternates: { canonical: "/quote" },
-};
+    "Request a fulfillment quote from NimbusTrade. Six short steps covering storage, freight, and compliance including FDA, for Singapore, Malaysia, and worldwide lanes including the USA.",
+  path: "/quote",
+});
 
 export default function QuotePage() {
   return (
@@ -17,7 +17,13 @@ export default function QuotePage() {
           Tell us what you need moved or stored.
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">
-          Six short steps — most people finish in under two minutes.
+          Six short steps — most people finish in under two minutes. Ask about retail
+          enablement in Singapore and Malaysia, ecommerce fulfillment worldwide including
+          the USA, or compliance including FDA. Prefer email? Write to{" "}
+          <a href="mailto:info@nimbustrade.co" className="font-semibold text-ink hover:text-brand">
+            info@nimbustrade.co
+          </a>
+          .
         </p>
       </div>
       <QuoteForm />

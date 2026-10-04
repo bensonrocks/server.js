@@ -4,7 +4,7 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Mail, Phone, MapPin, Clock, MessageCircle, CheckCircle2 } from "lucide-react";
+import { Mail, Phone, Clock, MessageCircle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,9 +20,8 @@ const contactSchema = z.object({
 
 type ContactValues = z.infer<typeof contactSchema>;
 
-const OFFICE_ADDRESS = "62 Ubi Road 1, Oxley Bizhub 2, #06-01, Singapore 408734";
-
-export function ContactSection() {
+export function ContactSection({ heading = "h2" }: { heading?: "h1" | "h2" }) {
+  const Title = heading;
   const [submitted, setSubmitted] = React.useState(false);
   const {
     register,
@@ -43,10 +42,12 @@ export function ContactSection() {
     <section className="mx-auto max-w-7xl px-6 py-24">
       <div className="grid grid-cols-1 gap-12 lg:grid-cols-[1fr_1.1fr]">
         <Reveal>
-          <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Contact</span>
-          <h2 className="mt-3 font-display text-4xl font-bold text-ink">Talk to the desk.</h2>
+          <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Enquire</span>
+          <Title className="mt-3 font-display text-4xl font-bold text-ink">Talk to the desk.</Title>
           <p className="mt-4 max-w-md text-lg leading-relaxed text-ink-muted">
-            Send a message here, or reach us directly through any of the channels below.
+            Ask about retail enablement in Singapore and Malaysia, ecommerce fulfillment
+            worldwide including the USA, or compliance including FDA. Use the form, or
+            the channels beside it.
           </p>
 
           <div className="mt-8 space-y-4 text-sm">
@@ -65,22 +66,8 @@ export function ContactSection() {
               <MessageCircle className="h-5 w-5 text-brand" /> WhatsApp the desk
             </a>
             <div className="flex items-center gap-3 text-ink">
-              <MapPin className="h-5 w-5 shrink-0 text-brand" />
-              {OFFICE_ADDRESS}
+              <Clock className="h-5 w-5 text-brand" /> Singapore desk · Mon–Fri, 9:00am–6:00pm SGT
             </div>
-            <div className="flex items-center gap-3 text-ink">
-              <Clock className="h-5 w-5 text-brand" /> Mon–Fri, 9:00am–6:00pm SGT
-            </div>
-          </div>
-
-          <div className="mt-8 h-64 overflow-hidden rounded-lg border border-border">
-            <iframe
-              title="NimbusTrade Solutions office location"
-              src={`https://www.google.com/maps?q=${encodeURIComponent(OFFICE_ADDRESS)}&output=embed`}
-              className="h-full w-full border-0"
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-            />
           </div>
         </Reveal>
 

@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { SELF_RUN_MARKETS, PARTNER_MARKETS, formatMarketList } from "@/lib/site-config";
+import { SELF_RUN_MARKETS, formatMarketList } from "@/lib/site-config";
 
 const MANIFEST_FACTS = [
-  { label: "Origin desk", value: "Singapore" },
-  { label: "Self-run warehouses", value: formatMarketList(SELF_RUN_MARKETS) },
-  { label: "Appointed-partner network", value: `${PARTNER_MARKETS.length} markets` },
+  { label: "Retail enablement", value: formatMarketList(SELF_RUN_MARKETS) },
+  { label: "Ecommerce fulfillment", value: "Worldwide, including the USA" },
+  { label: "Compliance", value: "FDA and similar, handled here" },
   { label: "Shipment visibility", value: "Real-time, via IdealOne" },
 ];
 
@@ -16,21 +16,24 @@ export function Hero() {
       <div className="bg-brand-strong text-white">
         <div className="mx-auto flex max-w-7xl flex-col gap-2 px-6 py-3 font-mono text-[11px] uppercase tracking-[0.14em] sm:flex-row sm:items-center sm:justify-between">
           <p>Operating desk · Singapore</p>
-          <p className="text-white/70">62 Ubi Road 1 · #06-01 · 408734</p>
+          <a href="mailto:info@nimbustrade.co" className="text-white/80 hover:text-white">
+            Enquire · info@nimbustrade.co
+          </a>
         </div>
       </div>
       <div className="mx-auto grid max-w-7xl gap-x-12 gap-y-10 px-6 pb-14 pt-16 lg:grid-cols-[7fr_5fr] lg:pb-0 lg:pt-20">
         <div className="lg:pb-20">
           <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">
-            NimbusTrade Solutions — Singapore
+            NimbusTrade Solutions — one desk
           </p>
           <h1 className="mt-5 max-w-2xl font-display text-4xl font-semibold leading-[1.08] text-ink sm:text-5xl lg:text-display-xl">
-            The operating layer between your suppliers and your customers.
+            One desk for the whole fulfillment job.
           </h1>
           <p className="mt-6 max-w-xl text-body-lg leading-relaxed text-ink-muted">
-            We run storage, pick-and-pack, customs clearance, and cross-border
-            transport as one system — for B2B and B2C brands moving goods across
-            Southeast Asia and onward into international markets.
+            NimbusTrade is the one-stop for the job. Ecommerce and retail
+            enablement in Singapore and Malaysia. Ecommerce fulfillment worldwide,
+            including the USA. Storage, pick-and-pack, freight, and compliance —
+            including FDA and similar regulatory work — sit with the same people.
           </p>
           <div className="mt-9 flex flex-col gap-4 sm:flex-row sm:items-center">
             <Button asChild size="lg">
@@ -39,12 +42,19 @@ export function Hero() {
               </Link>
             </Button>
             <Link
-              href="/solutions"
+              href="/contact"
               className="inline-flex items-center gap-2 text-sm font-semibold text-ink underline decoration-border-strong underline-offset-4 transition-colors hover:text-brand hover:decoration-brand"
             >
-              Explore solutions
+              Send an enquiry
             </Link>
           </div>
+          <p className="mt-4 text-sm text-ink-muted">
+            Or write to{" "}
+            <a href="mailto:info@nimbustrade.co" className="font-semibold text-ink hover:text-brand">
+              info@nimbustrade.co
+            </a>
+            .
+          </p>
         </div>
 
         <div className="border-t border-border pb-14 pt-6 lg:border-l lg:border-t-0 lg:py-8 lg:pl-10">

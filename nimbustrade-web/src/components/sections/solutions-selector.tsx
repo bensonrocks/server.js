@@ -6,7 +6,8 @@ import { Check } from "lucide-react";
 import { SOLUTIONS } from "@/data/solutions";
 import { cn } from "@/lib/utils";
 
-export function SolutionsSelector() {
+export function SolutionsSelector({ heading = "h2" }: { heading?: "h1" | "h2" }) {
+  const Title = heading;
   const [activeSlug, setActiveSlug] = React.useState(SOLUTIONS[0].slug);
   const active = SOLUTIONS.find((s) => s.slug === activeSlug) ?? SOLUTIONS[0];
   const reduceMotion = useReducedMotion();
@@ -18,11 +19,13 @@ export function SolutionsSelector() {
           <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">
             Find your solution
           </span>
-          <h2 className="mt-3 font-display text-4xl font-semibold text-ink">
+          <Title className="mt-3 font-display text-4xl font-semibold text-ink">
             What are you trying to solve right now?
-          </h2>
+          </Title>
           <p className="mt-4 text-lg leading-relaxed text-ink-muted">
-            Pick the closest description of what you need — the panel below updates instantly.
+            Pick the closest description. Retail enablement covers Singapore and Malaysia;
+            ecommerce fulfillment runs worldwide, including the USA. The panel updates
+            as you choose.
           </p>
         </div>
 

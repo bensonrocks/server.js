@@ -1,14 +1,14 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { SERVICES } from "@/data/services";
 import { ServiceJsonLd } from "@/components/structured-data";
+import { marketingMeta } from "@/lib/site-config";
 
-export const metadata: Metadata = {
-  title: "Ecommerce Fulfillment Services in Singapore & Southeast Asia",
+export const metadata = marketingMeta({
+  title: "Fulfillment services, from storage to compliance",
   description:
-    "Warehousing, fulfilment, freight forwarding, distribution, e-commerce operations, cross-border logistics, customs, and technology integration — every service line NimbusTrade runs across Southeast Asia.",
-  alternates: { canonical: "/services" },
-};
+    "Enquire about storage, pick-and-pack, freight, and compliance including FDA. NimbusTrade runs retail enablement in Singapore and Malaysia, and ecommerce fulfillment worldwide including the USA.",
+  path: "/services",
+});
 
 export default function ServicesPage() {
   return (
@@ -20,8 +20,9 @@ export default function ServicesPage() {
           Every service line, in detail.
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">
-          Start with one, or combine several — each service below plugs into the same operating
-          desk and reporting.
+          One desk for the lot: retail enablement in Singapore and Malaysia, ecommerce
+          fulfillment worldwide including the USA, and compliance — including FDA and
+          similar — handled with the shipment. Start with one line, or hand over several.
         </p>
       </div>
 

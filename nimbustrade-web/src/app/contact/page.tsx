@@ -1,20 +1,19 @@
-import type { Metadata } from "next";
 import { PricingSignal } from "@/components/sections/pricing-signal";
 import { ContactSection } from "@/components/sections/contact-section";
+import { marketingMeta } from "@/lib/site-config";
 
-export const metadata: Metadata = {
-  title: "Contact Our Singapore Fulfillment Desk",
+export const metadata = marketingMeta({
+  title: "Enquire about fulfillment",
   description:
-    "Reach the NimbusTrade Solutions operating desk in Singapore — email, phone, WhatsApp, or a message form for ecommerce fulfillment enquiries across Southeast Asia.",
-  alternates: { canonical: "/contact" },
-};
+    "Send an enquiry to the NimbusTrade desk in Singapore. Ask about retail enablement in Singapore and Malaysia, worldwide fulfillment including the USA, or compliance including FDA.",
+  path: "/contact",
+});
 
 export default function ContactPage() {
   return (
     <>
-      <h1 className="sr-only">Contact Our Singapore Fulfillment Desk</h1>
+      <ContactSection heading="h1" />
       <PricingSignal />
-      <ContactSection />
     </>
   );
 }

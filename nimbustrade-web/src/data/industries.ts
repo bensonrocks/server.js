@@ -28,7 +28,8 @@ export const INDUSTRIES: Industry[] = [
   {
     name: "Health & wellness",
     icon: HeartPulse,
-    description: "Serialised and batch-controlled stock with documentation on every movement.",
+    description:
+      "Serialised and batch-controlled stock. Regulatory compliance, including FDA and similar, is handled with the shipment.",
   },
   {
     name: "Consumer electronics",
