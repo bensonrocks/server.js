@@ -16,8 +16,8 @@ export function Credibility() {
           fulfillment continues <span className="font-semibold">worldwide, including the USA</span>,
           through appointed partners, including stock held closer to the buyer on
           those lanes. Singapore–Malaysia movements and further cross-border
-          shipments stay on the same desk, with duties and tracking included.
-          You still deal with one desk.
+          shipments stay with the same people, with duties and tracking included.
+          You still deal with the merchants who run the work.
         </p>
         <ul className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink-muted">
           <li>Inbound QC on every shipment</li>

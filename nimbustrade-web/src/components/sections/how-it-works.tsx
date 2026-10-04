@@ -17,7 +17,7 @@ const STEPS = [
   {
     n: "04",
     title: "Go-live",
-    body: "Orders start flowing through the operating desk, with a defined ramp period to reach full volume.",
+    body: "Orders start flowing through the operation we run, with a defined ramp period to reach full volume.",
   },
   {
     n: "05",

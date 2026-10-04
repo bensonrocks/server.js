@@ -1,6 +1,7 @@
 import { marketingMeta, HOME_TITLE, SITE_DESCRIPTION } from "@/lib/site-config";
 import { IntroSplash } from "@/components/intro-splash";
 import { Hero } from "@/components/sections/hero";
+import { Explainer } from "@/components/sections/explainer";
 import { Credibility } from "@/components/sections/credibility";
 import { FacilityGallery } from "@/components/sections/facility-gallery";
 import { Services } from "@/components/sections/services";
@@ -23,6 +24,7 @@ export default function Home() {
     <>
       <IntroSplash />
       <Hero />
+      <Explainer />
       <Credibility />
       <FacilityGallery />
       <Services />

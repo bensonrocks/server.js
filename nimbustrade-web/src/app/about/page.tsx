@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/accordion";
 
 export const metadata = marketingMeta({
-  title: "A fulfillment desk run by merchants",
+  title: "A fulfillment company run by merchants",
   description:
     "NimbusTrade is run by merchants. Enquire about pick and pack, retail enablement in Singapore and Malaysia, worldwide fulfillment including the USA, and compliance including FDA.",
   path: "/about",
@@ -20,15 +20,15 @@ export const metadata = marketingMeta({
 const FAQS = [
   {
     q: "Who runs NimbusTrade?",
-    a: "Merchants. The people on the desk sell and fulfil as well as run the operation, so pick, pack, inventory, and cross-border questions are familiar work.",
+    a: "Merchants. The people who run NimbusTrade sell and fulfil as well as run the operation, so pick, pack, inventory, and cross-border questions are familiar work.",
   },
   {
     q: "Where is NimbusTrade based?",
-    a: "The operating desk is in Singapore. Warehouses we run ourselves are in Singapore and Malaysia, for ecommerce and retail enablement. Ecommerce fulfillment continues worldwide, including the USA, through appointed partners.",
+    a: "The company is based in Singapore. Warehouses we run ourselves are in Singapore and Malaysia, for ecommerce and retail enablement. Ecommerce fulfillment continues worldwide, including the USA, through appointed partners.",
   },
   {
     q: "Is NimbusTrade a one-stop, or do I pick one service?",
-    a: "Both. The desk can take storage, orders, freight, and compliance together. Most clients start with one or two lines and add the rest when they need them.",
+    a: "Both. We can take storage, orders, freight, and compliance together. Most clients start with one or two lines and add the rest when they need them.",
   },
   {
     q: "Can you handle regulatory compliance, including FDA?",
@@ -56,7 +56,7 @@ export default function AboutPage() {
         <Reveal className="max-w-2xl">
           <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">About</span>
           <h1 className="mt-3 font-display text-5xl font-semibold text-ink">
-            One desk, coordinating the operating layer.
+            Merchants, running the operation.
           </h1>
           <p className="mt-6 text-lg leading-relaxed text-ink-muted">
             NimbusTrade is run by merchants. We are merchants ourselves, so we know

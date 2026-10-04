@@ -11,11 +11,11 @@ test.describe("Intro splash", () => {
     await expect(page.getByRole("button", { name: "Skip" })).toBeVisible();
 
     await page.getByRole("button", { name: "Skip" }).click();
-    await expect(page.getByRole("heading", { name: /One desk for the whole fulfillment job/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /We run fulfillment, retail enablement, and logistics/ })).toBeVisible();
 
     await page.reload();
     await expect(page.getByRole("button", { name: "Skip" })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: /One desk for the whole fulfillment job/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /We run fulfillment, retail enablement, and logistics/ })).toBeVisible();
   });
 
   test("auto-dismisses on its own after a few seconds", async ({ page }) => {
@@ -29,7 +29,7 @@ test.describe("Intro splash", () => {
     const page = await context.newPage();
     await page.goto("/");
     await expect(page.getByRole("button", { name: "Skip" })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: /One desk for the whole fulfillment job/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /We run fulfillment, retail enablement, and logistics/ })).toBeVisible();
     await context.close();
   });
 });

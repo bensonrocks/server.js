@@ -21,7 +21,7 @@ export default function ServicesPage() {
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">
           Pick, pack, and dispatch from one inventory pool, then freight and
-          compliance on the same desk. Retail enablement in Singapore and Malaysia,
+          compliance with the same people. Retail enablement in Singapore and Malaysia,
           ecommerce fulfillment worldwide including the USA, and regulatory work —
           including FDA and similar — handled with the shipment. Start with one
           line, or hand over several.

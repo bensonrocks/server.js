@@ -15,7 +15,7 @@ export function Services() {
           handed to freight when the lane leaves the country. Retail enablement in
           Singapore and Malaysia, ecommerce fulfillment worldwide including the USA,
           and the compliance that travels with the goods. Start with one line or
-          hand the desk the lot.
+          hand us the lot.
         </p>
       </Reveal>
 

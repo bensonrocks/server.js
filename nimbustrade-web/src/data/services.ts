@@ -25,7 +25,7 @@ export const SERVICES: Service[] = [
     name: "Warehousing",
     icon: Warehouse,
     summary:
-      "Self-run storage in Singapore and Malaysia for retail and ecommerce, with appointed partner warehouses further afield. The same desk holds the standard.",
+      "Self-run storage in Singapore and Malaysia for retail and ecommerce, with appointed partner warehouses further afield. The same people hold the standard.",
     benefit: "Pay for the space you use, not a fixed lease.",
     points: ["Bin and pallet storage", "Cycle counting", "Temperature-aware zoning"],
   },
@@ -53,7 +53,7 @@ export const SERVICES: Service[] = [
     icon: Truck,
     summary:
       "Last-mile and onward distribution, coordinated worldwide — including the USA — with the carriers appointed for each lane.",
-    benefit: "One desk for the delivery, wherever the lane runs.",
+    benefit: "One team for the delivery, wherever the lane runs.",
     points: ["Route planning", "Proof of delivery capture", "Regional carrier panel"],
   },
   {
@@ -70,7 +70,7 @@ export const SERVICES: Service[] = [
     name: "Cross-border logistics",
     icon: Globe2,
     summary:
-      "Lanes between Singapore and Malaysia, and further out including the USA. Duties, tracking, and a local handoff sit with the same desk, with Merchant or Importer of Record support where the destination asks for an entity of record. Appointed partners hold stock closer to the buyer on those lanes.",
+      "Lanes between Singapore and Malaysia, and further out including the USA. Duties, tracking, and a local handoff sit with the same people, with Merchant or Importer of Record support where the destination asks for an entity of record. Appointed partners hold stock closer to the buyer on those lanes.",
     benefit: "Expand into a new market without hiring a local logistics team first.",
     points: [
       "Multi-country lanes",
@@ -85,7 +85,7 @@ export const SERVICES: Service[] = [
     icon: FileCheck2,
     summary:
       "Customs paperwork and regulatory compliance handled with the shipment, including FDA and similar requirements, plus Merchant or Importer of Record support where a destination asks for an entity of record.",
-    benefit: "The border paperwork stays with the same desk as the freight.",
+    benefit: "The border paperwork stays with the same people as the freight.",
     points: [
       "FDA and similar regulatory compliance",
       "HS code classification support",

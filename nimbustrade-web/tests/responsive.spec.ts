@@ -30,7 +30,7 @@ test.describe("Reduced motion", () => {
     const context = await browser.newContext({ reducedMotion: "reduce" });
     const page = await context.newPage();
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: /One desk for the whole fulfillment job/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /We run fulfillment, retail enablement, and logistics/ })).toBeVisible();
     await context.close();
   });
 });
