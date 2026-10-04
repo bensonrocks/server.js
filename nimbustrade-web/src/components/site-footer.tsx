@@ -35,8 +35,8 @@ export function SiteFooter() {
           <div>
             <BrandLogo variant="footer" />
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-ink-muted">
-              One desk for retail enablement in Singapore and Malaysia, and for ecommerce
-              fulfillment worldwide, including the USA.
+              Run by merchants. One desk for retail enablement in Singapore and
+              Malaysia, and for ecommerce fulfillment worldwide, including the USA.
             </p>
             <address className="mt-6 space-y-1 text-sm not-italic leading-relaxed text-ink-muted">
               <p>Singapore</p>

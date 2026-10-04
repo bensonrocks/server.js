@@ -14,7 +14,10 @@ export function Credibility() {
           ecommerce and retail enablement in those two markets — store
           replenishment, marketplace orders, and the stock behind them. Ecommerce
           fulfillment continues <span className="font-semibold">worldwide, including the USA</span>,
-          through appointed partners. You still deal with one desk.
+          through appointed partners, including stock held closer to the buyer on
+          those lanes. Singapore–Malaysia movements and further cross-border
+          shipments stay on the same desk, with duties and tracking included.
+          You still deal with one desk.
         </p>
         <ul className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink-muted">
           <li>Inbound QC on every shipment</li>

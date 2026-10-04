@@ -115,9 +115,10 @@ export function PlatformMockup() {
           IdealOne: the same screen we work from.
         </h2>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">
-          IdealOne is our in-house operating platform, built to run both B2B and B2C order flows
-          from a single view. This is a simplified, illustrative preview — try the tabs and the
-          filter field below.
+          IdealOne is our in-house operating platform. Orders, stock, and shipment
+          status stay on one screen, so the workflow does not split between a
+          marketplace and a warehouse login. This is a simplified, illustrative
+          preview — try the tabs and the filter field below.
         </p>
       </Reveal>
 

@@ -11,13 +11,17 @@ import {
 } from "@/components/ui/accordion";
 
 export const metadata = marketingMeta({
-  title: "About the fulfillment desk",
+  title: "A fulfillment desk run by merchants",
   description:
-    "NimbusTrade is a one-stop fulfillment desk. Enquire about ecommerce and retail enablement in Singapore and Malaysia, worldwide fulfillment including the USA, and compliance including FDA.",
+    "NimbusTrade is run by merchants. Enquire about pick and pack, retail enablement in Singapore and Malaysia, worldwide fulfillment including the USA, and compliance including FDA.",
   path: "/about",
 });
 
 const FAQS = [
+  {
+    q: "Who runs NimbusTrade?",
+    a: "Merchants. The people on the desk sell and fulfil as well as run the operation, so pick, pack, inventory, and cross-border questions are familiar work.",
+  },
   {
     q: "Where is NimbusTrade based?",
     a: "The operating desk is in Singapore. Warehouses we run ourselves are in Singapore and Malaysia, for ecommerce and retail enablement. Ecommerce fulfillment continues worldwide, including the USA, through appointed partners.",
@@ -55,11 +59,12 @@ export default function AboutPage() {
             One desk, coordinating the operating layer.
           </h1>
           <p className="mt-6 text-lg leading-relaxed text-ink-muted">
-            NimbusTrade is the one-stop for brands that would otherwise keep a warehouse,
-            a freight forwarder, a customs broker, and a stack of reports. Ecommerce and
-            retail enablement in Singapore and Malaysia, ecommerce fulfillment worldwide
-            including the USA, and the compliance that goes with the goods — one point
-            of contact.
+            NimbusTrade is run by merchants. We are merchants ourselves, so we know
+            this work from the inside: the one-stop for brands that would otherwise
+            keep a warehouse, a freight forwarder, a customs broker, and a stack of
+            reports. Ecommerce and retail enablement in Singapore and Malaysia,
+            ecommerce fulfillment worldwide including the USA, and the compliance
+            that goes with the goods — one point of contact.
           </p>
         </Reveal>
 

@@ -45,9 +45,9 @@ export function ContactSection({ heading = "h2" }: { heading?: "h1" | "h2" }) {
           <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Enquire</span>
           <Title className="mt-3 font-display text-4xl font-bold text-ink">Talk to the desk.</Title>
           <p className="mt-4 max-w-md text-lg leading-relaxed text-ink-muted">
-            Ask about retail enablement in Singapore and Malaysia, ecommerce fulfillment
-            worldwide including the USA, or compliance including FDA. Use the form, or
-            the channels beside it.
+            Ask about pick and pack, retail enablement in Singapore and Malaysia,
+            ecommerce fulfillment worldwide including the USA, or compliance including
+            FDA. Use the form, or write to info@nimbustrade.co.
           </p>
 
           <div className="mt-8 space-y-4 text-sm">

@@ -16,8 +16,12 @@ export function OrganizationJsonLd() {
     areaServed: "Worldwide",
     knowsAbout: [
       "Ecommerce fulfillment",
+      "Pick and pack",
+      "Marketplace order fulfillment",
       "Retail enablement in Singapore and Malaysia",
       "Worldwide ecommerce fulfillment, including the USA",
+      "Cross-border logistics",
+      "Order and inventory visibility",
       "Regulatory compliance, including FDA",
       "Warehousing",
       "Freight forwarding",

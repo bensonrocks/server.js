@@ -34,8 +34,8 @@ export const SERVICES: Service[] = [
     name: "Fulfilment",
     icon: PackageCheck,
     summary:
-      "Pick, pack, and dispatch for D2C and B2B orders, connected directly to your storefront and marketplace queues.",
-    benefit: "Same-day dispatch on orders received before cut-off.",
+      "Pick, pack, and dispatch for D2C and B2B orders, from one inventory pool connected to your storefront and marketplace queues.",
+    benefit: "Same-day dispatch on orders received before the cut-off.",
     points: ["Carton and kitting options", "Branded packaging inserts", "Returns processing"],
   },
   {
@@ -61,7 +61,7 @@ export const SERVICES: Service[] = [
     name: "E-commerce operations",
     icon: ShoppingCart,
     summary:
-      "Retail and ecommerce enablement for brands selling in Singapore and Malaysia: marketplace and storefront orders, by file upload or an existing connector.",
+      "Retail and ecommerce enablement for brands selling in Singapore and Malaysia. Marketplace and storefront orders — Shopee, Lazada, TikTok Shop, Shopify, and others — arrive by file or an existing connector, against one inventory pool.",
     benefit: "Orders flow to the warehouse floor without manual re-keying.",
     points: ["Order intake", "Inventory allocation", "Channel-level reporting"],
   },
@@ -70,7 +70,7 @@ export const SERVICES: Service[] = [
     name: "Cross-border logistics",
     icon: Globe2,
     summary:
-      "Shipping lanes beyond one country, including into the USA, with local handoffs and Merchant or Importer of Record support where the destination asks for an entity of record.",
+      "Lanes between Singapore and Malaysia, and further out including the USA. Duties, tracking, and a local handoff sit with the same desk, with Merchant or Importer of Record support where the destination asks for an entity of record. Appointed partners hold stock closer to the buyer on those lanes.",
     benefit: "Expand into a new market without hiring a local logistics team first.",
     points: [
       "Multi-country lanes",
@@ -99,7 +99,7 @@ export const SERVICES: Service[] = [
     name: "Technology integration",
     icon: Cpu,
     summary:
-      "API and file-based integration between your systems and IdealOne, our in-house operating platform — or skip integration entirely and run everything from the dashboard.",
+      "Order and inventory feeds between your systems and IdealOne, so fulfilment status stays visible in the workflow you already use — or skip integration and run everything from the dashboard.",
     benefit: "Works for B2B and B2C clients, with or without integration.",
     points: ["Order and inventory feeds", "Webhook status updates", "No-integration dashboard access"],
   },
