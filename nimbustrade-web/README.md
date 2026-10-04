@@ -82,7 +82,7 @@ published externally:
 - **Industries list**: illustrative — confirm which verticals NimbusTrade has
   real, citable experience in before publishing externally.
 
-The homepage stats (13 markets, 8 service lines, 1 operating desk) and the
+The homepage stats (service lines, and a merchant-run operation) and the
 testimonials-style narrative tone were established earlier in this project as
 in-universe facts for this fictional company, not flagged as placeholders.
 

@@ -43,7 +43,7 @@ export function ContactSection({ heading = "h2" }: { heading?: "h1" | "h2" }) {
       <div className="grid grid-cols-1 gap-12 lg:grid-cols-[1fr_1.1fr]">
         <Reveal>
           <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Enquire</span>
-          <Title className="mt-3 font-display text-4xl font-bold text-ink">Talk to the desk.</Title>
+          <Title className="mt-3 font-display text-4xl font-bold text-ink">Talk to us.</Title>
           <p className="mt-4 max-w-md text-lg leading-relaxed text-ink-muted">
             Ask about pick and pack, retail enablement in Singapore and Malaysia,
             ecommerce fulfillment worldwide including the USA, or compliance including
@@ -63,10 +63,10 @@ export function ContactSection({ heading = "h2" }: { heading?: "h1" | "h2" }) {
               rel="noopener noreferrer"
               className="flex items-center gap-3 text-ink hover:text-brand"
             >
-              <MessageCircle className="h-5 w-5 text-brand" /> WhatsApp the desk
+              <MessageCircle className="h-5 w-5 text-brand" /> WhatsApp us
             </a>
             <div className="flex items-center gap-3 text-ink">
-              <Clock className="h-5 w-5 text-brand" /> Singapore desk · Mon–Fri, 9:00am–6:00pm SGT
+              <Clock className="h-5 w-5 text-brand" /> Singapore · Mon–Fri, 9:00am–6:00pm SGT
             </div>
           </div>
         </Reveal>
@@ -77,7 +77,7 @@ export function ContactSection({ heading = "h2" }: { heading?: "h1" | "h2" }) {
               <CheckCircle2 className="h-10 w-10 text-confirm" />
               <h3 className="mt-4 font-display text-2xl font-bold text-ink">Message sent</h3>
               <p className="mt-2 max-w-sm text-sm text-ink-muted">
-                Thanks — someone from the desk will get back to you shortly.
+                Thanks — someone here will get back to you shortly.
               </p>
               <Button variant="outline" className="mt-6" onClick={() => setSubmitted(false)}>
                 Send another message

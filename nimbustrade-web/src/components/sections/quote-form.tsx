@@ -128,7 +128,7 @@ export function QuoteForm() {
         <CheckCircle2 className="mx-auto h-12 w-12 text-confirm" />
         <h2 className="mt-5 font-display text-3xl font-bold text-ink">Quote request received</h2>
         <p className="mt-3 text-ink-muted">
-          Thanks, {submittedValues.fullName.split(" ")[0]} — someone from the desk will follow up
+          Thanks, {submittedValues.fullName.split(" ")[0]} — someone here will follow up
           at <span className="font-semibold text-ink">{submittedValues.email}</span> shortly.
         </p>
         <p className="mt-6 text-xs text-ink-muted/80">

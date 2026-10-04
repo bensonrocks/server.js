@@ -4,7 +4,7 @@ import { marketingMeta } from "@/lib/site-config";
 export const metadata = marketingMeta({
   title: "Fulfillment for orders, expansion, and freight",
   description:
-    "Tell NimbusTrade what you need solved: pick and pack, a new market including the USA, or the order workflow behind the stock. Retail enablement in Singapore and Malaysia, from one desk.",
+    "Tell NimbusTrade what you need solved: pick and pack, a new market including the USA, or the order workflow behind the stock. Retail enablement in Singapore and Malaysia, run by merchants.",
   path: "/solutions",
 });
 

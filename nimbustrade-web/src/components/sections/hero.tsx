@@ -15,7 +15,7 @@ export function Hero() {
     <section className="border-b border-border bg-paper">
       <div className="bg-brand-strong text-white">
         <div className="mx-auto flex max-w-7xl flex-col gap-2 px-6 py-3 font-mono text-[11px] uppercase tracking-[0.14em] sm:flex-row sm:items-center sm:justify-between">
-          <p>Operating desk · Singapore</p>
+          <p>Singapore · fulfillment we run ourselves</p>
           <a href="mailto:info@nimbustrade.co" className="text-white/80 hover:text-white">
             Enquire · info@nimbustrade.co
           </a>
@@ -24,10 +24,10 @@ export function Hero() {
       <div className="mx-auto grid max-w-7xl gap-x-12 gap-y-10 px-6 pb-14 pt-16 lg:grid-cols-[7fr_5fr] lg:pb-0 lg:pt-20">
         <div className="lg:pb-20">
           <p className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">
-            NimbusTrade Solutions — one desk
+            NimbusTrade Solutions — run by merchants
           </p>
           <h1 className="mt-5 max-w-2xl font-display text-4xl font-semibold leading-[1.08] text-ink sm:text-5xl lg:text-display-xl">
-            One desk for the whole fulfillment job.
+            We run fulfillment, retail enablement, and logistics.
           </h1>
           <p className="mt-5 max-w-xl font-display text-xl leading-snug text-ink sm:text-2xl">
             We are merchants ourselves, so we know this work from the inside.
