@@ -51,14 +51,20 @@ export function Explainer() {
   const reduceMotion = useReducedMotion();
   const [index, setIndex] = React.useState(0);
   const [paused, setPaused] = React.useState(false);
+  // useReducedMotion() is null during SSR and on the first client render.
+  // Branching the markup on it hydrates a different tree once the real
+  // preference arrives, so motion only starts after mount.
+  const [ready, setReady] = React.useState(false);
+  React.useEffect(() => setReady(true), []);
+  const animate = ready && !reduceMotion && !paused;
 
   React.useEffect(() => {
-    if (reduceMotion || paused) return;
+    if (!animate) return;
     const id = window.setInterval(() => {
       setIndex((current) => (current + 1) % CHAPTERS.length);
     }, HOLD_MS);
     return () => window.clearInterval(id);
-  }, [reduceMotion, paused]);
+  }, [animate, index]);
 
   return (
     <section
@@ -110,14 +116,14 @@ export function Explainer() {
                     <span className="mt-3 block max-w-2xl text-sm leading-relaxed text-ink-muted sm:text-base">
                       {chapter.body}
                     </span>
-                    {selected && !reduceMotion ? (
-                      <span className="mt-4 block h-px w-full max-w-xs overflow-hidden bg-border">
+                    {selected ? (
+                      <span className="mt-4 block h-px w-full max-w-xs overflow-hidden bg-border" aria-hidden>
                         <motion.span
-                          key={`bar-${chapter.n}-${paused ? "hold" : "run"}`}
+                          key={`bar-${chapter.n}-${animate ? "run" : "hold"}`}
                           className="block h-px origin-left bg-brand"
-                          initial={{ scaleX: paused ? 1 : 0 }}
+                          initial={{ scaleX: animate ? 0 : 1 }}
                           animate={{ scaleX: 1 }}
-                          transition={{ duration: paused ? 0 : HOLD_MS / 1000, ease: "linear" }}
+                          transition={{ duration: animate ? HOLD_MS / 1000 : 0, ease: "linear" }}
                         />
                       </span>
                     ) : null}

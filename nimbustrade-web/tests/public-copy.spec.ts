@@ -20,7 +20,9 @@ test.describe("Public copy", () => {
     await expect(
       page.getByRole("heading", { name: "We run fulfillment, retail enablement, and logistics." }),
     ).toBeVisible();
-    await expect(page.getByText("We are merchants ourselves, so we know this work from the inside.")).toBeVisible();
+    await expect(
+      page.getByText("We are merchants ourselves, so we know this work from the inside.").first(),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Fulfillment, retail enablement, and logistics — run by merchants." }),
     ).toBeVisible();
