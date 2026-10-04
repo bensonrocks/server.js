@@ -13,7 +13,7 @@ import {
 export const metadata = marketingMeta({
   title: "A fulfillment company run by merchants",
   description:
-    "NimbusTrade is run by merchants. Enquire about pick and pack, retail enablement in Singapore and Malaysia, worldwide fulfillment including the USA, and compliance including FDA.",
+    "NimbusTrade is run by merchants. Enquire about fulfillment solutions, retail enablement in Singapore and Malaysia, worldwide fulfillment including the USA, internationalization solutions for brands, and compliance including FDA.",
   path: "/about",
 });
 
@@ -43,6 +43,10 @@ const FAQS = [
     a: "Yes. Ecommerce fulfillment is worldwide, including the USA. Cross-border starts with the lane you actually need, including a local handoff where that is how the destination works.",
   },
   {
+    q: "Do you offer internationalization solutions for brands?",
+    a: "Yes. A brand looking to expand can enquire about a new market, including the USA. Retail enablement we run ourselves covers Singapore and Malaysia. Ecommerce fulfillment beyond that is worldwide, through appointed partners, with compliance such as FDA handled with the shipment. Write to info@nimbustrade.co or use the quote form.",
+  },
+  {
     q: "Do you offer Merchant of Record or Importer of Record services?",
     a: "Yes — where trading requires an entity of record, we offer Merchant of Record and Importer of Record support so a brand can clear the destination without setting up a local company first.",
   },
@@ -64,7 +68,9 @@ export default function AboutPage() {
             keep a warehouse, a freight forwarder, a customs broker, and a stack of
             reports. Ecommerce and retail enablement in Singapore and Malaysia,
             ecommerce fulfillment worldwide including the USA, and the compliance
-            that goes with the goods — one point of contact.
+            that goes with the goods — one point of contact. Brands looking to
+            expand use that same contact for internationalization solutions, from
+            the first lane into a new market.
           </p>
         </Reveal>
 

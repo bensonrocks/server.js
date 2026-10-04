@@ -37,4 +37,46 @@ test.describe("Public copy", () => {
     await expect(page.locator("body")).not.toContainText("either way");
     await expect(page.locator("footer")).not.toContainText(/desk/i);
   });
+
+  test("search themes are in the title, description, a heading, and the body", async ({ page }) => {
+    await page.goto("/");
+    const title = await page.title();
+    const description = (await page.locator('meta[name="description"]').getAttribute("content")) ?? "";
+    const visible = await page.locator("body").innerText();
+    expect(title).toContain("internationalization solutions for brands");
+    expect(description).toContain("fulfillment solutions");
+    expect(description).toContain("logistics solutions");
+    expect(description).toContain("internationalization solutions for brands");
+    await expect(
+      page.getByRole("heading", { name: "Fulfillment solutions, from the pick face to the freight lane." }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Internationalization solutions for brands." }),
+    ).toBeVisible();
+    await expect(page.locator("body")).toContainText("logistics solutions");
+    await expect(page.locator("body")).toContainText("fulfillment solutions");
+    const copy = `${title}\n${description}\n${visible}`;
+    expect(copy).not.toMatch(/search volume|monthly searches|\d[\d,]*\s+searches/i);
+    expect(copy).not.toMatch(/\b\d{6}\b/);
+    expect(copy).not.toMatch(/unit\s*#|street|postal code|Penjuru/i);
+  });
+
+  test("services and solutions pages each own a theme", async ({ page }) => {
+    await page.goto("/services");
+    await expect(page).toHaveTitle(/Fulfillment solutions and logistics solutions/);
+    await expect(
+      page.getByRole("heading", { name: "Fulfillment solutions and logistics solutions." }),
+    ).toBeVisible();
+    const servicesDescription =
+      (await page.locator('meta[name="description"]').getAttribute("content")) ?? "";
+    expect(servicesDescription).toContain("fulfillment solutions");
+    expect(servicesDescription).toContain("logistics solutions");
+
+    await page.goto("/solutions");
+    await expect(page).toHaveTitle(/Internationalization solutions for brands/);
+    await expect(
+      page.getByRole("heading", { name: "Internationalization solutions for brands." }),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "info@nimbustrade.co" }).first()).toBeVisible();
+  });
 });

@@ -20,13 +20,14 @@ export function SolutionsSelector({ heading = "h2" }: { heading?: "h1" | "h2" })
             Find your solution
           </span>
           <Title className="mt-3 font-display text-4xl font-semibold text-ink">
-            What are you trying to solve right now?
+            Internationalization solutions for brands.
           </Title>
           <p className="mt-4 text-lg leading-relaxed text-ink-muted">
             Pick the closest description: orders to pick and pack, a lane into a new
             market, or the workflow behind the stock. Retail enablement covers
             Singapore and Malaysia; ecommerce fulfillment runs worldwide, including
-            the USA. The panel updates as you choose.
+            the USA. Enquire when you know which part you need. The panel updates
+            as you choose.
           </p>
         </div>
 

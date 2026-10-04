@@ -8,11 +8,12 @@ export function Services() {
       <Reveal className="max-w-2xl">
         <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Services</span>
         <h2 className="mt-3 font-display text-4xl font-semibold text-ink">
-          Pick, pack, and the lanes past the warehouse.
+          Fulfillment solutions, from the pick face to the freight lane.
         </h2>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">
           Orders are picked, packed, and dispatched from one inventory pool, then
-          handed to freight when the lane leaves the country. Retail enablement in
+          handed to freight when the lane leaves the country. Logistics solutions
+          cover that freight, the duties, and the handoff. Retail enablement in
           Singapore and Malaysia, ecommerce fulfillment worldwide including the USA,
           and the compliance that travels with the goods. Start with one line or
           hand us the lot.

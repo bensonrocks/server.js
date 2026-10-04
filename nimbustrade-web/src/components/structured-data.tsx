@@ -26,6 +26,9 @@ export function OrganizationJsonLd() {
       "Warehousing",
       "Freight forwarding",
       "Customs documentation",
+      "Fulfillment solutions",
+      "Logistics solutions",
+      "Internationalization solutions for brands",
     ],
   };
 
