@@ -12,9 +12,9 @@ export function Industries({ heading = "h2" }: { heading?: "h1" | "h2" }) {
             Built around categories with real operational quirks.
           </Title>
           <p className="mt-4 text-lg leading-relaxed text-ink-muted">
-            Every category below needs something different from a warehouse. Regulated
-            goods — FDA and similar — are handled on the compliance line, not left as
-            a separate vendor.
+            Every category below needs something different from a warehouse. The same
+            fulfillment solutions cover the pick and pack; regulated goods — FDA and
+            similar — are handled on the compliance line, not left as a separate vendor.
           </p>
         </Reveal>
 

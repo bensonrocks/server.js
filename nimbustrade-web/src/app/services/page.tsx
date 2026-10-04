@@ -4,9 +4,9 @@ import { ServiceJsonLd } from "@/components/structured-data";
 import { marketingMeta } from "@/lib/site-config";
 
 export const metadata = marketingMeta({
-  title: "Pick, pack, freight, and compliance",
+  title: "Fulfillment solutions and logistics solutions",
   description:
-    "Enquire about pick and pack, marketplace orders, cross-border lanes including the USA, and compliance including FDA. NimbusTrade runs retail enablement in Singapore and Malaysia.",
+    "Enquire about fulfillment solutions and logistics solutions: pick and pack, marketplace orders, freight, and compliance including FDA. Retail enablement in Singapore and Malaysia, ecommerce fulfillment worldwide including the USA.",
   path: "/services",
 });
 
@@ -17,14 +17,14 @@ export default function ServicesPage() {
       <div className="max-w-2xl">
         <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Services</span>
         <h1 className="mt-3 font-display text-5xl font-semibold text-ink">
-          Every service line, in detail.
+          Fulfillment solutions and logistics solutions.
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">
           Pick, pack, and dispatch from one inventory pool, then freight and
           compliance with the same people. Retail enablement in Singapore and Malaysia,
           ecommerce fulfillment worldwide including the USA, and regulatory work —
-          including FDA and similar — handled with the shipment. Start with one
-          line, or hand over several.
+          including FDA and similar — handled with the shipment. A brand entering a
+          new market can enquire here and start with one line, or hand over several.
         </p>
       </div>
 

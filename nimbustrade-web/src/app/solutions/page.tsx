@@ -2,9 +2,9 @@ import { SolutionsSelector } from "@/components/sections/solutions-selector";
 import { marketingMeta } from "@/lib/site-config";
 
 export const metadata = marketingMeta({
-  title: "Fulfillment for orders, expansion, and freight",
+  title: "Internationalization solutions for brands",
   description:
-    "Tell NimbusTrade what you need solved: pick and pack, a new market including the USA, or the order workflow behind the stock. Retail enablement in Singapore and Malaysia, run by merchants.",
+    "Internationalization solutions for brands entering a new market, including the USA. Pick and pack, freight, and the order workflow sit with the same merchants. Retail enablement in Singapore and Malaysia. Enquire to start.",
   path: "/solutions",
 });
 

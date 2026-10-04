@@ -2,9 +2,9 @@ import { QuoteForm } from "@/components/sections/quote-form";
 import { marketingMeta } from "@/lib/site-config";
 
 export const metadata = marketingMeta({
-  title: "Get a pick and pack fulfillment quote",
+  title: "Get a fulfillment and logistics quote",
   description:
-    "Request a quote for pick and pack, freight, or compliance including FDA. Singapore and Malaysia retail enablement, and ecommerce fulfillment worldwide including the USA.",
+    "Request a quote for fulfillment solutions, logistics solutions, or internationalization solutions for brands entering a new market. Singapore and Malaysia retail enablement, ecommerce fulfillment worldwide including the USA, and compliance including FDA.",
   path: "/quote",
 });
 
@@ -17,9 +17,11 @@ export default function QuotePage() {
           Tell us what you need moved or stored.
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">
-          Six short steps — most people finish in under two minutes. Ask about pick
-          and pack, retail enablement in Singapore and Malaysia, ecommerce fulfillment
-          worldwide including the USA, or compliance including FDA. Prefer email? Write to{" "}
+          Six short steps — most people finish in under two minutes. Ask about
+          fulfillment solutions, logistics solutions, or internationalization
+          solutions for brands entering a new market, including retail enablement in
+          Singapore and Malaysia, ecommerce fulfillment worldwide including the USA,
+          or compliance including FDA. Prefer email? Write to{" "}
           <a href="mailto:info@nimbustrade.co" className="font-semibold text-ink hover:text-brand">
             info@nimbustrade.co
           </a>

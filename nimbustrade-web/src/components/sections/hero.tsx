@@ -41,6 +41,11 @@ export function Hero() {
             duties, and compliance — including FDA and similar regulatory work —
             sit with the same people.
           </p>
+          <p className="mt-4 max-w-xl text-body-lg leading-relaxed text-ink-muted">
+            A brand looking to expand can enquire for fulfillment solutions on the
+            orders, logistics solutions on the freight, and internationalization
+            solutions for the market it is entering.
+          </p>
           <div className="mt-9 flex flex-col gap-4 sm:flex-row sm:items-center">
             <Button asChild size="lg">
               <Link href="/quote">
