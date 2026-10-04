@@ -8,12 +8,14 @@ export function Services() {
       <Reveal className="max-w-2xl">
         <span className="font-mono text-xs uppercase tracking-[0.16em] text-ink-muted">Services</span>
         <h2 className="mt-3 font-display text-4xl font-semibold text-ink">
-          One operation, from the shelf to the border.
+          Pick, pack, and the lanes past the warehouse.
         </h2>
         <p className="mt-4 text-lg leading-relaxed text-ink-muted">
-          Retail enablement in Singapore and Malaysia, ecommerce fulfillment worldwide
-          including the USA, and the compliance that travels with the goods. Start with
-          one line or hand the desk the lot.
+          Orders are picked, packed, and dispatched from one inventory pool, then
+          handed to freight when the lane leaves the country. Retail enablement in
+          Singapore and Malaysia, ecommerce fulfillment worldwide including the USA,
+          and the compliance that travels with the goods. Start with one line or
+          hand the desk the lot.
         </p>
       </Reveal>
 

@@ -20,7 +20,7 @@ export const SOLUTIONS: Solution[] = [
     name: "Fulfilment",
     question: "I need orders picked, packed, and shipped fast.",
     description:
-      "Direct-to-consumer and B2B fulfilment connected to your storefronts, with same-day dispatch cut-offs.",
+      "Direct-to-consumer and B2B fulfilment from one inventory pool, connected to your storefronts, with same-day dispatch before the cut-off.",
     included: ["Pick & pack", "Kitting & bundling", "Branded packaging", "Returns handling"],
   },
   {
@@ -52,7 +52,7 @@ export const SOLUTIONS: Solution[] = [
     name: "Cross-border expansion",
     question: "I want to sell into a new country.",
     description:
-      "A staged way into a new lane, including the USA — local handoff partners and Merchant or Importer of Record support, without hiring a local team first.",
+      "A staged way into a new lane, including the USA. Appointed partners can hold stock closer to the buyer, with Merchant or Importer of Record support where the destination asks for an entity of record.",
     included: [
       "Multi-country lanes",
       "Local handoffs",

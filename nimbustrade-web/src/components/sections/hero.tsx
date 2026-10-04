@@ -29,11 +29,17 @@ export function Hero() {
           <h1 className="mt-5 max-w-2xl font-display text-4xl font-semibold leading-[1.08] text-ink sm:text-5xl lg:text-display-xl">
             One desk for the whole fulfillment job.
           </h1>
+          <p className="mt-5 max-w-xl font-display text-xl leading-snug text-ink sm:text-2xl">
+            We are merchants ourselves, so we know this work from the inside.
+          </p>
           <p className="mt-6 max-w-xl text-body-lg leading-relaxed text-ink-muted">
-            NimbusTrade is the one-stop for the job. Ecommerce and retail
-            enablement in Singapore and Malaysia. Ecommerce fulfillment worldwide,
-            including the USA. Storage, pick-and-pack, freight, and compliance —
-            including FDA and similar regulatory work — sit with the same people.
+            NimbusTrade is the one-stop for the job, and it is run by merchants.
+            Pick, pack, and dispatch for marketplace and storefront orders, against
+            one inventory pool. Retail enablement in Singapore and Malaysia.
+            Ecommerce fulfillment worldwide, including the USA, through appointed
+            partners, so stock can sit closer to the buyer. Storage, freight,
+            duties, and compliance — including FDA and similar regulatory work —
+            sit with the same people.
           </p>
           <div className="mt-9 flex flex-col gap-4 sm:flex-row sm:items-center">
             <Button asChild size="lg">

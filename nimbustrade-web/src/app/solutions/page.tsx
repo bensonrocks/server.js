@@ -2,9 +2,9 @@ import { SolutionsSelector } from "@/components/sections/solutions-selector";
 import { marketingMeta } from "@/lib/site-config";
 
 export const metadata = marketingMeta({
-  title: "Choose a fulfillment service",
+  title: "Fulfillment for orders, expansion, and freight",
   description:
-    "Tell NimbusTrade what you need solved. Retail enablement in Singapore and Malaysia, ecommerce fulfillment worldwide including the USA, and compliance including FDA, from one desk.",
+    "Tell NimbusTrade what you need solved: pick and pack, a new market including the USA, or the order workflow behind the stock. Retail enablement in Singapore and Malaysia, from one desk.",
   path: "/solutions",
 });
 

@@ -6,10 +6,10 @@ export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.nimbust
 export const SITE_NAME = "NimbusTrade Solutions";
 
 export const HOME_TITLE =
-  "NimbusTrade Solutions — Ecommerce fulfillment in Singapore, Malaysia, and worldwide";
+  "NimbusTrade — Ecommerce fulfillment, pick and pack, Singapore, Malaysia, and the USA";
 
 export const SITE_DESCRIPTION =
-  "Enquire with NimbusTrade about ecommerce and retail enablement in Singapore and Malaysia, and ecommerce fulfillment worldwide, including the USA. One desk handles storage, orders, freight, and compliance, including FDA and similar regulatory work.";
+  "Enquire with NimbusTrade for pick and pack, marketplace orders, and expansion into the USA. Retail enablement in Singapore and Malaysia, ecommerce fulfillment worldwide, and compliance including FDA. We are merchants ourselves.";
 
 // Self-run warehouses. Ecommerce fulfillment beyond these two markets is
 // worldwide; do not turn a partner list into a country count.

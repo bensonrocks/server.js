@@ -22,7 +22,7 @@ const STEPS = [
   {
     n: "05",
     title: "Ongoing reporting",
-    body: "Recurring visibility into throughput, exceptions, and cost — the same numbers we work from.",
+    body: "Live order and inventory visibility — throughput, exceptions, and cost — the same numbers we work from.",
   },
 ];
 
