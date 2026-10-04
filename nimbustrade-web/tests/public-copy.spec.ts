@@ -33,5 +33,8 @@ test.describe("Public copy", () => {
     await expect(explainer).toContainText("one inventory pool");
     await expect(explainer).toContainText("FDA");
     await expect(explainer).toContainText("appointed partners");
+    await expect(page.getByText("You still deal with the merchants who run the work.")).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("either way");
+    await expect(page.locator("footer")).not.toContainText(/desk/i);
   });
 });
