@@ -132,8 +132,10 @@ test('a scan does not re-stringify a large orders array', () => {
 
   db.batches[0].orderStates['GI-900001'].scanned.SKU1 = 2;
   db.auditLog.push({ type: 'scan', sku: 'SKU1' });
+  // Time build() only. roundTrip also stringifies the whole object to prove
+  // byte-equality, and that cost is the legacy path, not this one.
   const t0 = process.hrtime.bigint();
-  const second = roundTrip(raw, 'big');
+  const second = inc.build('big', raw);
   const incMs = Number(process.hrtime.bigint() - t0) / 1e6;
   const s0 = process.hrtime.bigint();
   const full = JSON.stringify(raw);
@@ -147,7 +149,7 @@ test('a scan does not re-stringify a large orders array', () => {
   assert.ok(second.reusedBytes > 5_000_000, 'reused ' + second.reusedBytes);
   assert.ok(ordersBytes > second.stringifiedBytes * 20);
   assert.equal(text(second), full);
-  if (fullMs > 15) assert.ok(incMs < fullMs / 3, `incremental ${incMs.toFixed(1)} ms vs full ${fullMs.toFixed(1)} ms`);
+  if (fullMs > 8) assert.ok(incMs < fullMs / 3, `incremental ${incMs.toFixed(1)} ms vs full ${fullMs.toFixed(1)} ms`);
 });
 
 test('replacing the db object drops stale fragments', () => {
