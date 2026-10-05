@@ -9529,6 +9529,14 @@
   function whMobileScanLayout() {
     return (currentUser?.role === 'warehouse') && window.matchMedia('(max-width: 768px)').matches;
   }
+  // Post-scan label-prompt skip is stricter than whMobileScanLayout: desktop
+  // with a mouse/trackpad must keep today's prompt even if the window is
+  // narrowed (or the user is warehouse). Touch-only phones only.
+  function phoneSkipLabelPrompt() {
+    return whMobileScanLayout()
+      && window.matchMedia('(pointer: coarse)').matches
+      && !window.matchMedia('(any-pointer: fine)').matches;
+  }
   // Camera fold-away. Phone layout only (the panel itself is display:none on
   // desktop), and the choice is remembered per device — a picker who always
   // uses a gun should not have to fold it every single order.
@@ -11843,12 +11851,17 @@
         renderOrdersDash();
         fetchAndRenderStats();
         setTimeout(() => focusWaybillInput(), 350); // ready for the next order scan
-        if (completedOrder.has_order_label) {
-          showPrintOrderLabelModal(completedOrder);
-        } else if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
-          showPrintWaybillModal(completedOrder);
-        } else {
-          showPrintLabelPrompt(completedOrder);
+        // Ring-fence: only real phones (warehouse + ≤768px + touch-only, no
+        // fine pointer) skip the post-scan label prompt. Desktop with a mouse
+        // keeps the prompt exactly as today, even if the window is narrow.
+        if (!phoneSkipLabelPrompt()) {
+          if (completedOrder.has_order_label) {
+            showPrintOrderLabelModal(completedOrder);
+          } else if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
+            showPrintWaybillModal(completedOrder);
+          } else {
+            showPrintLabelPrompt(completedOrder);
+          }
         }
       } else {
         showMismatchModal(data.mismatches);
