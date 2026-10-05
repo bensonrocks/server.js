@@ -1285,19 +1285,42 @@ function _flushPersistTimer(tenantId) {
 function _flushAllPersistTimers() {
   for (const tenantId of [..._dbPersistTimers.keys()]) _flushPersistTimer(tenantId);
 }
-function writeDb(data) {
+// SCAN-RATE WRITES GET A LONGER COALESCING WINDOW (peak scan latency,
+// 2026-10-05). With four counters scanning non-stop the 2 s ceiling above
+// meant a full ~116 MB stringify roughly every 2 s, each holding the thread
+// for 1–4 s — so the server spent much of the peak frozen and scans queued
+// behind it (p90 > 1 s, some hitting the client's 8 s abort). A per-barcode
+// count (/api/scan/increment) is already crash-covered by the scan journal
+// (appended immediately, replayed at boot — now including cartons and bin
+// consumption), so a window made ONLY of those writes may wait longer:
+// DB_SCAN_PERSIST_DEBOUNCE_MS after the last scan, never more than
+// DB_SCAN_PERSIST_MAX_WAIT_MS after the first. The moment ANY other write
+// (complete, cancel, upload, settings, claim…) joins the window it reverts to
+// exactly the normal 250 ms / 2 s schedule, and flushDb() and the shutdown
+// flush stay immediate. Setting both variables to the normal values (250 /
+// 2000) restores the old behaviour without a code change.
+const DB_SCAN_PERSIST_DEBOUNCE_MS = parseInt(process.env.DB_SCAN_PERSIST_DEBOUNCE_MS || '', 10) || 1000;
+const DB_SCAN_PERSIST_MAX_WAIT_MS = parseInt(process.env.DB_SCAN_PERSIST_MAX_WAIT_MS || '', 10) || 6000;
+function writeDb(data, opts) {
   const tenantId = tenantContext.currentTenantId();
   _dbCacheByTenant.set(tenantId, data);
+  const lazy = !!(opts && opts.scanRate);
+  if (lazy) _dbPersistStats.scanRateWrites = (_dbPersistStats.scanRateWrites || 0) + 1;
   const now = Date.now();
-  const t = _dbPersistTimers.get(tenantId);
+  let t = _dbPersistTimers.get(tenantId);
   if (t) {
     _dbPersistStats.coalesced++;
-    if (now - t.firstAt >= DB_PERSIST_MAX_WAIT_MS) { _flushPersistTimer(tenantId); return; }
-    clearTimeout(t.timer);
-    t.timer = setTimeout(() => _flushPersistTimer(tenantId), Math.min(DB_PERSIST_DEBOUNCE_MS, DB_PERSIST_MAX_WAIT_MS - (now - t.firstAt)));
-    return;
+    if (!lazy) t.strict = true;            // any normal write → normal schedule
+  } else {
+    t = { firstAt: now, timer: null, strict: !lazy };
+    _dbPersistTimers.set(tenantId, t);
   }
-  _dbPersistTimers.set(tenantId, { firstAt: now, timer: setTimeout(() => _flushPersistTimer(tenantId), DB_PERSIST_DEBOUNCE_MS) });
+  const maxWait  = t.strict ? DB_PERSIST_MAX_WAIT_MS : Math.max(DB_SCAN_PERSIST_MAX_WAIT_MS, DB_PERSIST_MAX_WAIT_MS);
+  const debounce = t.strict ? DB_PERSIST_DEBOUNCE_MS : Math.max(DB_SCAN_PERSIST_DEBOUNCE_MS, DB_PERSIST_DEBOUNCE_MS);
+  const elapsed  = now - t.firstAt;
+  if (elapsed >= maxWait) { _flushPersistTimer(tenantId); return; }
+  clearTimeout(t.timer);
+  t.timer = setTimeout(() => _flushPersistTimer(tenantId), Math.min(debounce, maxWait - elapsed));
 }
 
 // Ensure database is flushed to disk before continuing (used for critical ops like uploads)
@@ -1380,6 +1403,16 @@ function journalOrderState(orderNumber, state) {
     at: state.updated_at, order: orderNumber, status: state.status,
     scanned: state.scanned || {}, startTime: state.startTime || null,
     endTime: state.endTime || null, operator: state.operator || null,
+    // Box breakdown and the exact bin lots taken ride along so a crash inside
+    // the (longer) scan-rate persist window replays a CONSISTENT order: the
+    // per-SKU totals, which carton each piece went into, and which stock was
+    // already taken from the inventory store (which commits immediately) —
+    // without bin_consumed a replay would consume those units a second time.
+    // Optional: lines from older builds simply lack them.
+    cartons: Array.isArray(state.cartons) ? state.cartons : undefined,
+    activeCartonNum: state.activeCartonNum || undefined,
+    bin_consumed: state.bin_consumed || undefined,
+    bin_plan: state.bin_plan || undefined,
   });
 }
 // Receiving counts. conditionTotals rides along because a damaged/KIV piece
@@ -1959,6 +1992,12 @@ function replayScanJournal() {
     if (e.startTime) state.startTime = e.startTime;
     if (e.endTime)   state.endTime   = e.endTime;
     if (e.operator)  state.operator  = e.operator;
+    // Same entry, same moment as `scanned` above — restore them together so
+    // carton sums and bin consumption agree with the restored totals.
+    if (Array.isArray(e.cartons)) state.cartons = e.cartons;
+    if (e.activeCartonNum)        state.activeCartonNum = e.activeCartonNum;
+    if (e.bin_consumed && typeof e.bin_consumed === 'object') state.bin_consumed = e.bin_consumed;
+    if (e.bin_plan && typeof e.bin_plan === 'object')         state.bin_plan = e.bin_plan;
     appendScanLog(state, { kind: 'recovered', raw: '', sku: '(scan journal replay after restart)', qty: '', by: '' });
     batch.orderStates[orderNumber] = state;
     recovered++;
@@ -3179,6 +3218,10 @@ function globalOrdersWithState(keep) {
         // date, which is silently the old behaviour rather than an error.
         unprocessed_at: cancelledAtOf(state),
         uploadedAt:   batch.uploaded_at,
+        // Lets a caller drop channel REFERENCE copies before enrichment (the
+        // scan floor's work-only Orders fetch) — see GET /api/orders.
+        reference_only: _isRef,
+        client_name:  batch.client_name || '',
       })) continue;
       const enrichedLines = (ord.lines || []).map(l => {
         const stored = l.description || '';
@@ -10089,7 +10132,7 @@ app.get('/api/version', (req, res) => {
     lastStopClean: PERSISTENCE.lastStopClean,
     uncleanStops:  PERSISTENCE.uncleanStops || 0,
     // What each db.json write costs the thread, and whether PDF work is off it.
-    db: { ..._dbPersistStats, debounceMs: DB_PERSIST_DEBOUNCE_MS },
+    db: { ..._dbPersistStats, debounceMs: DB_PERSIST_DEBOUNCE_MS, scanDebounceMs: DB_SCAN_PERSIST_DEBOUNCE_MS, scanMaxWaitMs: DB_SCAN_PERSIST_MAX_WAIT_MS },
     pdfWorker: pdfPool.snapshot(),
   });
 });
@@ -11631,7 +11674,52 @@ app.get('/api/orders', (req, res) => {
       return true;
     };
   }
+  // ── WORK-ONLY FETCH (peak scan latency, 2026-10-05) ──────────────────────
+  // At Betime peak the Today list was ~1,740 rows / 5.2 MB, and ~1,440 of
+  // them were channel REFERENCE copies (OneCart → Betime Online) that the
+  // office UI hides from Active anyway — but every packer's browser still
+  // downloaded, and the server still fully enriched, all of them on every
+  // refresh. A caller can now say which slice it wants:
+  //   ?reference=exclude  (or workOnly=1, or the old hideReference=true that
+  //                        used to be ignored) → work orders only
+  //   ?reference=only     → only the reference records (Reference sub-tab)
+  //   no parameter        → UNCHANGED: work + reference, as before
+  // The default is deliberately unchanged so every other caller (portal,
+  // search, exports, scripts) sees exactly what it saw yesterday. Nothing is
+  // deleted: reference rows are skipped before enrichment, and how many were
+  // skipped (in total and per client) rides back in response headers so the
+  // Reference tab and the sidebar can still show their counts.
+  const _refQ = String(req.query.reference || '').toLowerCase();
+  const refMode = (_refQ === 'exclude' || _refQ === 'only') ? _refQ
+    : (String(req.query.workOnly || '') === '1' || String(req.query.hideReference || '') === 'true') ? 'exclude'
+    : 'include';
+  let refSkipped = 0;
+  const refSkippedByClient = {};
+  if (refMode !== 'include') {
+    const rangeKeep = keep;
+    keep = o => {
+      if (rangeKeep && !rangeKeep(o)) return false;
+      if (refMode === 'exclude' && o.reference_only) {
+        refSkipped++;
+        const cn = String(o.client_name || '').trim();
+        if (cn) refSkippedByClient[cn] = (refSkippedByClient[cn] || 0) + 1;
+        return false;
+      }
+      if (refMode === 'only' && !o.reference_only) return false;
+      return true;
+    };
+  }
   let orders = globalOrdersWithState(keep);
+  if (refMode === 'exclude') {
+    // Belt and braces: anything the cheap pre-filter could not classify.
+    orders = orders.filter(o => !o.reference_only);
+    res.setHeader('X-Reference-Mode', 'exclude');
+    res.setHeader('X-Reference-Count', String(refSkipped));
+    try { res.setHeader('X-Reference-Clients', encodeURIComponent(JSON.stringify(refSkippedByClient))); } catch (_) {}
+  } else if (refMode === 'only') {
+    orders = orders.filter(o => o.reference_only);
+    res.setHeader('X-Reference-Mode', 'only');
+  }
   // A WITHDRAWAL IS STILL A CANCELLATION, AND THE OFFICE HAS TO SEE IT.
   // These used to be filtered off the everyday list outright — and since the
   // office UI never asks for ?cancelled=1, that made an order the client
@@ -12037,7 +12125,9 @@ app.post('/api/scan/increment', (req, res) => {
   appendScanLog(state, { kind: 'scan', raw: String(req.body.sku || '').trim(), sku: item.sku, qty: state.scanned[item.sku], by: req.userId || '' });
   batch.orderStates[orderNumber] = state;
   journalOrderState(orderNumber, state);
-  writeDb(db);
+  // Scan-rate persist: journaled above, so this may coalesce over a longer
+  // window — see DB_SCAN_PERSIST_* by writeDb. Any other write reverts it.
+  writeDb(db, { scanRate: true });
   res.json({ sku: item.sku, scanned_qty: state.scanned[item.sku], ordered_qty: item.qty, cartonNum: activeCarton(state).num, cartonCount: state.cartons.length });
 });
 
@@ -22048,7 +22138,7 @@ app.get('/api/master/connections/health', (req, res) => {
     // holds the thread, and whether PDF work is running on the worker thread
     // or has fallen back in-process.
     server: {
-      db: { ..._dbPersistStats, debounceMs: DB_PERSIST_DEBOUNCE_MS,
+      db: { ..._dbPersistStats, debounceMs: DB_PERSIST_DEBOUNCE_MS, scanDebounceMs: DB_SCAN_PERSIST_DEBOUNCE_MS, scanMaxWaitMs: DB_SCAN_PERSIST_MAX_WAIT_MS,
         note: 'stringifyMs is how long the last db.json write held the request thread; every user waits for it. coalesced = writes folded into one by the debounce.' },
       pdfWorker: pdfPool.snapshot(),
       gzip: true,

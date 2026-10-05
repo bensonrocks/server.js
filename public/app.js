@@ -110,6 +110,13 @@
   // ── State ──────────────────────────────────────────────────────────────────
   let SESSION_ID   = sessionStorage.getItem('wms_session') || '';
   let loadedOrders = [];
+  // WORK-ONLY ORDERS FETCH (peak scan latency). The everyday Orders fetch
+  // asks the server to leave channel REFERENCE copies out (~80% of the Today
+  // payload at Betime peak); the server says how many it left out, in total
+  // and per client, so the Reference tab and sidebar can still show counts.
+  // `mode` is 'exclude' while loadedOrders is work-only, 'include' once the
+  // Reference view has pulled the full list.
+  let referenceSummary = { mode: 'include', total: 0, byClient: {} };
   let activeOrder          = null;
   let currentUser          = null;
   let timerInterval        = null;
@@ -1815,6 +1822,19 @@
       g.spellings.set(raw, (g.spellings.get(raw) || 0) + 1);
       groups.set(k, g);
     });
+    // Work-only fetch: the reference rows were not downloaded, but the server
+    // counted them per client — a reference-only client keeps its row.
+    if (referenceSummary.mode === 'exclude' && orders === loadedOrders) {
+      for (const [raw0, n] of Object.entries(referenceSummary.byClient || {})) {
+        const raw = String(raw0 || '').trim();
+        if (!raw || !n) continue;
+        const k = raw.toLowerCase();
+        const g = groups.get(k) || { total: 0, ref: 0, spellings: new Map() };
+        g.ref += n;
+        if (!g.spellings.size) g.spellings.set(raw, n);
+        groups.set(k, g);
+      }
+    }
     if (!groups.size) { if (lbl) lbl.style.display = 'none'; list.innerHTML = ''; return; }
     if (lbl) lbl.style.display = '';
     // Display the most common spelling of each client.
@@ -1848,8 +1868,10 @@
   }
 
   // ── Orders Dashboard ───────────────────────────────────────────────────────
-  async function renderOrdersDash() {
-    await refreshOrders();
+  async function renderOrdersDash(opts) {
+    // skipFetch: re-render from the in-memory list (already patched locally)
+    // instead of downloading the whole Orders list again.
+    if (!(opts && opts.skipFetch)) await refreshOrders();
     if (!loadedOrders.length) {
       document.getElementById('ordersEmpty').classList.remove('hidden');
       document.getElementById('ordersDashboard').classList.add('hidden');
@@ -2169,6 +2191,7 @@
       : '';
     if (directMatch && directMatch.reference_only) {
       ordersView = 'reference'; renderOrdersList();
+      if (referenceSummary.mode === 'exclude') refreshOrders().then(renderOrdersList);
       setWaybillMsg(`${directMatch.order_number} exists only as a channel reference record under ${directMatch.client_name || 'the client'} — not a work order. Upload the picking list to process it.`, true);
       return;
     }
@@ -2203,6 +2226,11 @@
       if (!ord) { ord = data; loadedOrders.push(data); } // outside the loaded date window
       if (ord.reference_only) {
         ordersView = 'reference'; renderOrdersList();
+        if (referenceSummary.mode === 'exclude') refreshOrders().then(() => {
+          // keep the looked-up record on screen even if it is outside the window
+          if (!loadedOrders.some(o => o.order_number === ord.order_number)) loadedOrders.push(ord);
+          renderOrdersList();
+        });
         setWaybillMsg(`${ord.order_number} exists only as a channel reference record under ${ord.client_name || 'the client'} — not a work order. Upload the picking list to process it.`, true);
         return;
       }
@@ -2502,6 +2530,18 @@
     // lives in its own view where it can still be looked at.
     const referenceOrders = orders.filter(o => o.reference_only);
     orders = orders.filter(o => !o.reference_only);
+    // Work-only fetch: reference rows were not downloaded — take the count
+    // the server reported (for the selected client, when one is picked).
+    let referenceCount = referenceOrders.length;
+    if (referenceSummary.mode === 'exclude' && ordersView !== 'reference') {
+      if (activeClientFilter === 'all') referenceCount = Math.max(referenceCount, referenceSummary.total || 0);
+      else {
+        const want = activeClientFilter.trim().toLowerCase();
+        let n = 0;
+        for (const [c, v] of Object.entries(referenceSummary.byClient || {})) if (String(c).trim().toLowerCase() === want) n += v;
+        referenceCount = Math.max(referenceCount, n);
+      }
+    }
 
     // Active / Completed sub-tabs — completed orders leave the main list and
     // live in their own searchable view for reference and label reprinting
@@ -2551,7 +2591,7 @@
         <button class="subtab-btn ${ordersView === 'active' ? 'active' : ''}" data-oview="active">Active <span class="subtab-count">${activeOrders.length}</span></button>
         <button class="subtab-btn ${ordersView === 'completed' ? 'active' : ''}" data-oview="completed">&#10003; Completed <span class="subtab-count">${doneOrders.length}</span></button>
         <button class="subtab-btn ${ordersView === 'cancelled' ? 'active' : ''}" data-oview="cancelled" title="Orders we are not fulfilling — cancelled by the no-stock rule, taken off the floor, or withdrawn. Not counted as work.">&#9003; Cancelled <span class="subtab-count">${cancelledOrders.length}</span></button>
-        ${(referenceOrders.length || ordersView === 'reference') ? `<button class="subtab-btn subtab-ref ${ordersView === 'reference' ? 'active' : ''}" data-oview="reference" title="The sales channel's own record of each order (synced from OneCart). Kept for the tracking number, label and status — NOT work, not counted, never scanned. The client's own upload of the same order number is the work order.">&#128210; Reference <span class="subtab-count">${referenceOrders.length}</span></button>` : ''}
+        ${(referenceCount || ordersView === 'reference') ? `<button class="subtab-btn subtab-ref ${ordersView === 'reference' ? 'active' : ''}" data-oview="reference" title="The sales channel's own record of each order (synced from OneCart). Kept for the tracking number, label and status — NOT work, not counted, never scanned. The client's own upload of the same order number is the work order.">&#128210; Reference <span class="subtab-count">${referenceCount}</span></button>` : ''}
         ${ordersView === 'completed' ? `<input type="search" id="completedSearchInput" class="completed-search" placeholder="Search waybill, GI / order no, pick ticket, customer&hellip;" value="${esc(completedSearch)}" autocomplete="off" />` : ''}
       </div>`;
 
@@ -2611,6 +2651,11 @@
       document.querySelectorAll('[data-oview]').forEach(b => b.addEventListener('click', () => {
         ordersView = b.dataset.oview;
         renderOrdersList();
+        // The everyday fetch leaves reference rows out; opening the Reference
+        // view pulls them (refreshOrders includes them while it is open).
+        if (ordersView === 'reference' && referenceSummary.mode === 'exclude') {
+          refreshOrders().then(renderOrdersList);
+        }
       }));
       document.getElementById('kpiClearBtn')?.addEventListener('click', () => {
         kpiFilter = 'all'; renderKpiBar(); renderOrdersList();
@@ -11847,9 +11892,16 @@
         // 404 — the slip endpoint's default is the last REAL box.
         await printCartonLabel(undefined, { silent: true });
         closeScanOverlay();
-        await refreshOrders();
-        renderOrdersDash();
+        // NO FULL LIST RELOAD BETWEEN ORDERS (peak scan latency). This used to
+        // await a fresh /api/orders download (twice — renderOrdersDash fetched
+        // again) before the packer could scan the next order; at peak that was
+        // 3–15 s per completion. The completed row is patched in place above
+        // (mergeOrderState) and the screen re-renders from memory; a throttled
+        // background refresh then picks up what other counters did.
+        markOrderDoneLocally(completedOrder.order_number);
+        renderOrdersDash({ skipFetch: true });
         fetchAndRenderStats();
+        scheduleBackgroundOrdersRefresh();
         setTimeout(() => focusWaybillInput(), 350); // ready for the next order scan
         // Ring-fence: only real phones (warehouse + ≤768px + touch-only, no
         // fine pointer) skip the post-scan label prompt. Desktop with a mouse
@@ -17966,7 +18018,7 @@
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-  async function refreshOrders() {
+  async function refreshOrders(opts) {
     try {
       // Ask only for the selected date window — keeps the payload small no
       // matter how much history accumulates on the server
@@ -17977,9 +18029,22 @@
         if (ordersDateFrom) url += `&from=${encodeURIComponent(ordersDateFrom)}`;
         if (ordersDateTo)   url += `&to=${encodeURIComponent(ordersDateTo)}`;
       }
+      // Reference records only come down when someone is actually looking
+      // at them (the Reference sub-tab) or a caller asks for them.
+      const withRef = !!(opts && opts.includeReference) || ordersView === 'reference';
+      if (!withRef) url += '&reference=exclude';
       const resp = await fetch(url);
       const data = await resp.json();
-      if (Array.isArray(data)) loadedOrders = data;
+      if (Array.isArray(data)) {
+        loadedOrders = data;
+        if (resp.headers.get('X-Reference-Mode') === 'exclude') {
+          let byClient = {};
+          try { byClient = JSON.parse(decodeURIComponent(resp.headers.get('X-Reference-Clients') || '%7B%7D')) || {}; } catch (_) {}
+          referenceSummary = { mode: 'exclude', total: parseInt(resp.headers.get('X-Reference-Count') || '0', 10) || 0, byClient };
+        } else {
+          referenceSummary = { mode: 'include', total: 0, byClient: {} };
+        }
+      }
       // Keep the sidebar pending badge current after scans/completions —
       // fire-and-forget, never blocks the orders refresh itself
       fetchAndRenderStats();
@@ -17991,6 +18056,39 @@
     if (idx < 0) return;
     loadedOrders[idx].scan_status = status;
     if (scanned !== undefined) loadedOrders[idx].scanned = scanned;
+  }
+
+  // A just-completed order, patched in memory so it moves from Active to
+  // Completed (today) without re-downloading the list: the Completed view
+  // buckets a done order on its endTime.
+  function markOrderDoneLocally(orderNumber) {
+    const o = loadedOrders.find(x => x.order_number === orderNumber);
+    if (!o) return;
+    o.scan_status = 'done';
+    if (!o.endTime) o.endTime = new Date().toISOString();
+  }
+
+  // One background Orders refresh at most every ORDERS_BG_REFRESH_MS, fired
+  // after completions so other counters' work still shows up. Never awaited
+  // by the scan flow: the packer can open and scan the next order while it
+  // runs. The list is only re-rendered if no scan screen is open (the
+  // in-memory list is still updated either way, so the next order lookup
+  // sees fresh statuses).
+  const ORDERS_BG_REFRESH_MS = 20000;
+  let _bgOrdersTimer = null, _bgOrdersLastAt = 0;
+  function scheduleBackgroundOrdersRefresh() {
+    if (_bgOrdersTimer) return;
+    const wait = Math.max(0, ORDERS_BG_REFRESH_MS - (Date.now() - _bgOrdersLastAt));
+    _bgOrdersTimer = setTimeout(async () => {
+      _bgOrdersLastAt = Date.now();
+      try {
+        await refreshOrders();
+        if (!activeOrder && document.getElementById('tab-orders')?.classList.contains('active')) {
+          renderOrdersDash({ skipFetch: true });
+        }
+      } catch (_) {}
+      finally { _bgOrdersTimer = null; }
+    }, wait);
   }
 
   // ── Camera Barcode Scanner ─────────────────────────────────────────────────
