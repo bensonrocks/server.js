@@ -2199,6 +2199,17 @@
         setWaybillMsg('No order found for that number.', true);
         return;
       }
+      // History archive: show the order on the Completed tab. Do not push the
+      // read-only payload onto the live list and do not open a scan screen.
+      if (data.archived) {
+        ordersView = 'completed';
+        completedSearch = data.order_number;
+        ordersDateFilter = 'all';
+        refreshOrders().then(renderOrdersList);
+        renderOrdersList();
+        setWaybillMsg(data.message || `Order ${data.order_number} is in the history archive.`, false);
+        return;
+      }
       let ord = loadedOrders.find(o => o.order_number === data.order_number);
       if (!ord) { ord = data; loadedOrders.push(data); } // outside the loaded date window
       if (ord.reference_only) {

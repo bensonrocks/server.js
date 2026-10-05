@@ -46,6 +46,7 @@ const { validateRows } = require('./lib/validation');
 // (IdealOne → another system). Required at the top because tenant resolution,
 // which runs before every request, has to be able to read a key's tenant.
 const integration = require('./lib/integration');
+const hotCold = require('./lib/hot-cold-archive');
 
 // OCR parser for photo-based picklist upload
 const { parseOcrPicklist, looksLikeTrackingNumber } = require('./lib/ocr-parse');
@@ -4023,6 +4024,15 @@ function purgePersonalData(db, { dryRun = false } = {}) {
       if (hit) orders++;
     }
   }
+  // Settled orders may already have left db.batches for the cold archive.
+  // The 90-day promise still applies there, whether or not the archive flag
+  // is on — a walk, not a move.
+  hotCold.withEachShard(hotCold.coldDir(DATA_DIR), (batches) => {
+    const r = hotCold.redactSettledPersonal(batches, cutoff, PII_FIELDS, dryRun);
+    orders += r.orders;
+    fields += r.fieldHits;
+    return r.dirty;
+  });
   if (orders && !dryRun) logAudit('personal_data_purged', { orders, fields, afterDays: PII_PURGE_AFTER_DAYS });
   return { orders, fields, dryRun };
 }
@@ -4087,6 +4097,14 @@ function runMarketplaceDataPurge(overrideDays, { dryRun = false } = {}) {
       const hits = piiPurge.purgeBatches(batches, cutoff, keys, { dryRun });
       if (hits) { orders += hits; if (!dryRun) _rewriteArchive(file, batches); }
     }
+    // Cold shards (28-day hot/cold archive) are a different directory from
+    // archive-YYYY-MM.json and are not rewritten by a scan. The retention
+    // walk still has to see them.
+    hotCold.withEachShard(hotCold.coldDir(DATA_DIR), (batches) => {
+      const hits = piiPurge.purgeBatches(batches, cutoff, keys, { dryRun });
+      if (hits) orders += hits;
+      return !!(hits && !dryRun);
+    });
 
     // 3. Live audit log.
     events += piiPurge.purgeAudit(db.auditLog || [], cutoff, keys, { dryRun });
@@ -6195,6 +6213,76 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
       });
     }
   }
+  // Older settled orders live in the cold archive and are not in db.batches.
+  // The everyday list (no q) stays the newest hot rows only. A search joins
+  // this client's cold matches so an order past the page is still findable.
+  if (q && hotCold.readsEnabled(hotCold.modeFromEnv(process.env))) {
+    const seen = new Set(out.map(r => r.order_number));
+    const coldRows = hotCold.searchWhenReadable(process.env, DATA_DIR, q, PORTAL_SEARCH_MAX, {
+      client, identifiersOnly: true,
+    });
+    for (const row of coldRows) {
+      if (!row || seen.has(row.order_number)) continue;
+      const st = {
+        status: row.scan_status || 'pending',
+        endTime: row.endTime || null,
+        pickup: row.pickup || null,
+        hub_exception: row.hub_exception || null,
+        unprocessed_reason: row.unprocessed_reason || '',
+        auto_cancelled: row.auto_cancelled || null,
+        unprocessed_at: row.unprocessed_at || null,
+        updated_at: row.updated_at || null,
+        client_reassigned_to: row.client_reassigned_to || '',
+        client_cancelled: row.client_cancelled || null,
+      };
+      if (isClientCancelled(st)) continue;
+      seen.add(row.order_number);
+      const job = transportJobForOrder(db, row.order_number);
+      const _pk = portalPickup(st, _pol);
+      const _lbl = job ? tmsStatusLabelSrv(job) : '';
+      const _stale = _pk?.status === 'picked_up' && (_lbl === 'Staging' || _lbl === 'Preplanned');
+      const delivery = (job && !_stale) ? {
+        status: job.status || 'pending',
+        label: _lbl,
+        delivered_at: job.deliveredAt || null,
+        remarks: String(job.podRemarks || '').trim(),
+        driver: job.assignedDriverName || '',
+      } : null;
+      const lines = row.lines || [];
+      out.push({
+        order_number: row.order_number,
+        date: row.date || row.uploadedAt,
+        status: st.status,
+        total_qty: row.total_qty || lines.reduce((s, l) => s + (l.qty || 0), 0),
+        lines: lines.length,
+        waybill: row.waybill_number || '',
+        completed_at: st.endTime,
+        has_bundle: lines.some(l => !!l.from_bundle),
+        bundle_skus: [...new Set(lines.filter(l => l.from_bundle).map(l => l.from_bundle))],
+        delivery,
+        pickup: _pk,
+        stock: null,
+        exception: st.hub_exception ? {
+          state: st.hub_exception.status === 'returned' ? 'returned' : 'failed',
+          label: st.hub_exception.status === 'returned'
+            ? 'Returned by the courier' : 'The courier could not ship this',
+          detail: st.hub_exception.status === 'returned'
+            ? 'The parcel has come back to us. We will count it in and be in touch.'
+            : 'The courier was unable to ship it. We are looking into it.',
+          at: st.hub_exception.at || null,
+        } : null,
+        cancelled: st.status === 'unprocessed' ? {
+          at: cancelledAtOf(st),
+          reason: st.unprocessed_reason || '',
+          automatic: !!st.auto_cancelled,
+        } : null,
+        reassigned_to: String(st.client_reassigned_to || '').slice(0, 300),
+        has_label: !!(db.orderLabels || {})[row.order_number],
+        can_delete: false,
+        archived: true,
+      });
+    }
+  }
   out.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   if (q) {
     // The shape stays a BARE ARRAY, exactly as the everyday call answers —
@@ -7541,7 +7629,7 @@ function readArchivedBatch(batchId) {
       if (hit) return hit;
     } catch {}
   }
-  return null;
+  return hotCold.readBatchWhenReadable(process.env, DATA_DIR, batchId);
 }
 // Search archived orders (Completed-tab search). Returns order rows in the
 // same shape the dashboard uses, newest first, capped.
@@ -7573,6 +7661,16 @@ function searchArchivedOrders(q, cap = 60) {
         });
         if (out.length >= cap) return out;
       }
+    }
+  }
+  if (out.length < cap) {
+    const seen = new Set(out.map(r => r.batchId + '|' + r.order_number));
+    for (const row of hotCold.searchWhenReadable(process.env, DATA_DIR, needle, cap - out.length)) {
+      const id = row.batchId + '|' + row.order_number;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(row);
+      if (out.length >= cap) break;
     }
   }
   return out;
@@ -11769,7 +11867,13 @@ app.post('/api/waybill-lookup', (req, res) => {
       (o.po_number      && String(o.po_number).trim().toLowerCase() === q);
   });
   const order = bestScanLookup(matches, q);
-  if (!order) return res.status(404).json({ error: `No order for waybill: ${waybill}` });
+  if (!order) {
+    // Settled history may have left the hot file. The answer is read-only:
+    // the client shows it in Completed and does not open a scan screen.
+    const archived = hotCold.lookupWhenReadable(process.env, DATA_DIR, q);
+    if (archived) return res.json(archived);
+    return res.status(404).json({ error: `No order for waybill: ${waybill}` });
+  }
   // The others that answer to the same number — a duplicate upload of the
   // same shipment, usually — so the screen can say what it chose and why.
   const others = matches.filter(o => o !== order && !o.reference_only).map(o => ({
@@ -11813,6 +11917,67 @@ function bestScanLookup(matches, q) {
   return matches.map((o, i) => ({ o, i, r: scanLookupRank(o, q) }))
     .sort((a, b) => a.r - b.r || a.i - b.i)[0].o;
 }
+
+// ── Hot/cold order archive ───────────────────────────────────────────────────
+// writeDb stringifies the whole tenant db.json. Settled history older than
+// the window can leave that file for DATA_DIR/archive/cold/. Default is off:
+// nothing here runs unless HOT_COLD_ARCHIVE is read or on, and "on" only
+// permits an explicit move — there is no boot timer. Restore works with the
+// flag off, or a rollback has no door.
+app.get('/api/master/hot-cold-archive', (req, res) => {
+  if (!requireInboundAdmin(req, res, 'review the hot/cold archive')) return;
+  const db = readDb();
+  const mode = hotCold.modeFromEnv(process.env);
+  const plan = hotCold.planArchive(db, { windowDays: hotCold.windowDaysFromEnv(process.env) });
+  res.json(hotCold.summarisePlan(plan, mode));
+});
+
+app.post('/api/master/hot-cold-archive/run', async (req, res) => {
+  if (!requireInboundAdmin(req, res, 'move settled orders into the cold archive')) return;
+  const mode = hotCold.modeFromEnv(process.env);
+  if (!hotCold.movePermitted(mode)) {
+    return res.status(409).json({ error: 'Hot/cold archive is off. Set HOT_COLD_ARCHIVE=on, then run again. Nothing was moved.' });
+  }
+  if (String((req.body || {}).confirm || '') !== 'ARCHIVE') {
+    return res.status(400).json({ error: 'Type ARCHIVE to confirm. Nothing was moved.' });
+  }
+  const db = readDb();
+  const plan = hotCold.planArchive(db, { windowDays: hotCold.windowDaysFromEnv(process.env) });
+  const result = hotCold.applyPlan(hotCold.coldDir(DATA_DIR), db, plan);
+  if (!result.noop) {
+    writeDb(db);
+    await flushDb();
+    logAudit('hot_cold_archived', { movedBatches: result.movedBatches, movedOrders: result.movedOrders, shards: result.shards });
+  }
+  res.json({ ok: true, ...result, cutoff: plan.cutoffIso });
+});
+
+app.post('/api/master/hot-cold-archive/restore', async (req, res) => {
+  if (!requireInboundAdmin(req, res, 'restore the cold archive')) return;
+  if (String((req.body || {}).confirm || '') !== 'RESTORE') {
+    return res.status(400).json({ error: 'Type RESTORE to confirm. Nothing was changed.' });
+  }
+  const db = readDb();
+  const restored = hotCold.restoreAll(hotCold.coldDir(DATA_DIR), db);
+  if (restored.restored) {
+    writeDb(db);
+    await flushDb();
+    const file = tenantStore.tenantDbFile(tenantContext.currentTenantId());
+    let onDisk = '';
+    try { onDisk = fs.readFileSync(file, 'utf8'); } catch { onDisk = ''; }
+    if (restored.ids[0] && !onDisk.includes('"id":"' + restored.ids[0] + '"')) {
+      return res.status(500).json({
+        error: 'Restored into memory but the hot file on disk does not show it yet. Cold archive was left in place.',
+        restored: restored.restored, retired: false,
+      });
+    }
+  }
+  const retired = hotCold.retireCold(DATA_DIR);
+  if (restored.restored || retired.retired) {
+    logAudit('hot_cold_restored', { restored: restored.restored, retired: retired.retired });
+  }
+  res.json({ ok: true, restored: restored.restored, retired });
+});
 
 // ── Order claiming — one packer per order ────────────────────────────────────
 // Every station sees the same summary, so two packers could open the SAME
