@@ -4926,19 +4926,36 @@ to node; Railway SIGKILLed the container and read the kill as a crash.
   client_cancelled.at || updated_at`), and the newest of those is older than
   the window. Pending, processing, unknown, undated, and empty work batches
   stay hot forever. A completed order's scanned qty does not keep it hot.
-  A **reference_only** batch moves when `uploaded_at` is older than the window
-  and no order is processing/unknown and none has scanned qty. A reference
-  with scan progress stays hot. Cold search still returns reference rows;
-  waybill lookup does not open a scan screen on an archived row.
+  A **reference_only** batch (Betime Online and the other channel ledgers)
+  is settled when every order is `pending`, `done`, or `unprocessed` and none
+  has a scanned quantity — a missing state counts as pending, the same as
+  before. Under the default it still moves only when `uploaded_at` is older
+  than the window (a missing upload time stays hot, reason `reference-recent`).
+  **`HOT_COLD_ARCHIVE_REFERENCE=all_settled`** (or `reference=all_settled` on
+  one dry-run or one run) drops that age gate for reference batches only.
+  Anything else, including unset, `true`, or `on`, stays on the window.
+  The work window does not change. A reference stays hot forever when any
+  order is processing/unknown or any line has scanned qty, at any age.
+  Cold search still returns reference rows; waybill lookup answers with
+  `archived: true` and does not open a scan screen.
   Personal-data and marketplace purges walk cold shards even when the flag is
-  off. Rollback: `POST /api/master/hot-cold-archive/restore` with
+  off. **Dry run writes nothing** and works while the flag is `read` or `off`:
+  `GET /api/master/hot-cold-archive` (optional `?reference=all_settled`) or
+  `node scripts/hot-cold-archive.js --db <tenant db.json> [--reference all_settled]`.
+  The JSON names `referencePolicy`, `moveReferenceBatches`, `moveWorkBatches`,
+  and the kept reasons (`reference-recent` / `reference-open` /
+  `reference-scanned`). **A run still requires `HOT_COLD_ARCHIVE=on`.** The
+  reference knob does not move data by itself and nothing moves at boot.
+  After a backup, off-peak: `POST /api/master/hot-cold-archive/run` with
+  `{confirm:'ARCHIVE', reference:'all_settled'}` (omit `reference` to follow
+  the env), or stop the server and
+  `HOT_COLD_ARCHIVE=on node scripts/hot-cold-archive.js --db <tenant db.json> --run --server-stopped --reference all_settled`.
+  Rollback: `POST /api/master/hot-cold-archive/restore` with
   `confirm: 'RESTORE'` (works with the flag off) or
   `node scripts/hot-cold-archive.js --db <tenant db.json> --restore --server-stopped`
   after the server is stopped. Both flush the hot file and check the restored
   id is on disk before renaming `archive/cold` to `archive/cold-retired-<ts>`.
-  Or reload `db.json` from a nightly gzip and leave the retired dir. First
-  action on a live volume is the dry-run GET (or the CLI with no `--run`),
-  off-peak, after a backup.
+  Or reload `db.json` from a nightly gzip and leave the retired dir.
 - NIGHTLY BACKUP: gzipped full backup to `DATA_DIR/backups/` (keep 14) + emailed
   via configured mail, after 02:00 SGT (30-min checks + 2-min post-boot catch-up).
 - `/api/orders` accepts `?range=today|yesterday|week|all|range&from&to` — dashboard

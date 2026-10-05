@@ -4,9 +4,14 @@
 // The server holds db.json in memory and the next writeDb overwrites the
 // file, so --run and --restore refuse unless --server-stopped is passed.
 //
-//   node scripts/hot-cold-archive.js --db /data/tenants/default/db.json --dry-run
-//   HOT_COLD_ARCHIVE=on node scripts/hot-cold-archive.js --db ... --run --server-stopped
+//   node scripts/hot-cold-archive.js --db /data/tenants/default/db.json
+//   node scripts/hot-cold-archive.js --db ... --reference all_settled
+//   HOT_COLD_ARCHIVE=on node scripts/hot-cold-archive.js --db ... --run --server-stopped --reference all_settled
 //   node scripts/hot-cold-archive.js --db ... --restore --server-stopped
+//
+// --reference window|all_settled overrides HOT_COLD_ARCHIVE_REFERENCE for
+// this process. Omitted, the env is used, and anything other than
+// all_settled means the 28-day window (work batches always use the window).
 //
 // --data-dir overrides the volume root. Otherwise it is two directories
 // above the tenant file: .../tenants/default/db.json → the directory that
@@ -30,7 +35,11 @@ function die(msg) {
 
 const dbPath = arg('--db');
 if (!dbPath) {
-  die('Usage: node scripts/hot-cold-archive.js --db <tenant db.json> [--data-dir DIR] [--dry-run | --run --server-stopped | --restore --server-stopped]');
+  die('Usage: node scripts/hot-cold-archive.js --db <tenant db.json> [--data-dir DIR] [--reference window|all_settled] [--dry-run | --run --server-stopped | --restore --server-stopped]');
+}
+const referenceExplicit = has('--reference') ? arg('--reference') : undefined;
+if (has('--reference') && !referenceExplicit) {
+  die('--reference needs window or all_settled.');
 }
 const absDb = path.resolve(dbPath);
 const dataDir = arg('--data-dir')
@@ -49,6 +58,14 @@ function writeDbFile() {
   fs.writeFileSync(tmp, JSON.stringify(db));
   fs.renameSync(tmp, absDb);
 }
+function planFromArgs() {
+  const resolved = hotCold.resolveReferencePolicy(referenceExplicit, env);
+  if (resolved.error) die(resolved.error);
+  return hotCold.planArchive(db, {
+    windowDays: hotCold.windowDaysFromEnv(env),
+    referencePolicy: resolved.policy,
+  });
+}
 
 if (has('--run') && has('--restore')) die('Pass either --run or --restore, not both.');
 
@@ -59,10 +76,13 @@ if (has('--run')) {
   if (!has('--server-stopped')) {
     die('Refusing to write while a server may hold db.json in memory. Stop the server, then pass --server-stopped.');
   }
-  const plan = hotCold.planArchive(db, { windowDays: hotCold.windowDaysFromEnv(env) });
+  const plan = planFromArgs();
   const result = hotCold.applyPlan(hotCold.coldDir(dataDir), db, plan);
   if (!result.noop) writeDbFile();
-  console.log(JSON.stringify({ ...result, cutoff: plan.cutoffIso, dataDir, cold: hotCold.coldDir(dataDir) }, null, 2));
+  console.log(JSON.stringify({
+    ...result, cutoff: plan.cutoffIso, windowDays: plan.windowDays,
+    referencePolicy: plan.referencePolicy, dataDir, cold: hotCold.coldDir(dataDir),
+  }, null, 2));
   process.exit(0);
 }
 
@@ -81,7 +101,7 @@ if (has('--restore')) {
   process.exit(0);
 }
 
-const plan = hotCold.planArchive(db, { windowDays: hotCold.windowDaysFromEnv(env) });
+const plan = planFromArgs();
 console.log(JSON.stringify({
   ...hotCold.summarisePlan(plan, mode),
   dataDir,
