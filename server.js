@@ -47,6 +47,7 @@ const { validateRows } = require('./lib/validation');
 // which runs before every request, has to be able to read a key's tenant.
 const integration = require('./lib/integration');
 const hotCold = require('./lib/hot-cold-archive');
+const incrementalPersist = require('./lib/incremental-persist');
 
 // OCR parser for photo-based picklist upload
 const { parseOcrPicklist, looksLikeTrackingNumber } = require('./lib/ocr-parse');
@@ -1198,7 +1199,7 @@ function invalidateCustomHeadersCache() { _customHeadersCache = undefined; }
 function readDb() {
   const tenantId = tenantContext.currentTenantId();
   let cache = _dbCacheByTenant.get(tenantId);
-  if (cache) return cache;
+  if (cache) return incrementalPersist.enabled() ? incrementalPersist.track(tenantId, cache) : cache;
   try { cache = JSON.parse(fs.readFileSync(tenantStore.tenantDbFile(tenantId), 'utf8')); }
   catch { cache = { batches: [], inbound: [], transport: [], drivers: [], fixSchedules: {} }; }
   // Ensure all required fields exist
@@ -1215,7 +1216,7 @@ function readDb() {
     ];
   }
   _dbCacheByTenant.set(tenantId, cache);
-  return cache;
+  return incrementalPersist.enabled() ? incrementalPersist.track(tenantId, cache) : cache;
 }
 // Persist is ATOMIC (tmp file + rename) so a crash mid-write can never leave
 // a corrupt half-written db.json, and writes are serialized PER TENANT so
@@ -1228,38 +1229,120 @@ const _dbWritePending = new Map();   // tenantId -> bool
 // health check rather than guessing at. `_dbPersistStats` carries the last
 // size and duration; anything over DB_PERSIST_SLOW_MS is said in the log.
 const DB_PERSIST_SLOW_MS = 300;
-const _dbPersistStats = { bytes: 0, stringifyMs: 0, lastAt: null, writes: 0, coalesced: 0, slow: 0, maxMs: 0 };
+const _dbPersistStats = {
+  bytes: 0, stringifyMs: 0, lastAt: null, writes: 0, coalesced: 0, slow: 0, maxMs: 0,
+  mode: 'full', incrementalEnabled: false, stringifiedBytes: 0, reusedBytes: 0, lastDirty: '',
+};
+function _finishTenantPersist(tenantId) {
+  _dbWriting.set(tenantId, false);
+  if (_dbWritePending.get(tenantId)) { _dbWritePending.set(tenantId, false); setImmediate(() => _persistDb(tenantId)); }
+}
+function _notePersistCost(bytes, ms, extra) {
+  if (extra) {
+    _dbPersistStats.mode = extra.mode;
+    _dbPersistStats.incrementalEnabled = !!extra.incrementalEnabled;
+    _dbPersistStats.stringifiedBytes = extra.stringifiedBytes;
+    _dbPersistStats.reusedBytes = extra.reusedBytes;
+    _dbPersistStats.lastDirty = extra.lastDirty || '';
+  }
+  _dbPersistStats.bytes = bytes; _dbPersistStats.stringifyMs = ms; _dbPersistStats.lastAt = new Date().toISOString();
+  _dbPersistStats.writes++; if (ms > _dbPersistStats.maxMs) _dbPersistStats.maxMs = ms;
+  if (ms > DB_PERSIST_SLOW_MS) {
+    _dbPersistStats.slow++;
+    if (_dbPersistStats.slow <= 3 || _dbPersistStats.slow % 50 === 0) {
+      const mode = _dbPersistStats.mode || 'full';
+      console.warn(`[writeDb] serialising db.json (${(bytes / 1048576).toFixed(1)} MB, mode ${mode}) held the thread for ${ms} ms — every user waits for this on each write; the 12-month archive keeps it bounded, and Connections → Health Check shows the figure`);
+    }
+  }
+}
+// Stream assembled fragments to the tmp file in slices, yielding the event
+// loop about once per megabyte, then rename over db.json. _dbWriting stays
+// true until the rename finishes so flushDb and SIGTERM still wait.
+function _writeDbParts(tenantId, parts) {
+  const dbFile = tenantStore.tenantDbFile(tenantId);
+  const tmp = dbFile + '.tmp';
+  let stream;
+  try { stream = fs.createWriteStream(tmp); }
+  catch (e) { console.error('[writeDb] persist error:', e.message); _finishTenantPersist(tenantId); return; }
+  let pi = 0, off = 0, sinceYield = 0, failed = false;
+  function fail(err) {
+    if (failed) return;
+    failed = true;
+    console.error('[writeDb] persist error:', err && err.message);
+    try { stream.destroy(); } catch {}
+    fs.unlink(tmp, () => {});
+    _finishTenantPersist(tenantId);
+  }
+  stream.on('error', fail);
+  function pump() {
+    if (failed) return;
+    while (pi < parts.length) {
+      const p = parts[pi];
+      const buf = typeof p === 'string' ? Buffer.from(p) : p;
+      if (!buf || !buf.length) { pi++; off = 0; continue; }
+      while (off < buf.length) {
+        const end = Math.min(buf.length, off + 256 * 1024);
+        const slice = buf.subarray(off, end);
+        off = end;
+        sinceYield += slice.length;
+        const ok = stream.write(slice);
+        if (!ok) { stream.once('drain', pump); return; }
+        if (sinceYield >= 1024 * 1024) { sinceYield = 0; setImmediate(pump); return; }
+      }
+      pi++; off = 0;
+    }
+    stream.end();
+  }
+  stream.on('finish', () => {
+    if (failed) return;
+    fs.rename(tmp, dbFile, err2 => {
+      if (err2) console.error('[writeDb] rename error:', err2.message);
+      _finishTenantPersist(tenantId);
+    });
+  });
+  pump();
+}
 function _persistDb(tenantId) {
   if (_dbWriting.get(tenantId)) { _dbWritePending.set(tenantId, true); return; }
   _dbWriting.set(tenantId, true);
-  let json;
-  const t0 = Date.now();
-  try { json = JSON.stringify(_dbCacheByTenant.get(tenantId)); }
-  catch (e) { console.error('[writeDb] stringify error:', e.message); _dbWriting.set(tenantId, false); return; }
-  {
-    const ms = Date.now() - t0;
-    _dbPersistStats.bytes = json.length; _dbPersistStats.stringifyMs = ms; _dbPersistStats.lastAt = new Date().toISOString();
-    _dbPersistStats.writes++; if (ms > _dbPersistStats.maxMs) _dbPersistStats.maxMs = ms;
-    if (ms > DB_PERSIST_SLOW_MS) {
-      _dbPersistStats.slow++;
-      if (_dbPersistStats.slow <= 3 || _dbPersistStats.slow % 50 === 0) {
-        console.warn(`[writeDb] serialising db.json (${(json.length / 1048576).toFixed(1)} MB) held the thread for ${ms} ms — every user waits for this on each write; the 12-month archive keeps it bounded, and Connections → Health Check shows the figure`);
-      }
+  const data = _dbCacheByTenant.get(tenantId);
+  if (incrementalPersist.enabled()) {
+    const t0 = Date.now();
+    try {
+      const built = incrementalPersist.build(tenantId, data);
+      const ms = Date.now() - t0;
+      _notePersistCost(incrementalPersist.partsBytes(built.parts), ms, {
+        mode: built.fullRebuild ? 'rebuild' : 'incremental',
+        incrementalEnabled: true,
+        stringifiedBytes: built.stringifiedBytes,
+        reusedBytes: built.reusedBytes,
+        lastDirty: built.dirty,
+      });
+      _writeDbParts(tenantId, built.parts);
+      return;
+    } catch (e) {
+      console.error('[writeDb] incremental persist failed, falling back to full stringify:', e.message);
+      incrementalPersist.invalidate(tenantId);
     }
   }
+  let json;
+  const t0 = Date.now();
+  try { json = JSON.stringify(data); }
+  catch (e) { console.error('[writeDb] stringify error:', e.message); _dbWriting.set(tenantId, false); return; }
+  _notePersistCost(json.length, Date.now() - t0, {
+    mode: 'full', incrementalEnabled: false, stringifiedBytes: json.length, reusedBytes: 0, lastDirty: 'full',
+  });
   const dbFile = tenantStore.tenantDbFile(tenantId);
   const tmp = dbFile + '.tmp';
   fs.writeFile(tmp, json, err => {
     if (err) {
       console.error('[writeDb] persist error:', err.message);
-      _dbWriting.set(tenantId, false);
-      if (_dbWritePending.get(tenantId)) { _dbWritePending.set(tenantId, false); setImmediate(() => _persistDb(tenantId)); }
+      _finishTenantPersist(tenantId);
       return;
     }
     fs.rename(tmp, dbFile, err2 => {
       if (err2) console.error('[writeDb] rename error:', err2.message);
-      _dbWriting.set(tenantId, false);
-      if (_dbWritePending.get(tenantId)) { _dbWritePending.set(tenantId, false); setImmediate(() => _persistDb(tenantId)); }
+      _finishTenantPersist(tenantId);
     });
   });
 }
@@ -1304,6 +1387,8 @@ const DB_SCAN_PERSIST_DEBOUNCE_MS = parseInt(process.env.DB_SCAN_PERSIST_DEBOUNC
 const DB_SCAN_PERSIST_MAX_WAIT_MS = parseInt(process.env.DB_SCAN_PERSIST_MAX_WAIT_MS || '', 10) || 6000;
 function writeDb(data, opts) {
   const tenantId = tenantContext.currentTenantId();
+  data = incrementalPersist.unwrap(data);
+  if (incrementalPersist.enabled()) incrementalPersist.noteIdentity(tenantId, data);
   _dbCacheByTenant.set(tenantId, data);
   const lazy = !!(opts && opts.scanRate);
   if (lazy) _dbPersistStats.scanRateWrites = (_dbPersistStats.scanRateWrites || 0) + 1;
@@ -10230,7 +10315,7 @@ app.get('/api/version', (req, res) => {
     lastStopClean: PERSISTENCE.lastStopClean,
     uncleanStops:  PERSISTENCE.uncleanStops || 0,
     // What each db.json write costs the thread, and whether PDF work is off it.
-    db: { ..._dbPersistStats, debounceMs: DB_PERSIST_DEBOUNCE_MS, scanDebounceMs: DB_SCAN_PERSIST_DEBOUNCE_MS, scanMaxWaitMs: DB_SCAN_PERSIST_MAX_WAIT_MS },
+    db: { ..._dbPersistStats, incrementalEnabled: incrementalPersist.enabled(), debounceMs: DB_PERSIST_DEBOUNCE_MS, scanDebounceMs: DB_SCAN_PERSIST_DEBOUNCE_MS, scanMaxWaitMs: DB_SCAN_PERSIST_MAX_WAIT_MS },
     pdfWorker: pdfPool.snapshot(),
   });
 });
@@ -22327,8 +22412,8 @@ app.get('/api/master/connections/health', (req, res) => {
     // holds the thread, and whether PDF work is running on the worker thread
     // or has fallen back in-process.
     server: {
-      db: { ..._dbPersistStats, debounceMs: DB_PERSIST_DEBOUNCE_MS, scanDebounceMs: DB_SCAN_PERSIST_DEBOUNCE_MS, scanMaxWaitMs: DB_SCAN_PERSIST_MAX_WAIT_MS,
-        note: 'stringifyMs is how long the last db.json write held the request thread; every user waits for it. coalesced = writes folded into one by the debounce.' },
+      db: { ..._dbPersistStats, incrementalEnabled: incrementalPersist.enabled(), debounceMs: DB_PERSIST_DEBOUNCE_MS, scanDebounceMs: DB_SCAN_PERSIST_DEBOUNCE_MS, scanMaxWaitMs: DB_SCAN_PERSIST_MAX_WAIT_MS,
+        note: 'stringifyMs is how long the last db.json serialisation held the request thread; every user waits for it. coalesced = writes folded into one by the debounce. mode is full (legacy rewrite), rebuild (DB_INCREMENTAL_PERSIST on, fragments rebuilt), or incremental (flag on, only dirty pieces re-stringified). Unset the flag or set it off to restore the full rewrite.' },
       pdfWorker: pdfPool.snapshot(),
       gzip: true,
     },
