@@ -47,6 +47,9 @@ const { validateRows } = require('./lib/validation');
 // which runs before every request, has to be able to read a key's tenant.
 const integration = require('./lib/integration');
 const hotCold = require('./lib/hot-cold-archive');
+// Phase 1 selector only. DB_BACKEND=postgres is reported and still serves
+// tenant db.json. See docs/POSTGRES_MIGRATION.md. Not the MySQL TMS pool.
+const dbBackend = require('./lib/db-backend');
 
 // OCR parser for photo-based picklist upload
 const { parseOcrPicklist, looksLikeTrackingNumber } = require('./lib/ocr-parse');
@@ -10232,6 +10235,8 @@ app.get('/api/version', (req, res) => {
     // What each db.json write costs the thread, and whether PDF work is off it.
     db: { ..._dbPersistStats, debounceMs: DB_PERSIST_DEBOUNCE_MS, scanDebounceMs: DB_SCAN_PERSIST_DEBOUNCE_MS, scanMaxWaitMs: DB_SCAN_PERSIST_MAX_WAIT_MS },
     pdfWorker: pdfPool.snapshot(),
+    // Phase 1: always serving json. postgres is recognised and not cut over.
+    dbBackend: dbBackend.status(),
   });
 });
 
@@ -32664,6 +32669,8 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'Something went wrong at our end. It has been reported.' });
 });
+
+dbBackend.bootNotice();
 
 app.listen(PORT, () => console.log(`Fulfillment Scanner on port ${PORT}`))
   .on('error', err => {
