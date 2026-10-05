@@ -4913,6 +4913,32 @@ to node; Railway SIGKILLed the container and read the kill as a crash.
   move to `DATA_DIR/archive/archive-YYYY-MM.json` daily. Completed-tab search hits
   archives via `/api/orders/archived?q=`; completion-slip falls back to
   `readArchivedBatch`. Audit ledger unaffected.
+- HOT/COLD ORDER ARCHIVE (off until env says otherwise — not live by default):
+  `writeDb` still stringifies only the tenant `db.json`. `HOT_COLD_ARCHIVE` is
+  `off` (default; unknown values such as `1`/`true` are off), `read` (history
+  lookups may answer from cold, nothing moves), or `on` (an admin POST or the
+  CLI may move). `on` does **not** start a timer. `HOT_COLD_WINDOW_DAYS`
+  defaults to 28. Cold files are `DATA_DIR/archive/cold/batches-YYYY-MM.json`
+  plus `index.json` — not `archive-*.json`, so the 12-month job does not
+  rewrite them, and a scan does not either.
+  A **work** batch moves only when every order is `done` or `unprocessed`,
+  each has a settlement time (`endTime`, or `unprocessed_at ||
+  client_cancelled.at || updated_at`), and the newest of those is older than
+  the window. Pending, processing, unknown, undated, and empty work batches
+  stay hot forever. A completed order's scanned qty does not keep it hot.
+  A **reference_only** batch moves when `uploaded_at` is older than the window
+  and no order is processing/unknown and none has scanned qty. A reference
+  with scan progress stays hot. Cold search still returns reference rows;
+  waybill lookup does not open a scan screen on an archived row.
+  Personal-data and marketplace purges walk cold shards even when the flag is
+  off. Rollback: `POST /api/master/hot-cold-archive/restore` with
+  `confirm: 'RESTORE'` (works with the flag off) or
+  `node scripts/hot-cold-archive.js --db <tenant db.json> --restore --server-stopped`
+  after the server is stopped. Both flush the hot file and check the restored
+  id is on disk before renaming `archive/cold` to `archive/cold-retired-<ts>`.
+  Or reload `db.json` from a nightly gzip and leave the retired dir. First
+  action on a live volume is the dry-run GET (or the CLI with no `--run`),
+  off-peak, after a backup.
 - NIGHTLY BACKUP: gzipped full backup to `DATA_DIR/backups/` (keep 14) + emailed
   via configured mail, after 02:00 SGT (30-min checks + 2-min post-boot catch-up).
 - `/api/orders` accepts `?range=today|yesterday|week|all|range&from&to` — dashboard
