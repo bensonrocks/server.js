@@ -121,11 +121,92 @@ test('reference copies move only when settled and older than the window', () => 
     ref('ref-unknown', OLD, states({ R6: { status: 'holding' } }), [order('R6')]),
   ]};
   const plan = planOf(db);
+  assert.equal(plan.referencePolicy, 'window');
   assert.deepEqual(reasons(plan).sort(), ['ref-done', 'ref-old']);
   assert.equal(keptReason(db, 'ref-recent'), 'reference-recent');
   assert.equal(keptReason(db, 'ref-processing'), 'reference-open');
   assert.equal(keptReason(db, 'ref-unknown'), 'reference-open');
   assert.equal(keptReason(db, 'ref-scanned'), 'reference-scanned');
+});
+
+test('all_settled moves settled reference copies of any age and leaves work on the window', () => {
+  const ref = (id, uploaded, orderStates, statusOrders) => batch(id, statusOrders, orderStates, {
+    reference_only: true, uploaded_at: uploaded, client_name: 'Betime Online',
+  });
+  const db = { batches: [
+    ref('ref-recent', RECENT, states({ R1: { status: 'pending' } }), [order('R1', { waybill_number: 'TXSGD03911111' })]),
+    ref('ref-done-young', RECENT, states({ R2: done(RECENT) }), [order('R2')]),
+    ref('ref-undated', '', states({ R3: { status: 'unprocessed', unprocessed_at: RECENT } }), [order('R3')]),
+    ref('ref-processing', RECENT, states({ R4: { status: 'processing' } }), [order('R4')]),
+    ref('ref-scanned', RECENT, states({ R5: { status: 'pending', scanned: { SKU: 2 } } }), [order('R5')]),
+    ref('ref-unknown', OLD, states({ R6: { status: 'holding' } }), [order('R6')]),
+    ref('ref-scanned-old', OLD, states({ R7: { status: 'done', endTime: OLD, scanned: { SKU: 1 } } }), [order('R7')]),
+    batch('young-work', [order('Y1')], states({ Y1: done(RECENT) })),
+    batch('open-work', [order('O1')], states({ O1: { status: 'pending' } })),
+    batch('old-work', [order('W1')], states({ W1: done(OLD) })),
+  ]};
+  const windowed = planOf(db);
+  assert.deepEqual(reasons(windowed).sort(), ['old-work']);
+  assert.equal(windowed.moveReferenceBatches, 0);
+  assert.equal(keptReason(db, 'ref-recent'), 'reference-recent');
+  assert.equal(keptReason(db, 'ref-undated'), 'reference-recent');
+
+  const wide = hotCold.planArchive(db, { now: NOW, windowDays: 28, referencePolicy: 'all_settled' });
+  assert.equal(wide.referencePolicy, 'all_settled');
+  assert.deepEqual(reasons(wide).sort(), ['old-work', 'ref-done-young', 'ref-recent', 'ref-undated']);
+  assert.equal(wide.moveReferenceBatches, 3);
+  assert.equal(wide.moveWorkBatches, 1);
+  assert.equal(hotCold.batchDecision(db.batches.find(b => b.id === 'ref-processing'), wide.cutoffIso, 'all_settled').reason, 'reference-open');
+  assert.equal(hotCold.batchDecision(db.batches.find(b => b.id === 'ref-scanned'), wide.cutoffIso, 'all_settled').reason, 'reference-scanned');
+  assert.equal(hotCold.batchDecision(db.batches.find(b => b.id === 'ref-unknown'), wide.cutoffIso, 'all_settled').reason, 'reference-open');
+  assert.equal(hotCold.batchDecision(db.batches.find(b => b.id === 'ref-scanned-old'), wide.cutoffIso, 'all_settled').reason, 'reference-scanned');
+  assert.equal(hotCold.batchDecision(db.batches.find(b => b.id === 'young-work'), wide.cutoffIso, 'all_settled').reason, 'recent');
+  assert.equal(hotCold.batchDecision(db.batches.find(b => b.id === 'open-work'), wide.cutoffIso, 'all_settled').reason, 'open-work');
+
+  const summary = hotCold.summarisePlan(wide, 'read');
+  assert.equal(summary.referencePolicy, 'all_settled');
+  assert.equal(summary.moveReferenceBatches, 3);
+  assert.match(summary.note, /any age/);
+  assert.match(summary.note, /Nothing was written/);
+});
+
+test('a reference archived by all_settled is still a read-only history hit', () => {
+  const root = tmp();
+  const dir = hotCold.coldDir(root);
+  const db = { batches: [
+    batch('ref-young', [order('171174129789495', { waybill_number: 'TXSGD03922222', issue_no: 'GI-144900' })], states({
+      '171174129789495': { status: 'pending' },
+    }), { reference_only: true, uploaded_at: RECENT, client_name: 'Betime Online' }),
+    batch('work-young', [order('GI-KEEP')], states({ 'GI-KEEP': { status: 'pending' } }), { uploaded_at: RECENT }),
+  ]};
+  const plan = hotCold.planArchive(db, { now: NOW, windowDays: 28, referencePolicy: 'all_settled' });
+  const applied = hotCold.applyPlan(dir, db, plan);
+  assert.equal(applied.movedBatches, 1);
+  assert.deepEqual(db.batches.map(b => b.id), ['work-young']);
+  const hit = hotCold.lookupWhenReadable(READ, root, 'TXSGD03922222');
+  assert.equal(hit.order_number, '171174129789495');
+  assert.equal(hit.reference_only, true);
+  assert.equal(hit.archived, true);
+  assert.equal(hit.archive_tier, 'cold');
+  assert.match(hit.message, /channel reference/);
+  assert.match(hit.message, /not open for scanning/);
+  assert.equal(hotCold.lookupWhenReadable(READ, root, 'gi-144900').issue_no, 'GI-144900');
+  assert.equal(hotCold.searchWhenReadable(READ, root, '171174129789495')[0].client_name, 'Betime Online');
+  assert.equal(hotCold.lookupWhenReadable({ HOT_COLD_ARCHIVE: 'off' }, root, 'TXSGD03922222'), null);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('the reference policy defaults to the window and only all_settled widens it', () => {
+  assert.equal(hotCold.referencePolicyFromEnv({}), 'window');
+  assert.equal(hotCold.referencePolicyFromEnv({ HOT_COLD_ARCHIVE_REFERENCE: 'true' }), 'window');
+  assert.equal(hotCold.referencePolicyFromEnv({ HOT_COLD_ARCHIVE_REFERENCE: '1' }), 'window');
+  assert.equal(hotCold.referencePolicyFromEnv({ HOT_COLD_ARCHIVE_REFERENCE: 'on' }), 'window');
+  assert.equal(hotCold.referencePolicyFromEnv({ HOT_COLD_ARCHIVE_REFERENCE: 'ALL_SETTLED' }), 'all_settled');
+  assert.deepEqual(hotCold.resolveReferencePolicy(undefined, {}), { policy: 'window' });
+  assert.deepEqual(hotCold.resolveReferencePolicy('', { HOT_COLD_ARCHIVE_REFERENCE: 'all_settled' }), { policy: 'all_settled' });
+  assert.deepEqual(hotCold.resolveReferencePolicy('window', { HOT_COLD_ARCHIVE_REFERENCE: 'all_settled' }), { policy: 'window' });
+  assert.deepEqual(hotCold.resolveReferencePolicy('all_settled', {}), { policy: 'all_settled' });
+  assert.match(hotCold.resolveReferencePolicy('yes', {}).error, /window/);
 });
 
 test('lookup finds an archived order by number, waybill, GI and leading zeros, and ranks like the live scan bar', () => {
@@ -350,6 +431,9 @@ test('writeDb does not know about the cold archive, and the server consults it o
   const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(src, /hotCold\.withEachShard/);
   assert.match(src, /lookupWhenReadable/);
+  assert.equal((src.match(/hotCold\.applyPlan/g) || []).length, 1);
+  assert.match(src, /resolveReferencePolicy/);
+  assert.equal(src.includes('setInterval') && src.slice(src.indexOf('Hot/cold order archive'), src.indexOf('Order claiming')).includes('setInterval'), false);
   const start = src.indexOf('function writeDb(');
   const next = src.indexOf('\nfunction ', start + 1);
   const body = src.slice(start, next);
@@ -357,4 +441,7 @@ test('writeDb does not know about the cold archive, and the server consults it o
   assert.equal(body.includes('archive/cold'), false);
   const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
   assert.match(app, /data\.archived/);
+  const cli = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'hot-cold-archive.js'), 'utf8');
+  assert.match(cli, /resolveReferencePolicy/);
+  assert.match(cli, /--server-stopped/);
 });

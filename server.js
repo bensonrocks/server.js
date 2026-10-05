@@ -11924,12 +11924,28 @@ function bestScanLookup(matches, q) {
 // nothing here runs unless HOT_COLD_ARCHIVE is read or on, and "on" only
 // permits an explicit move — there is no boot timer. Restore works with the
 // flag off, or a rollback has no door.
+//
+// Work batches always use HOT_COLD_WINDOW_DAYS. Settled reference_only
+// batches (Betime Online) do too, unless this request passes
+// reference=all_settled or the process has HOT_COLD_ARCHIVE_REFERENCE=
+// all_settled. That still keeps a reference hot when it is open or scanned.
+function hotColdPlanForRequest(db, explicit) {
+  const resolved = hotCold.resolveReferencePolicy(explicit, process.env);
+  if (resolved.error) return resolved;
+  return {
+    plan: hotCold.planArchive(db, {
+      windowDays: hotCold.windowDaysFromEnv(process.env),
+      referencePolicy: resolved.policy,
+    }),
+  };
+}
 app.get('/api/master/hot-cold-archive', (req, res) => {
   if (!requireInboundAdmin(req, res, 'review the hot/cold archive')) return;
   const db = readDb();
   const mode = hotCold.modeFromEnv(process.env);
-  const plan = hotCold.planArchive(db, { windowDays: hotCold.windowDaysFromEnv(process.env) });
-  res.json(hotCold.summarisePlan(plan, mode));
+  const planned = hotColdPlanForRequest(db, req.query && req.query.reference);
+  if (planned.error) return res.status(400).json({ error: planned.error });
+  res.json(hotCold.summarisePlan(planned.plan, mode));
 });
 
 app.post('/api/master/hot-cold-archive/run', async (req, res) => {
@@ -11942,14 +11958,22 @@ app.post('/api/master/hot-cold-archive/run', async (req, res) => {
     return res.status(400).json({ error: 'Type ARCHIVE to confirm. Nothing was moved.' });
   }
   const db = readDb();
-  const plan = hotCold.planArchive(db, { windowDays: hotCold.windowDaysFromEnv(process.env) });
+  const planned = hotColdPlanForRequest(db, (req.body || {}).reference);
+  if (planned.error) return res.status(400).json({ error: planned.error });
+  const plan = planned.plan;
   const result = hotCold.applyPlan(hotCold.coldDir(DATA_DIR), db, plan);
   if (!result.noop) {
     writeDb(db);
     await flushDb();
-    logAudit('hot_cold_archived', { movedBatches: result.movedBatches, movedOrders: result.movedOrders, shards: result.shards });
+    logAudit('hot_cold_archived', {
+      movedBatches: result.movedBatches, movedOrders: result.movedOrders, shards: result.shards,
+      referencePolicy: plan.referencePolicy, windowDays: plan.windowDays,
+    });
   }
-  res.json({ ok: true, ...result, cutoff: plan.cutoffIso });
+  res.json({
+    ok: true, ...result, cutoff: plan.cutoffIso,
+    referencePolicy: plan.referencePolicy, windowDays: plan.windowDays,
+  });
 });
 
 app.post('/api/master/hot-cold-archive/restore', async (req, res) => {
