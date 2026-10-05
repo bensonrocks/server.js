@@ -11843,12 +11843,17 @@
         renderOrdersDash();
         fetchAndRenderStats();
         setTimeout(() => focusWaybillInput(), 350); // ready for the next order scan
-        if (completedOrder.has_order_label) {
-          showPrintOrderLabelModal(completedOrder);
-        } else if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
-          showPrintWaybillModal(completedOrder);
-        } else {
-          showPrintLabelPrompt(completedOrder);
+        // Phone scan layout (warehouse + ≤768px): labels are already on the
+        // parcel — skip the post-scan print prompt and just close. Desktop
+        // keeps the prompt as the last step after scanning.
+        if (!whMobileScanLayout()) {
+          if (completedOrder.has_order_label) {
+            showPrintOrderLabelModal(completedOrder);
+          } else if (completedOrder.has_waybill_pdf && completedOrder.batchId) {
+            showPrintWaybillModal(completedOrder);
+          } else {
+            showPrintLabelPrompt(completedOrder);
+          }
         }
       } else {
         showMismatchModal(data.mismatches);
