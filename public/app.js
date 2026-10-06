@@ -2409,7 +2409,7 @@
       if (p.error) {
         return `<span class="chip chip-sync-failed"${rp} title="The sales channel REFUSED this (${esc(act)}): ${esc(p.error)}. Retrying — click to try again now.">&#9888; Channel refused</span>`;
       }
-      return `<span class="chip chip-sync-queued" title="Waiting to tell the sales channel (${esc(act)}) — the background sync retries until it lands. Attempts so far: ${p.attempts || 0}.">&#8987; Telling channel…</span>`;
+      return `<span class="chip chip-sync-queued" title="Waiting to tell the sales channel (${esc(act)}) — the background sync retries until it lands. Attempts so far: ${p.attempts || 0}.${p.hold ? ' ' + esc(p.hold) + '.' : ''}">&#8987; Telling channel…</span>`;
     }
     if (p.state === 'failed') return `<span class="chip chip-sync-failed"${rp} title="Could not tell the sales channel after ${p.attempts} attempt(s): ${esc(p.error || 'unknown error')}. It keeps retrying — click to try again now.">&#9888; Channel not told</span>`;
     if (p.state === 'missing') return `<span class="chip chip-sync-failed" title="This order is finished here but nothing was queued for the sales channel — ${esc(p.why || '')}. Check the store's Complete action in Connections.">&#9888; Channel not told</span>`;
@@ -14552,6 +14552,26 @@
         });
       }
     }
+    const zfMpRts = document.getElementById('zfMarketplaceRtsConfirm');
+    if (zfMpRts) {
+      zfMpRts.checked = !!store?.marketplaceRtsConfirm;
+      if (!zfMpRts.dataset.wired) {
+        zfMpRts.dataset.wired = '1';
+        zfMpRts.addEventListener('change', e => {
+          if (!e.target.checked) return;
+          const ok = confirm(
+            'Confirm Ready-to-Ship from the marketplace\'s own status?\n\n'
+            + 'After a scan, IdealOne will treat the order as already Ready-to-Ship only when '
+            + 'Lazada says ready_to_ship (or later), Shopee says PROCESSED (or later), or TikTok '
+            + 'says AWAITING_COLLECTION (or later). Zort showing Completed is not enough.\n\n'
+            + 'It will send Ready-to-Ship when the marketplace still shows packed or pending, and '
+            + 'it will not record Picked Up from a future or unconfirmed hub time. Completion pushes '
+            + 'for this store are drained ahead of label jobs.\n\n'
+            + 'Leave this off to keep today\'s behaviour. Turn this on?');
+          if (!ok) e.target.checked = false;
+        });
+      }
+    }
     document.getElementById('zfLabelPath').value = store?.labelPath || '';
     const zfNew = document.getElementById('zfNewClientFromChannel');
     if (zfNew) {
@@ -14657,6 +14677,7 @@
       arrangeAtIntake: document.getElementById('zfArrangeIntake').checked,
       collectionSync: document.getElementById('zfCollectionSync')?.checked ?? true,
       rtsAtIntake: document.getElementById('zfRtsAtIntake')?.checked ?? false,
+      marketplaceRtsConfirm: document.getElementById('zfMarketplaceRtsConfirm')?.checked ?? false,
       cancelSync: document.getElementById('zfCancelSync')?.checked ?? false,
       labelPath: document.getElementById('zfLabelPath').value.trim(),
       // '' is a real value here — it clears the pin back to automatic.

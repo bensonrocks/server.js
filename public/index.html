@@ -2684,6 +2684,11 @@
               Marking an order <i>Packed</i> is only ZORT's own bookkeeping and never reaches the marketplace, so it cannot produce a waybill. Only <b>Ready&nbsp;to&nbsp;Ship</b> does &mdash; and it tells Lazada the parcel is ready for the courier, <b>before anything has been picked</b>. Turn this on only if having the label early is worth that. Lazada only (Shopee and TikTok need a pickup/dropoff choice this system will not guess). <b>Switch it off any time</b> &mdash; orders already queued fall back to just marking them Packed.
             </div>
             <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;cursor:pointer">
+              <input type="checkbox" id="zfMarketplaceRtsConfirm" style="width:16px;height:16px" />
+              <span><b>Confirm Ready-to-Ship from the marketplace, not from Zort</b></span>
+            </label>
+            <div class="hint" style="margin:.3rem 0 0">Off by default — leaving it off keeps today's behaviour, where Zort showing Completed counts as already Ready-to-Ship. With it on, after a scan IdealOne sends Ready-to-Ship whenever Lazada still says packed or pending, Shopee still says READY_TO_SHIP, or TikTok still says AWAITING_SHIPMENT, and it only marks the push sent once the marketplace itself has moved. It also will not record Picked Up from a future or unconfirmed hub time, and this store's completion pushes are drained ahead of label jobs. Orders already marked sent stay sent until someone uses Repush.</div>
+            <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;cursor:pointer">
               <input type="checkbox" id="zfCancelSync" style="width:16px;height:16px" />
               <span><b>&#9003; Void the order at the channel when we cancel it here</b></span>
             </label>
