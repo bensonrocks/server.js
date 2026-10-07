@@ -781,6 +781,7 @@
     if ((name === 'upload' || name === 'reports' || name === 'connections') && (currentUser?.role || 'admin') === 'warehouse') return;
     // Connections is ADMINISTRATOR-ONLY: same password gate as the
     // Administrator panel. Unlock once per session, then it opens freely.
+    if (name === 'connections' && !logUnlocked && currentUser?.features?.administrator === true) logUnlocked = true;
     if (name === 'connections' && !logUnlocked) {
       _pendingUnlockTab = 'connections';
       document.getElementById('logPasswordInput').value = '';
@@ -12096,6 +12097,12 @@
   document.getElementById('logAccessBtn').addEventListener('click', () => {
     if (logUnlocked) {
       openLogOverlay();
+    } else if (currentUser?.features?.administrator === true) {
+      // Administrator feature ticked for this user: the server accepts their
+      // session on admin routes, so no key is needed. LOG_PASSWORD stays ''.
+      logUnlocked = true;
+      openLogOverlay();
+      renderOrdersList();
     } else {
       document.getElementById('logPasswordInput').value = '';
       document.getElementById('logPasswordError').classList.add('hidden');
@@ -16625,6 +16632,7 @@
       ['reports',   '📊 Reports'],
     ];
     const f = user.features || {};
+    const isAdminFeat = f.administrator === true;
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.id = 'userFeaturesModal';
@@ -16638,6 +16646,10 @@
               <input type="checkbox" class="uf-toggle" value="${key}" ${f[key] === false ? '' : 'checked'} />
               <span>${label}</span>
             </label>`).join('')}
+          <label style="display:flex;gap:.6rem;align-items:center;padding:.5rem .7rem;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;font-size:13px;background:#fef2f2">
+            <input type="checkbox" class="uf-admin" value="administrator" ${isAdminFeat ? 'checked' : ''} />
+            <span>🔐 Administrator — open the Administrator area without the key</span>
+          </label>
         </div>
         <div style="display:flex;gap:.6rem">
           <button class="btn-primary" id="ufSaveBtn" style="flex:1">💾 Save</button>
@@ -16650,6 +16662,7 @@
       const features = {};
       modal.querySelectorAll('.uf-toggle').forEach(cb => { features[cb.value] = cb.checked; });
       if (!Object.values(features).some(Boolean)) { alert('At least one function must stay visible.'); return; }
+      features.administrator = modal.querySelector('.uf-admin').checked;
       try {
         const r = await fetch(`/api/master/users/${encodeURIComponent(user.id)}/features`, {
           method: 'PUT',
