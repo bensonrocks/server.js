@@ -10494,7 +10494,11 @@ app.use((req, res, next) => {
 // sessions never do).
 function userHasAdminFeature(userId) {
   if (!userId) return false;
-  const u = readUsers().find(x => x.id === userId);
+  // In-memory users only (the global cache is always warm once anyone has
+  // logged in). Cold cache = no grant, so this fails closed and never does
+  // disk I/O on the per-request path.
+  const users = (_globalCache && Array.isArray(_globalCache.users)) ? _globalCache.users : [];
+  const u = users.find(x => x.id === userId);
   return !!(u && u.features && u.features.administrator === true);
 }
 function grantAdminFeature(req) {
