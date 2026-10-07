@@ -10483,8 +10483,28 @@ app.use((req, res, next) => {
   // on the trail, and holds no session — so it can never kick a human off the
   // one-device-per-user seat, which is what sharing a staff login did.
   if (req.headers['x-api-key']) return apiKeyAuth(req, res, next);
-  requireAuth(req, res, next);
+  requireAuth(req, res, () => { grantAdminFeature(req); next(); });
 });
+// ── Per-user "Administrator" feature ─────────────────────────────────────────
+// A staff login whose features.administrator is EXPLICITLY true is treated as
+// holding the Administrator key for this request, so every existing master
+// gate (checkMaster, isMaster checks, /api/master/*) accepts their session.
+// Off unless ticked (absent/false = key still required). The key path itself
+// is unchanged. Only a real staff session reaches here (driver/portal/api-key
+// sessions never do).
+function userHasAdminFeature(userId) {
+  if (!userId) return false;
+  const u = readUsers().find(x => x.id === userId);
+  return !!(u && u.features && u.features.administrator === true);
+}
+function grantAdminFeature(req) {
+  try {
+    if (req.headers['x-master-key'] === MASTER_PASS) return;
+    if (!userHasAdminFeature(req.userId)) return;
+    req.headers['x-master-key'] = MASTER_PASS;
+    req.adminViaFeature = true;
+  } catch (_) { /* never let this break auth */ }
+}
 // A channel's reference copy is never work. Fenced by PATH, right behind the
 // auth gate, so every mutating scan / orders / waves route — present and
 // future — refuses a reference-only number without having to remember to.
@@ -28187,12 +28207,21 @@ app.put('/api/master/users/:id/features', (req, res) => {
   const incoming = req.body?.features || {};
   const features = {};
   for (const k of USER_FEATURE_KEYS) features[k] = incoming[k] !== false; // default true
+  // Administrator is the opposite: OFF unless explicitly ticked.
+  features.administrator = incoming.administrator === true;
+  const wasAdmin = users[idx].features?.administrator === true;
   users[idx].features = features;
   writeUsers(users);
   logAudit('user_features_updated', {
     userId: req.params.id,
     hidden: USER_FEATURE_KEYS.filter(k => !features[k]).join(',') || '(none)',
+    administrator: features.administrator,
+    by: req.userId || 'master',
   });
+  if (wasAdmin !== features.administrator) {
+    logAudit(features.administrator ? 'user_admin_feature_granted' : 'user_admin_feature_revoked',
+      { userId: req.params.id, by: req.userId || 'master', ...clientInfo(req) });
+  }
   res.json({ ok: true, features });
 });
 
