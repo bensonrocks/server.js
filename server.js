@@ -27847,9 +27847,69 @@ async function pullOnecartStore(db, store) {
     logAudit('sync_waybill_backfilled', { order: held.order.order_number, via, tracking });
   };
 
-  for (const d of queue.rows) {
+  // BLANK-SKU LINES → THE ORDER RECORD. /delivery_orders sometimes returns a
+  // line with sku null (and null price) while GET /orders/{id}?_fields=
+  // order_items has the SKU (StellarKBeauty Shopee 2610083JN2X503, 8 Oct
+  // 2026) — and the order was dropped as skippedNoLines on every pull. Only a
+  // queue row with a blank-SKU line (or no SKU line at all) that this pull
+  // would otherwise import is asked about; rows whose lines all carry a SKU
+  // never cost a call. Bounded: at most LINE_FB_MAX calls, a few at a time,
+  // each with its own timeout, inside one overall budget. A 429 stops the
+  // rest. A failed call leaves the row exactly as before (blank lines
+  // dropped → skippedNoLines if nothing is left).
+  const LINE_FB_MAX = 25, LINE_FB_TIMEOUT_MS = 8000, LINE_FB_CONCURRENCY = 4, LINE_FB_BUDGET_MS = 20000;
+  const lineFallback = { candidates: 0, attempted: 0, recovered: [], partial: [], noSkuOnOrder: [], errors: [], capped: 0 };
+  const fallbackById = new Map();
+  {
+    const cands = [];
+    for (const d of queue.rows) {
+      if (d == null || d.id == null || String(d.id) === '') continue;
+      if (!onecartApi.needsOrderItemsFallback(d)) continue;
+      const no = String(d.order_no || '').trim() || String(d.id);
+      const held = existing.get(no);
+      if (held && (isOurs(held, d.id) || !referenceMode)) continue;   // the loop below never imports it
+      if (onecartApi.isCancelledStatus(d.status) || onecartApi.isShippedStatus(d.status)) continue;
+      cands.push(d);
+    }
+    lineFallback.candidates = cands.length;
+    const toFetch = cands.slice(0, LINE_FB_MAX);
+    lineFallback.capped = cands.length - toFetch.length;
+    const deadline = Date.now() + LINE_FB_BUDGET_MS;
+    let next = 0, halt = false;
+    const worker = async () => {
+      while (!halt && next < toFetch.length) {
+        const d = toFetch[next++];
+        const no = String(d.order_no || '').trim() || String(d.id);
+        if (Date.now() > deadline) { lineFallback.errors.push({ order: no, error: 'line fallback budget spent for this pull' }); continue; }
+        lineFallback.attempted++;
+        try {
+          const items = await onecartApi.getOrderItems(store, d.id, { timeoutMs: LINE_FB_TIMEOUT_MS });
+          fallbackById.set(String(d.id), onecartApi.fillLinesFromOrderItems(d, items));
+        } catch (e) {
+          lineFallback.errors.push({ order: no, error: String(e.message || e).slice(0, 160), code: e.code || undefined });
+          if (e.status === 429 || e.code === 'RATE_LIMITED') halt = true;
+        }
+      }
+    };
+    if (toFetch.length) await Promise.all(Array.from({ length: Math.min(LINE_FB_CONCURRENCY, toFetch.length) }, worker));
+  }
+
+  for (const d0 of queue.rows) {
     fetched++;
+    const fb = d0 && d0.id != null ? fallbackById.get(String(d0.id)) : null;
+    const d = fb ? fb.order : d0;
     const m = onecartApi.mapDeliveryOrder(d, sweepByNo.get(String(d.order_no || '').trim()));
+    if (fb) {
+      // The source of EVERY line, on the trail and on the pull result.
+      const entry = { order: m.order_number, onecartId: m.meta.onecart_id, lines: fb.lines, unresolved: fb.unresolved };
+      const outcome = !m.rows.length ? 'no_sku_on_order' : (fb.unresolved ? 'partial' : (fb.recovered ? 'recovered' : 'unchanged'));
+      if (outcome === 'recovered') lineFallback.recovered.push(entry);
+      else if (outcome === 'partial') lineFallback.partial.push(entry);
+      else if (outcome === 'no_sku_on_order') lineFallback.noSkuOnOrder.push(entry);
+      logAudit('onecart_line_fallback', { storeId: store.id, client: store.clientName, ...entry, outcome });
+      console.log(`[onecart] ${store.clientName} ${m.order_number}: blank-SKU line(s) → order record: ${outcome}; lines ${fb.lines.map(l => `${l.sku}x${l.qty}<${l.source}${l.matchedBy ? '/' + l.matchedBy : ''}>`).join(', ') || 'none'}${fb.unresolved ? `; ${fb.unresolved} still blank` : ''}`);
+      if (m.rows.length && fb.recovered) m.meta.line_sources = fb.lines;
+    }
     const held = existing.get(String(m.order_number));
     if (held) {
       if (!isOurs(held, m.meta.onecart_id)) {
@@ -27934,6 +27994,9 @@ async function pullOnecartStore(db, store) {
       if (!o.platform) o.platform = m2.platform || '';
       if (!o.carrier)  o.carrier  = m2.carrier  || '';
       o.placed_at = m2.placed_at || null;
+      // Only on an order whose lines were completed from the order record:
+      // which line came from where (delivery_orders vs orders_fallback).
+      if (m2.line_sources) o.onecart_line_sources = m2.line_sources;
     }
     let tracked = false;
     // A REFERENCE record reserves nothing — it is not work, and the client's
@@ -27984,10 +28047,17 @@ async function pullOnecartStore(db, store) {
     heldElsewhere: heldElsewhere.slice(0, 20), heldElsewhereCount: heldElsewhere.length,
     trackingFilled, cancelled, cancelConflicts: cancelConflicts.slice(0, 20), confirmedLater, batchId,
     sweepRows: sweep.rows.length, queueTruncated: queue.truncated || undefined,
+    lineFallback: lineFallback.candidates ? {
+      candidates: lineFallback.candidates, attempted: lineFallback.attempted, capped: lineFallback.capped || undefined,
+      recovered: lineFallback.recovered.slice(0, 20), recoveredCount: lineFallback.recovered.length,
+      partial: lineFallback.partial.slice(0, 20), noSkuOnOrder: lineFallback.noSkuOnOrder.slice(0, 20),
+      errors: lineFallback.errors.slice(0, 10), errorCount: lineFallback.errors.length,
+    } : undefined,
     rateRemaining: (queue.rate && queue.rate.remaining != null) ? queue.rate.remaining : undefined,
   };
   writeDb(db);
-  logAudit('onecart_pull', { storeId: store.id, client: store.clientName, fetched, imported, skippedExisting, skippedNoLines: skippedNoLines.length, heldElsewhere: heldElsewhere.length, trackingFilled, cancelled, cancelConflicts: cancelConflicts.length });
+  logAudit('onecart_pull', { storeId: store.id, client: store.clientName, fetched, imported, skippedExisting, skippedNoLines: skippedNoLines.length, heldElsewhere: heldElsewhere.length, trackingFilled, cancelled, cancelConflicts: cancelConflicts.length,
+    ...(lineFallback.candidates ? { lineFallbackAttempted: lineFallback.attempted, lineFallbackRecovered: lineFallback.recovered.length, lineFallbackErrors: lineFallback.errors.length } : {}) });
   // A tracking number just filled on a reference copy is what ties it to the
   // picking-list order sharing that waybill — a label page that named only
   // the marketplace number may now have a work order to land on.
