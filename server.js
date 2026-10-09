@@ -144,6 +144,18 @@ async function runOcr(buffer, extraParams = {}, worker = null) {
 }
 
 const app    = express();
+// EVENT-LOOP LAG MONITOR (lib/loop-lag.js). Logs `[event-loop-lag]` whenever the
+// one request thread was blocked for more than LOOP_LAG_THRESHOLD_MS (default
+// 1000), naming the background jobs that were running and the oldest requests
+// in flight, so the next whole-process freeze is attributed exactly instead of
+// inferred from which requests happened to finish late. The same middleware
+// records scan activity, which the label auto-rematch sweep uses to stay out of
+// the floor's way. LOOP_LAG_MONITOR=off disables the logging (not the tracking).
+const loopLag = require('./lib/loop-lag');
+app.use(loopLag.middleware);
+if (!/^(0|off|false|no)$/i.test(String(process.env.LOOP_LAG_MONITOR || ''))) {
+  loopLag.start({ thresholdMs: Math.max(100, Number(process.env.LOOP_LAG_THRESHOLD_MS) || 1000) });
+}
 // GZIP EVERY COMPRESSIBLE RESPONSE. Railway's traffic chart showed 40–80 MB
 // egress bursts every few minutes against near-zero ingress: the orders list
 // JSON and the 1.2 MB app.js were going out raw, and on the phones the floor
@@ -8894,7 +8906,7 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
   // ocrForFields; the 30-day sweep deliberately does not.
   if (pages.some(p => (p.matchStatus === 'unmatched' || p.matchStatus === 'ambiguous')
                       && (!(p.rawText || '').trim() || !hasLabelKeyFields(p.extracted)))) {
-    setImmediate(() => rematchLabelImport(importId, false, { ocrForFields: true })
+    setImmediate(() => loopLag.trackJob('label-import-bg-rematch', () => rematchLabelImport(importId, false, { ocrForFields: true }))
       .catch(e => console.error('[label-ocr-bg]', e.message)));
   }
   // ocrSkipped was being dropped here, so the office screen showed
@@ -9230,13 +9242,21 @@ app.delete('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) =>
 // floor reported as lag last week. It is on for the Auto Match / Rematch All
 // button (somebody is waiting for it) and for the pass right after an upload
 // (one import, already the busy moment), and off for the sweep.
-async function rematchLabelImport(id, rematchAll, { ocrForFields = false } = {}) {
+// `matchIndex` lets the background sweep build the order index ONCE and share
+// it across every import it visits (it depends only on the order list, which
+// a rematch never changes). Callers that pass nothing get a fresh one, as before.
+// A page whose PDF has NO text layer parses to '' every time; that answer is
+// remembered for the life of the process (_labelNoTextLayer) so the sweep does
+// not re-read and re-parse the same image-only pages on every pass. The page
+// file never changes, so the result is identical.
+const _labelNoTextLayer = new Set();
+async function rematchLabelImport(id, rematchAll, { ocrForFields = false, matchIndex: sharedIndex = null } = {}) {
   const db  = readDb();
   const imp = (db.labelImports || []).find(i => i.id === id);
   if (!imp) return null;
   if (!db.orderLabels) db.orderLabels = {};
 
-  const matchIndex = buildLabelMatchIndex();
+  const matchIndex = sharedIndex || buildLabelMatchIndex();
 
   // Track which orders are already matched in THIS import (to detect duplicates)
   // order number → {pageIndex, confidence} — a Map, not a Set, so an exact
@@ -9266,11 +9286,13 @@ async function rematchLabelImport(id, rematchAll, { ocrForFields = false } = {})
     // Older imports predate stored rawText — re-parse the page PDF so the
     // reverse known-key scan can run on them too
     let rawText = page.rawText || '';
-    if (!rawText && pdfParse) {
+    const _ntlKey = `${tenantContext.currentTenantId()}:${id}:${page.pageFile}`;
+    if (!rawText && pdfParse && !_labelNoTextLayer.has(_ntlKey)) {
       try {
         const pageBuf = fs.readFileSync(path.join(LABEL_IMPORT_DIR, id, page.pageFile));
         rawText = (await pdfParse(pageBuf)).text || '';
         page.rawText = rawText.slice(0, 4000);
+        if (!rawText) _labelNoTextLayer.add(_ntlKey);
       } catch {}
     }
 
@@ -9516,36 +9538,126 @@ function rehomeReferenceLabels(db, trigger) {
   return { moved, freed, imports: [...touched] };
 }
 
-let _labelAutoRematchTimer = null;
-let _labelAutoRematching   = false;
+// THROTTLED, COALESCED, SCAN-AWARE (quick fix for the 40-92 s freezes, 9 Oct).
+// Every Zort/OneCart store-sync, upload and waybill event used to schedule a
+// sweep 5 s later, and each sweep rebuilt the order index once PER IMPORT and
+// re-read pages, all on the request thread. Now:
+//   - at most one sweep starts per LABEL_AUTO_REMATCH_MIN_INTERVAL_MS
+//     (default 10 min); triggers arriving in between are coalesced into the
+//     next sweep (and a trigger that lands DURING a sweep is no longer lost);
+//   - a sweep is held back while the floor is scanning (any /api/scan/* call in
+//     the last LABEL_AUTO_REMATCH_SCAN_QUIET_MS, default 60 s), and stops
+//     between imports if scanning resumes, the rest carried to the next pass;
+//     after LABEL_AUTO_REMATCH_MAX_DEFER_MS (default 30 min) of pending work it
+//     runs anyway, so labels can never be starved;
+//   - the order index is built once per sweep and shared by every import, and
+//     the loop yields between imports so waiting requests get served.
+// Which pages match, and to what, is unchanged: the same rematchLabelImport,
+// the same 30-day / unmatched-or-ambiguous selection. Labels for late orders
+// may just attach a few minutes later. Per tenant, as readDb is.
+const _envMs = (k, d) => { const v = Number(process.env[k]); return Number.isFinite(v) && v >= 0 ? v : d; };
+const LABEL_AUTO_REMATCH_DEBOUNCE_MS     = _envMs('LABEL_AUTO_REMATCH_DEBOUNCE_MS', 5000);
+const LABEL_AUTO_REMATCH_MIN_INTERVAL_MS = _envMs('LABEL_AUTO_REMATCH_MIN_INTERVAL_MS', 10 * 60 * 1000);
+const LABEL_AUTO_REMATCH_SCAN_QUIET_MS   = _envMs('LABEL_AUTO_REMATCH_SCAN_QUIET_MS', 60 * 1000);
+const LABEL_AUTO_REMATCH_MAX_DEFER_MS    = _envMs('LABEL_AUTO_REMATCH_MAX_DEFER_MS', 30 * 60 * 1000);
+const _labelSweepState = new Map();   // tenantId -> state
+function _labelSweep(tid) {
+  let st = _labelSweepState.get(tid);
+  if (!st) {
+    st = { timer: null, running: false, triggers: new Set(), firstPendingAt: 0, lastStartAt: 0, deferrals: 0, lastDeferLogAt: 0 };
+    _labelSweepState.set(tid, st);
+  }
+  return st;
+}
+function _armLabelSweep(tid, st, minDelay) {
+  if (st.timer || st.running) return;
+  const sinceLast = st.lastStartAt ? Date.now() - st.lastStartAt : Infinity;
+  const delay = Math.max(minDelay, LABEL_AUTO_REMATCH_MIN_INTERVAL_MS - sinceLast);
+  st.timer = setTimeout(() => {
+    st.timer = null;
+    tenantContext.run(tid, () => {
+      _runLabelSweep(tid, st).catch(e => console.error('[label-auto-rematch]', e.message));
+    });
+  }, Math.max(0, delay));
+  st.timer.unref?.();
+}
 function scheduleLabelAutoRematch(trigger) {
-  if (_labelAutoRematchTimer) return;
-  _labelAutoRematchTimer = setTimeout(async () => {
-    _labelAutoRematchTimer = null;
-    if (_labelAutoRematching) return;
-    _labelAutoRematching = true;
-    try {
-      const db = readDb();
-      const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
-      const due = (db.labelImports || [])
-        .filter(i => (Date.parse(i.uploadedAt || '') || 0) > cutoff &&
-                     // AMBIGUOUS pages are swept as well as unmatched ones: the
-                     // page named two orders, and the order list is exactly what
-                     // decides that — a later upload or a deletion can settle it.
-                     (i.pages || []).some(p => p.matchStatus === 'unmatched' || p.matchStatus === 'ambiguous'))
-        .map(i => i.id);
-      for (const id of due) {
-        try {
-          const r = await rematchLabelImport(id, false);
-          if (r && r.newMatches > 0) {
-            console.log(`[label-auto-rematch] ${trigger}: import ${id} +${r.newMatches} match(es)`);
-            logAudit('labels_auto_matched', { importId: id, newMatches: r.newMatches, trigger });
-          }
-        } catch (e) { console.error('[label-auto-rematch]', id, e.message); }
-      }
-    } catch (e) { console.error('[label-auto-rematch]', e.message); }
-    finally { _labelAutoRematching = false; }
-  }, 5000);
+  const tid = tenantContext.currentTenantId();
+  const st = _labelSweep(tid);
+  st.triggers.add(trigger || 'unknown');
+  if (!st.firstPendingAt) st.firstPendingAt = Date.now();
+  _armLabelSweep(tid, st, LABEL_AUTO_REMATCH_DEBOUNCE_MS);
+}
+async function _runLabelSweep(tid, st) {
+  if (st.running) return;
+  const now = Date.now();
+  const forced = st.firstPendingAt && now - st.firstPendingAt >= LABEL_AUTO_REMATCH_MAX_DEFER_MS;
+  const sinceScan = loopLag.msSinceScan(now);
+  if (!forced && sinceScan < LABEL_AUTO_REMATCH_SCAN_QUIET_MS) {
+    st.deferrals++;
+    if (now - st.lastDeferLogAt > 5 * 60 * 1000) {
+      st.lastDeferLogAt = now;
+      console.log(`[label-auto-rematch] deferred: scanning active (${Math.round(sinceScan / 1000)}s ago); pending ${[...st.triggers].join('+')} for ${Math.round((now - st.firstPendingAt) / 1000)}s; deferrals ${st.deferrals}`);
+    }
+    st.timer = setTimeout(() => {
+      st.timer = null;
+      tenantContext.run(tid, () => { _runLabelSweep(tid, st).catch(e => console.error('[label-auto-rematch]', e.message)); });
+    }, Math.max(5000, LABEL_AUTO_REMATCH_SCAN_QUIET_MS - sinceScan + 1000));
+    st.timer.unref?.();
+    return;
+  }
+  st.running = true;
+  st.lastStartAt = now;
+  const pendingSince = st.firstPendingAt;
+  const trigger = [...st.triggers].join('+') || 'unknown';
+  st.triggers.clear();
+  st.firstPendingAt = 0;
+  st.deferrals = 0;
+  loopLag.beginJob('label-auto-rematch');
+  let visited = 0, gained = 0, due = [], stoppedForScan = false, indexMs = 0;
+  try {
+    const db = readDb();
+    const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+    due = (db.labelImports || [])
+      .filter(i => (Date.parse(i.uploadedAt || '') || 0) > cutoff &&
+                   // AMBIGUOUS pages are swept as well as unmatched ones: the
+                   // page named two orders, and the order list is exactly what
+                   // decides that — a later upload or a deletion can settle it.
+                   (i.pages || []).some(p => p.matchStatus === 'unmatched' || p.matchStatus === 'ambiguous'))
+      .map(i => i.id);
+    let matchIndex = null;
+    if (due.length) {
+      const t0 = Date.now();
+      matchIndex = buildLabelMatchIndex();
+      indexMs = Date.now() - t0;
+    }
+    for (const id of due) {
+      // Let waiting requests (scans first of all) through between imports.
+      await new Promise(r => setImmediate(r));
+      if (!forced && loopLag.lastScanAt() > now) { stoppedForScan = true; break; }
+      try {
+        const r = await rematchLabelImport(id, false, { matchIndex });
+        visited++;
+        if (r && r.newMatches > 0) {
+          gained += r.newMatches;
+          console.log(`[label-auto-rematch] ${trigger}: import ${id} +${r.newMatches} match(es)`);
+          logAudit('labels_auto_matched', { importId: id, newMatches: r.newMatches, trigger });
+        }
+      } catch (e) { console.error('[label-auto-rematch]', id, e.message); }
+    }
+  } catch (e) { console.error('[label-auto-rematch]', e.message); }
+  finally {
+    loopLag.endJob('label-auto-rematch');
+    st.running = false;
+    const ms = Date.now() - now;
+    console.log(`[label-auto-rematch] sweep ${trigger}: ${visited}/${due.length} import(s), +${gained} match(es), index ${indexMs}ms, total ${ms}ms`
+      + (forced ? ' (ran after max defer)' : '') + (stoppedForScan ? ' (paused: scanning resumed; rest next pass)' : ''));
+    if (stoppedForScan) {
+      st.triggers.add('resume');
+      if (!st.firstPendingAt) st.firstPendingAt = pendingSince || now;
+    }
+    if (st.triggers.size) _armLabelSweep(tid, st, LABEL_AUTO_REMATCH_DEBOUNCE_MS);
+  }
 }
 
 app.post('/api/label-imports/:id/rematch', requireAuth, async (req, res) => {
@@ -20119,6 +20231,9 @@ function sgHour(d = new Date()) {
   return parseInt(_SG_HOUR_FMT.format(d), 10);
 }
 async function runNightlyBackup(reason) {
+  return loopLag.trackJob('backup', () => _runNightlyBackup(reason));
+}
+async function _runNightlyBackup(reason) {
   const day  = sgDateStr();
   const file = path.join(BACKUP_DIR, `idealone-backup-${day}.json.gz`);
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -27403,7 +27518,7 @@ setInterval(async () => {
       if (!store.enabled || !(store.autoPullMinutes > 0)) continue;
       const last = store.lastPullAt ? new Date(store.lastPullAt).getTime() : 0;
       if (Date.now() - last < store.autoPullMinutes * 60000) continue;
-      try { await pullZortStore(db, store); }
+      try { await loopLag.trackJob('zort-auto-pull', () => pullZortStore(db, store)); }
       catch (e) { console.error(`[zort] auto-pull failed (${store.clientName || store.storename || store.id}):`, e.message); }
     }
   } catch (e) { console.error('[zort] scheduler error:', e.message); }
@@ -27689,7 +27804,7 @@ setInterval(async () => {
       if (!store.enabled || !(store.autoPullMinutes > 0)) continue;
       const last = store.lastPullAt ? new Date(store.lastPullAt).getTime() : 0;
       if (Date.now() - last < store.autoPullMinutes * 60000) continue;
-      try { await pullShopifyStore(db, store); }
+      try { await loopLag.trackJob('shopify-auto-pull', () => pullShopifyStore(db, store)); }
       catch (e) { store.lastResult = { at: new Date().toISOString(), error: String(e.message).slice(0, 300) }; writeDb(db); }
     }
   } catch (e) { console.error('[shopify] scheduler error:', e.message); }
@@ -28310,7 +28425,7 @@ setInterval(async () => {
       if (!store.enabled || !(store.autoPullMinutes > 0)) continue;
       const last = store.lastPullAt ? new Date(store.lastPullAt).getTime() : 0;
       if (Date.now() - last < store.autoPullMinutes * 60000) continue;
-      try { await pullOnecartStore(db, store); }
+      try { await loopLag.trackJob('onecart-auto-pull', () => pullOnecartStore(db, store)); }
       catch (e) { store.lastResult = { at: new Date().toISOString(), error: String(e.message).slice(0, 300), requestId: e.requestId || '' }; writeDb(db); }
     }
   } catch (e) { console.error('[onecart] scheduler error:', e.message); }

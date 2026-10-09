@@ -504,7 +504,11 @@
       "browser": false,
       "selfBoots": true,
       "tier": "ci",
-      "timeoutMs": 420000
+      "timeoutMs": 420000,
+      "env": {
+        "LABEL_AUTO_REMATCH_MIN_INTERVAL_MS": "0",
+        "LABEL_AUTO_REMATCH_SCAN_QUIET_MS": "0"
+      }
     },
     {
       "file": "perf-e2e.js",
