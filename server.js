@@ -885,6 +885,39 @@ function tenantMiddleware(req, res, next) {
   tenantContext.run(_resolveTenantId(req), () => next());
 }
 app.use(tenantMiddleware);
+// ── ADMINISTRATOR FEATURE, AHEAD OF EVERY /api/master/* ROUTE ────────────────
+// PR #54's grant ran only inside the main auth gate further down. Express runs
+// handlers in REGISTRATION order, and ~31 master routes (Onboard Client
+// profiles, client-data, portal logins, item master, rate cards, billing,
+// PII purge, system errors) are registered BEFORE that gate — so a session
+// holding the Administrator feature sent `x-master-key: ''`, never reached the
+// grant, and checkMaster() answered 403. The Onboard Client list then read the
+// 403 as "No clients yet".
+// This runs the SAME grant up front for /api/master/* only. Unchanged rules:
+//   - the real key path is untouched (a correct key is left alone);
+//   - only a real STAFF session counts (driver:/portal: sessions skipped, an
+//     unknown/absent token grants nothing and does NOT 401 here — the route or
+//     the main gate still decides);
+//   - the feature is default-OFF and read from in-memory users only
+//     (userHasAdminFeature), so nobody can grant it to themselves here.
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/master/')) return next();
+  try {
+    if (req.headers['x-master-key'] !== MASTER_PASS) {
+      const token = req.headers['x-auth-token'];
+      if (token) {
+        for (const [userId, t] of activeSessions) {
+          if (userId.startsWith('driver:') || userId.startsWith('portal:')) continue;
+          if (t === token) {
+            if (userHasAdminFeature(userId)) { req.userId = userId; grantAdminFeature(req); }
+            break;
+          }
+        }
+      }
+    }
+  } catch (_) { /* never let this break a request */ }
+  next();
+});
 // multer's multipart parsing does not reliably propagate AsyncLocalStorage
 // context through its internal (pre-AsyncResource) event-emitter machinery —
 // verified empirically: the tenant context set by tenantMiddleware above is

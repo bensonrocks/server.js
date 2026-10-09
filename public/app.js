@@ -12814,11 +12814,24 @@
     const mkJson = () => ({ 'x-master-key': LOG_PASSWORD, 'Content-Type': 'application/json' });
 
     let knownClients = []; // names from profiles + batches + inventory (picker)
+    // A refused or failed load is NOT "no clients". Showing "No clients yet"
+    // on a 403 is what made 25 live profiles look deleted (Oct 2026).
+    let loadError = '';
     async function load() {
+      loadError = '';
       try {
         const r = await fetch('/api/master/client-profiles', { headers: mk() });
-        profiles = r.ok ? await r.json() : [];
-      } catch { profiles = []; }
+        if (r.ok) profiles = await r.json();
+        else {
+          profiles = [];
+          loadError = (r.status === 401 || r.status === 403)
+            ? `Not authorised to load clients (HTTP ${r.status}). Your client records are NOT deleted — re-open Administrator with the key, or ask an admin to tick the Administrator feature for your login.`
+            : `Could not load clients (HTTP ${r.status}). Your client records are NOT deleted — try again.`;
+        }
+      } catch (e) {
+        profiles = [];
+        loadError = 'Could not reach the server to load clients. Your client records are NOT deleted — try again.';
+      }
       try {
         const r2 = await fetch('/api/master/client-data/clients', { headers: mk() });
         const d2 = r2.ok ? await r2.json() : { clients: [] };
@@ -12831,6 +12844,7 @@
     function renderList() {
       const el = $('obClientList');
       if (!el) return;
+      if (loadError) { el.innerHTML = `<div class="empty-state ob-load-error" role="alert" style="padding:1rem;color:#b91c1c">⚠ ${esc(loadError)}</div>`; return; }
       if (!profiles.length) { el.innerHTML = '<div class="empty-state" style="padding:1rem">No clients yet — click + New.</div>'; return; }
       el.innerHTML = profiles.map(p => {
         const pend = (p.instructions || []).filter(i => i.status === 'Processing').length;
