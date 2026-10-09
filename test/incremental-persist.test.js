@@ -190,3 +190,107 @@ test('server keeps the legacy stringify and gates the incremental path', () => {
   assert.match(writeBody, /incrementalPersist\.unwrap/);
   assert.match(src, /function readDb\([\s\S]*incrementalPersist\.track/);
 });
+
+test('periodic rebuild waits for idle window, then runs; max-defer forces', () => {
+  const prev = { ...process.env };
+  process.env.DB_INCREMENTAL_PERSIST = 'on';
+  process.env.DB_INCREMENTAL_REBUILD_MS = '1000';
+  process.env.DB_INCREMENTAL_REBUILD_IDLE_MS = '500';
+  process.env.DB_INCREMENTAL_REBUILD_MAX_DEFER_MS = '5000';
+  delete process.env.DB_INCREMENTAL_REBUILD_OFFPEAK;
+
+  const raw = {
+    batches: [{ id: 'b1', orders: [{ sku: '1', qty: 1 }], orderStates: { 'GI-1': { status: 'pending', scanned: {} } } }],
+    auditLog: [],
+  };
+  const tid = 'idle-' + Date.now();
+  const db = inc.track(tid, raw);
+  let built = inc.build(tid, raw, { now: 1_000_000 });
+  assert.equal(built.fullRebuild, true);
+  assert.equal(built.rebuildReason, 'prime');
+
+  // Due (now past lastFullAt+1000) but a write landed 50ms ago → wait-idle
+  db.batches[0].orderStates['GI-1'].scanned['1'] = 1;
+  inc.noteActivity(tid, 1_001_150);
+  built = inc.build(tid, raw, { now: 1_001_200 });
+  assert.equal(built.fullRebuild, false, 'should wait for idle');
+  assert.equal(built.rebuildReason, 'wait-idle');
+
+  // Quiet for >= 500ms since last activity
+  built = inc.build(tid, raw, { now: 1_001_700 });
+  assert.equal(built.fullRebuild, true);
+  assert.equal(built.rebuildReason, 'due');
+
+  // Max-defer forces even while busy
+  const tid2 = 'defer-' + Date.now();
+  const raw2 = JSON.parse(JSON.stringify(raw));
+  inc.track(tid2, raw2);
+  built = inc.build(tid2, raw2, { now: 2_000_000 });
+  assert.equal(built.rebuildReason, 'prime');
+  inc.noteActivity(tid2, 2_006_000);
+  built = inc.build(tid2, raw2, { now: 2_006_500 });
+  assert.equal(built.fullRebuild, true);
+  assert.equal(built.rebuildReason, 'max-defer');
+
+  for (const k of Object.keys(process.env)) {
+    if (!(k in prev)) delete process.env[k];
+  }
+  Object.assign(process.env, prev);
+});
+
+test('off-peak window gates rebuild until SGT window (or max-defer)', () => {
+  const prev = { ...process.env };
+  process.env.DB_INCREMENTAL_PERSIST = 'on';
+  process.env.DB_INCREMENTAL_REBUILD_MS = '1000';
+  process.env.DB_INCREMENTAL_REBUILD_IDLE_MS = '0'; // idle always ok
+  process.env.DB_INCREMENTAL_REBUILD_MAX_DEFER_MS = '10000'; // 10000
+  process.env.DB_INCREMENTAL_REBUILD_OFFPEAK = '22:00-06:00';
+
+  // Pick a UTC instant that is 12:00 SGT (UTC+8) → 04:00 UTC
+  // 2026-10-09T04:00:00Z = 12:00 SGT — outside 22:00-06:00
+  const noonSgt = Date.parse('2026-10-09T04:00:00.000Z');
+  assert.equal(inc.inRebuildOffPeak(noonSgt, '22:00-06:00'), false);
+  const nightSgt = Date.parse('2026-10-09T16:00:00.000Z'); // 00:00 SGT next calendar... 16:00Z = 00:00 SGT
+  assert.equal(inc.inRebuildOffPeak(nightSgt, '22:00-06:00'), true);
+
+  const tid = 'offpeak-' + Date.now();
+  const raw = { batches: [], auditLog: [] };
+  inc.track(tid, raw);
+  let built = inc.build(tid, raw, { now: noonSgt });
+  assert.equal(built.rebuildReason, 'prime');
+  built = inc.build(tid, raw, { now: noonSgt + 2000 });
+  assert.equal(built.fullRebuild, false);
+  assert.equal(built.rebuildReason, 'wait-offpeak');
+  built = inc.build(tid, raw, { now: noonSgt + 12_000 });
+  assert.equal(built.fullRebuild, true);
+  assert.equal(built.rebuildReason, 'max-defer');
+
+  for (const k of Object.keys(process.env)) {
+    if (!(k in prev)) delete process.env[k];
+  }
+  Object.assign(process.env, prev);
+});
+
+test('IDLE_MS=0 restores immediate rebuild-when-due (legacy)', () => {
+  const prev = { ...process.env };
+  process.env.DB_INCREMENTAL_PERSIST = 'on';
+  process.env.DB_INCREMENTAL_REBUILD_MS = '1000';
+  process.env.DB_INCREMENTAL_REBUILD_IDLE_MS = '0';
+  process.env.DB_INCREMENTAL_REBUILD_MAX_DEFER_MS = '0';
+  delete process.env.DB_INCREMENTAL_REBUILD_OFFPEAK;
+
+  const tid = 'legacy-' + Date.now();
+  const raw = { batches: [{ id: 'b', orders: [], orderStates: {} }], auditLog: [] };
+  inc.track(tid, raw);
+  let built = inc.build(tid, raw, { now: 5_000_000 });
+  assert.equal(built.rebuildReason, 'prime');
+  inc.noteActivity(tid, 5_001_500); // would have blocked if idle gate on
+  built = inc.build(tid, raw, { now: 5_001_500 });
+  assert.equal(built.fullRebuild, true);
+  assert.equal(built.rebuildReason, 'due');
+
+  for (const k of Object.keys(process.env)) {
+    if (!(k in prev)) delete process.env[k];
+  }
+  Object.assign(process.env, prev);
+});

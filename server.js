@@ -1234,6 +1234,7 @@ const DB_PERSIST_SLOW_MS = 300;
 const _dbPersistStats = {
   bytes: 0, stringifyMs: 0, lastAt: null, writes: 0, coalesced: 0, slow: 0, maxMs: 0,
   mode: 'full', incrementalEnabled: false, stringifiedBytes: 0, reusedBytes: 0, lastDirty: '',
+  rebuildReason: '', rebuildDeferred: 0,
 };
 function _finishTenantPersist(tenantId) {
   _dbWriting.set(tenantId, false);
@@ -1246,6 +1247,8 @@ function _notePersistCost(bytes, ms, extra) {
     _dbPersistStats.stringifiedBytes = extra.stringifiedBytes;
     _dbPersistStats.reusedBytes = extra.reusedBytes;
     _dbPersistStats.lastDirty = extra.lastDirty || '';
+    if (extra.rebuildReason != null) _dbPersistStats.rebuildReason = extra.rebuildReason;
+    if (extra.rebuildDeferred != null) _dbPersistStats.rebuildDeferred = extra.rebuildDeferred;
   }
   _dbPersistStats.bytes = bytes; _dbPersistStats.stringifyMs = ms; _dbPersistStats.lastAt = new Date().toISOString();
   _dbPersistStats.writes++; if (ms > _dbPersistStats.maxMs) _dbPersistStats.maxMs = ms;
@@ -1319,6 +1322,8 @@ function _persistDb(tenantId) {
         stringifiedBytes: built.stringifiedBytes,
         reusedBytes: built.reusedBytes,
         lastDirty: built.dirty,
+        rebuildReason: built.rebuildReason || '',
+        rebuildDeferred: built.rebuildDeferred || 0,
       });
       _writeDbParts(tenantId, built.parts);
       return;
@@ -1390,7 +1395,12 @@ const DB_SCAN_PERSIST_MAX_WAIT_MS = parseInt(process.env.DB_SCAN_PERSIST_MAX_WAI
 function writeDb(data, opts) {
   const tenantId = tenantContext.currentTenantId();
   data = incrementalPersist.unwrap(data);
-  if (incrementalPersist.enabled()) incrementalPersist.noteIdentity(tenantId, data);
+  if (incrementalPersist.enabled()) {
+    incrementalPersist.noteIdentity(tenantId, data);
+    // Keep rebuild-idle clock fresh on every write (scans included) so a
+    // periodic full rebuild waits for a quiet window during floor bursts.
+    incrementalPersist.noteActivity(tenantId);
+  }
   _dbCacheByTenant.set(tenantId, data);
   const lazy = !!(opts && opts.scanRate);
   if (lazy) _dbPersistStats.scanRateWrites = (_dbPersistStats.scanRateWrites || 0) + 1;
@@ -22472,7 +22482,7 @@ app.get('/api/master/connections/health', (req, res) => {
     // or has fallen back in-process.
     server: {
       db: { ..._dbPersistStats, incrementalEnabled: incrementalPersist.enabled(), debounceMs: DB_PERSIST_DEBOUNCE_MS, scanDebounceMs: DB_SCAN_PERSIST_DEBOUNCE_MS, scanMaxWaitMs: DB_SCAN_PERSIST_MAX_WAIT_MS,
-        note: 'stringifyMs is how long the last db.json serialisation held the request thread; every user waits for it. coalesced = writes folded into one by the debounce. mode is full (legacy rewrite), rebuild (DB_INCREMENTAL_PERSIST on, fragments rebuilt), or incremental (flag on, only dirty pieces re-stringified). Unset the flag or set it off to restore the full rewrite.' },
+        note: 'stringifyMs is how long the last db.json serialisation held the request thread; every user waits for it. coalesced = writes folded into one by the debounce. mode is full (legacy rewrite), rebuild (DB_INCREMENTAL_PERSIST on, fragments rebuilt), or incremental (flag on, only dirty pieces re-stringified). Periodic rebuilds wait for a quiet window (and optional SGT off-peak) with a max-deferral ceiling — see rebuildReason/rebuildDeferred. Unset the flag or set it off to restore the full rewrite.' },
       pdfWorker: pdfPool.snapshot(),
       gzip: true,
     },
