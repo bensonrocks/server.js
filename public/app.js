@@ -128,6 +128,10 @@
   let orderSelection      = new Set();  // order_numbers ticked for group actions
   let completedSearch     = '';
   let _archSearch         = { q: '', results: null }; // archive search cache
+  // Hot-db server search for the Completed tab (and pick-list lookup). When
+  // `q` is set the browser used to re-download / filter the whole catalog;
+  // now it asks GET /api/orders?q=… for a capped lean hit list.
+  let _serverSearch       = { q: '', results: null, inflight: null };
   let ordersDateFilter    = 'today';    // 'today' | 'yesterday' | 'week' | 'all' | 'range'
   let ordersDateFrom      = '';
   let ordersDateTo        = '';
@@ -2485,6 +2489,24 @@
     return `<span class="chip ${cls}" title="${band} — hand over ${esc(due)}">&#9201; ${fmtMins(f.minutesLeft)} left</span>`;
   }
 
+  async function fetchOrdersServerSearch(rawQ) {
+    const q = String(rawQ || '').trim();
+    if (!q) { _serverSearch = { q: '', results: null, inflight: null }; return []; }
+    if (_serverSearch.q === q && Array.isArray(_serverSearch.results)) return _serverSearch.results;
+    const seq = (_serverSearch._seq = (_serverSearch._seq || 0) + 1);
+    try {
+      const r = await fetchT(`/api/orders?range=all&q=${encodeURIComponent(q)}`, { headers: hdrs() });
+      const list = await r.json();
+      const rows = Array.isArray(list) ? list : (list.orders || []);
+      if (seq !== _serverSearch._seq) return _serverSearch.results || [];
+      _serverSearch = { q, results: rows, inflight: null, _seq: seq };
+      return rows;
+    } catch (e) {
+      if (seq === _serverSearch._seq) _serverSearch = { q, results: [], inflight: null, _seq: seq };
+      return [];
+    }
+  }
+
   function renderOrdersList() {
     let orders = loadedOrders;
     // Case-insensitive: picking "Betime" must also bring in orders filed as
@@ -2620,14 +2642,23 @@
       orders = doneOrders;
       const norm = s => String(s || '').toLowerCase().replace(/[\s\-_]/g, '');
       const q = norm(completedSearch);
+      const rawQ = completedSearch.trim();
       if (q) {
-        orders = orders.filter(o =>
-          [o.order_number, o.waybill_number, o.issue_no, o.pick_ticket, o.po_number, o.customer_name, o.client_name, o.idealscan_code]
-            .some(v => norm(v).includes(q))
-        );
+        // Prefer the capped server hit list when it matches this query (debounced
+        // fetch below). Fall back to filtering whatever Today/All already loaded
+        // until the server responds — never re-download range=all without q.
+        if (_serverSearch.q === rawQ && Array.isArray(_serverSearch.results)) {
+          // Server hit list is the source of truth while searching — any work
+          // status (pending/done/cancelled). Reference copies stay on their tab.
+          orders = _serverSearch.results.filter(o => !o.reference_only);
+        } else {
+          orders = orders.filter(o =>
+            [o.order_number, o.waybill_number, o.issue_no, o.pick_ticket, o.po_number, o.customer_name, o.client_name, o.idealscan_code]
+              .some(v => norm(v).includes(q))
+          );
+        }
         // Also search the ARCHIVE (orders older than 60 days) — async fetch,
         // cached per search string, merged into the list on arrival
-        const rawQ = completedSearch.trim();
         if (rawQ.length >= 3) {
           if (_archSearch.q === rawQ && _archSearch.results) {
             const have = new Set(orders.map(o => o.order_number + '|' + (o.batchId || '')));
@@ -2687,7 +2718,13 @@
       si?.addEventListener('input', () => {
         completedSearch = si.value;
         clearTimeout(si._t);
-        si._t = setTimeout(() => {
+        si._t = setTimeout(async () => {
+          const raw = completedSearch.trim();
+          if (!raw) {
+            _serverSearch = { q: '', results: null, inflight: null };
+          } else {
+            await fetchOrdersServerSearch(raw);
+          }
           renderOrdersList();
           const el = document.getElementById('completedSearchInput');
           if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
@@ -14975,9 +15012,12 @@
   async function printOrderPickList(orderNumber) {
     let ord;
     try {
-      const r = await fetchT(`/api/orders?range=all&q=${encodeURIComponent(orderNumber)}`, { headers: hdrs() });
+      // lean=0 so pick_locations / stock fields stay on the matched row when needed
+      const r = await fetchT(`/api/orders?range=all&q=${encodeURIComponent(orderNumber)}&lean=0`, { headers: hdrs() });
       const list = await r.json();
-      ord = (Array.isArray(list) ? list : list.orders || []).find(o => o.order_number === orderNumber);
+      const rows = Array.isArray(list) ? list : list.orders || [];
+      ord = rows.find(o => o.order_number === orderNumber) || rows[0];
+      if (ord && !loadedOrders.some(o => o.order_number === ord.order_number)) loadedOrders.push(ord);
     } catch (e) { alert('Could not load that order.'); return; }
     if (!ord) { alert('Could not find that order.'); return; }
     const lines = ord.items || ord.lines || [];
