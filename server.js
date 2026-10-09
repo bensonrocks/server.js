@@ -48,6 +48,7 @@ const { validateRows } = require('./lib/validation');
 const integration = require('./lib/integration');
 const hotCold = require('./lib/hot-cold-archive');
 const incrementalPersist = require('./lib/incremental-persist');
+const ordersSearch = require('./lib/orders-search');
 const rtsGuard = require('./lib/rts-guard');
 
 // OCR parser for photo-based picklist upload
@@ -11927,6 +11928,31 @@ app.get('/api/orders', (req, res) => {
       return true;
     };
   }
+  // ── SERVER-SIDE SEARCH (speed snapshot 2026-10-09) ───────────────────────
+  // `q` used to be ignored: GET /api/orders?range=all&q=… still enriched and
+  // returned the whole catalog (~15 MB). When q is present we pre-select at
+  // most `limit` (default 60) matching order numbers from the hot db — order
+  // no / waybill / GI / pick ticket / PO / customer / client / IS job code /
+  // SKU / barcode / Transport TR- id — then enrich ONLY those rows. Empty q
+  // keeps the previous behaviour byte-for-byte. Cold archive stays on
+  // /api/orders/archived (Completed tab still merges it). Scan paths untouched.
+  const qRaw = String(req.query.q || '').trim();
+  let searchCap = 0;
+  let searchMatched = 0;
+  if (qRaw) {
+    searchCap = ordersSearch.parseCap(req.query.limit, ordersSearch.DEFAULT_CAP);
+    const dbForSearch = readDb();
+    const nums = new Set(ordersSearch.findMatchingOrderNumbers(dbForSearch, qRaw, searchCap));
+    searchMatched = nums.size;
+    const prevKeep = keep;
+    keep = o => {
+      if (prevKeep && !prevKeep(o)) return false;
+      return nums.has(String(o.order_number || ''));
+    };
+    res.setHeader('X-Search-Cap', String(searchCap));
+    res.setHeader('X-Search-Matched', String(searchMatched));
+    try { res.setHeader('X-Search-Q', encodeURIComponent(qRaw.slice(0, 120))); } catch (_) {}
+  }
   let orders = globalOrdersWithState(keep);
   if (refMode === 'exclude') {
     // Belt and braces: anything the cheap pre-filter could not classify.
@@ -11965,7 +11991,15 @@ app.get('/api/orders', (req, res) => {
       });
     }
   }
-  res.json(orders); // range already applied via the pre-enrichment `keep` filter
+  // Lean projection when searching (default) — list/pick-list fields only.
+  // Pass lean=0 to keep the full enriched shape for a matched hit.
+  if (qRaw && ordersSearch.wantLean(req.query)) {
+    orders = orders.map(ordersSearch.leanOrderForList);
+    res.setHeader('X-Search-Lean', '1');
+  } else if (qRaw) {
+    res.setHeader('X-Search-Lean', '0');
+  }
+  res.json(orders); // range (+ optional q) already applied via the pre-enrichment `keep` filter
 });
 
 // Completed-tab search across ARCHIVED orders (older than 60 days)
