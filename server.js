@@ -23131,6 +23131,33 @@ function noteHubException(db, orderNumber, zortId, statusWord, store, hubOrder) 
 }
 
 // Returns 'closed' | 'conflict' | '' (nothing to do).
+// A marketplace cancellation seen on the Ready-to-Ship path (TikTok 140, or a
+// "cancel" word). Flags the order for the red "do not ship" chip and does not
+// change status — the order is usually already done, and completed work is
+// not regressed here. Not journalled: the scan journal does not carry this
+// flag, and a replay would restore the order without it.
+function flagRtsMarketplaceCancelled(db, orderNumber, word) {
+  try {
+    const f = lazadaFindOrder(db, orderNumber, '');
+    if (!f || !f.batch) return;
+    if (!f.batch.orderStates) f.batch.orderStates = {};
+    const key = f.ord.order_number;
+    const st = f.batch.orderStates[key] || { status: 'pending', scanned: {} };
+    const status = String(word || '').trim() || 'cancelled';
+    if (st.platform_cancelled && st.platform_cancelled.status === status) {
+      f.batch.orderStates[key] = st;
+      return;
+    }
+    st.platform_cancelled = {
+      at: new Date().toISOString(),
+      status,
+      via: 'rts-guard',
+      local_status: st.status || '',
+    };
+    f.batch.orderStates[key] = st;
+  } catch (_) {}
+}
+
 function closeCollectionFromHub(db, orderNumber, zortId, statusWord, store, hubOrder) {
   try {
     if (!ZORT_LEFT_STATUSES.has(statusWord)) return '';
@@ -23172,15 +23199,17 @@ function closeCollectionFromHub(db, orderNumber, zortId, statusWord, store, hubO
     let estimated;
     if (store && store.marketplaceRtsConfirm) {
       // Zort "Completed" is not a courier scan. A known marketplace that is
-      // still packed/pending (or cancelled, or a word we cannot read) does
-      // not get a Picked Up stamp. A future hub time is not stored either.
+      // still not Ready-to-Ship, or is cancelled, does not get a Picked Up
+      // stamp. A status we cannot read falls through to the Zort
+      // shipping/success close — blocking forever on an unknown word is how
+      // TikTok numeric 121 held the queue. A future hub time is still not stored.
       const mp = rtsGuard.marketplaceOf(
         `${hubOrder?.saleschannel || ''} ${hubOrder?.integrationName || ''}`,
         f.ord.platform
       );
       const integration = zortIntegrationWord(hubOrder) || '';
       const verdict = mp ? rtsGuard.marketplaceRtsVerdict(mp, integration) : '';
-      if (mp && verdict !== 'done') {
+      if (mp && rtsGuard.marketplaceBlocksPickup(verdict)) {
         const prev = state.collection_unconfirmed;
         if (!(prev && prev.verdict === verdict && prev.integration === integration
             && prev.hub_status === statusWord && prev.marketplace === mp)) {
@@ -25629,7 +25658,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
   }
   if (entry.kind === 'completion') {
     const t = entry.tracking || undefined;
-    let rtsDetail = null, rtsHubStatus = '', rtsIntegration = '', rtsMarketplace = '';
+    let rtsDetail = null, rtsHubStatus = '', rtsIntegration = '', rtsMarketplace = '', rtsNote = '';
     if (entry.action === 'pack' || entry.action === 'readytoship') {
       // Same spec rule as the arrange path: marketplace orders name their
       // marketplace shipment channel; cached on the entry across retries.
@@ -25698,6 +25727,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
         // A cancelled marketplace order must not be declared ready for the
         // courier. Stall the outbox entry; do not stamp the push sent.
         if (mpPlan.mode === 'cancel') {
+          flagRtsMarketplaceCancelled(db, entry.orderNumber, before.integration);
           logAudit('sync_rts_not_taking', {
             order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
             before: hubStatus || '', integration: before.integration || '',
@@ -25707,6 +25737,36 @@ async function _zortSendOutboxEntry(db, store, entry) {
           throw Object.assign(new Error(
             `Marketplace ${mpPlan.marketplace} says "${before.integration || 'cancelled'}" — not sending Ready-to-Ship for a cancelled order.`
           ), { terminal: true });
+        }
+        // A word this table does not know must not be sent in a loop until
+        // the entry stalls. If Zort itself is already waiting/shipping/success,
+        // stamp sent the old way and say which word we could not read.
+        // Otherwise hold the entry, with no attempt counted.
+        if (mpPlan.mode === 'unknown') {
+          if (hubStatus && ZORT_RTS_DONE.includes(hubStatus)) {
+            logAudit('zort_completion_pushed', {
+              order: entry.orderNumber, client: store.clientName || '', action: entry.action,
+              hubStatus, integration: before.integration || '', marketplace: mpPlan.marketplace,
+              note: `${mpPlan.reason} — Zort already says ${hubStatus}, so this is stamped sent without another Ready-to-Ship`,
+            });
+            try {
+              const f = lazadaFindOrder(db, entry.orderNumber, '');
+              const st = f && f.batch.orderStates?.[f.ord.order_number];
+              if (st) { st.zort_pushed_at = new Date().toISOString(); st.zort_push_action = entry.action; }
+            } catch (_) {}
+            if (store.labelSync) {
+              enqueueZortLabel(db, store.id, {
+                orderNumber: entry.orderNumber, zortId: entry.zortId, tracking: entry.tracking,
+              });
+            }
+            return true;
+          }
+          logAudit('sync_rts_not_taking', {
+            order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+            before: hubStatus || '', integration: before.integration || '',
+            marketplace: mpPlan.marketplace, said: mpPlan.reason,
+          });
+          throw Object.assign(new Error(mpPlan.reason), { unknownStatus: true, holdReason: mpPlan.reason });
         }
         // ALREADY READY-TO-SHIP (or past it) ON ZORT. Only when this store has
         // not asked us to confirm against the marketplace. With rtsAtIntake
@@ -25740,13 +25800,16 @@ async function _zortSendOutboxEntry(db, store, entry) {
             if (!/already|packed/i.test(e.message || '')) throw e;
           }
         }
+        let rtsRefused = '';
         try {
           resp = await zortApi.readyToShip(store, args);
         } catch (e) {
-          // An "already" refusal is swallowed only while confirming against
-          // the marketplace: the read-back below decides whether that is a
-          // real Ready-to-Ship. Flag-off rethrows, so today's behaviour holds.
-          if (!(mpPlan.mode === 'send' && /already/i.test(e.message || ''))) throw e;
+          // Flag-off rethrows immediately. With the marketplace confirm on,
+          // a refusal is not the last word: TikTok answers "600 Arrange
+          // shipment failed" when the parcel is already in transit, and the
+          // read-back below stamps sent instead of retrying that refusal.
+          if (mpPlan.mode !== 'send') throw e;
+          rtsRefused = String(e.message || '').slice(0, 500);
         }
         // ── THE CALL RETURNING IS NOT THE ORDER MOVING ──────────────────────
         // Reported live: the trail showed a green "Told the channel the order
@@ -25763,16 +25826,56 @@ async function _zortSendOutboxEntry(db, store, entry) {
         // claiming success on a status nobody saw is what produced this.
         const after = await zortHubState(store, entry.zortId);
         if (mpPlan.mode === 'send') {
-          // Zort "Completed" is not confirmation. Stamp sent only when the
-          // marketplace itself has moved to RTS or later.
+          // Zort "Completed" is not confirmation. Stamp sent when the
+          // marketplace itself has moved to RTS or later — including when
+          // Ready-to-Ship was refused and the read-back already says shipped
+          // or in transit. An unrecognised word is held, not retried to a stall.
           const verdict = rtsGuard.marketplaceRtsVerdict(mpPlan.marketplace, after.integration);
-          if (!(after.read && verdict === 'done')) {
+          const decision = rtsGuard.afterSendDecision({
+            verdict,
+            integration: after.integration,
+            marketplace: mpPlan.marketplace,
+            zortStatus: after.status,
+            read: !!after.read,
+          });
+          if (decision.action === 'stamp') {
+            rtsHubStatus = after.status || '';
+            rtsIntegration = after.integration || '';
+            rtsMarketplace = mpPlan.marketplace;
+            if (rtsRefused) {
+              rtsNote = `Ready-to-Ship was refused (${rtsRefused}) but the marketplace read back "${after.integration || 'done'}" — already shipped or in transit, so this is stamped sent`;
+            } else if (decision.via === 'zort') {
+              rtsNote = `${decision.reason} — Zort says ${after.status}, stamped sent without another Ready-to-Ship`;
+            }
+          } else if (decision.action === 'hold') {
             logAudit('sync_rts_not_taking', {
               order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
               before: hubStatus || '',
               after: after.status || (after.read ? 'not recognised' : (after.why || 'could not read the hub')),
               integration: after.integration || '',
-              marketplace: mpPlan.marketplace, verdict, said: _zortSaid(resp),
+              marketplace: mpPlan.marketplace, verdict, said: rtsRefused || _zortSaid(resp),
+              note: decision.reason,
+            });
+            throw Object.assign(new Error(decision.reason), { unknownStatus: true, holdReason: decision.reason });
+          } else if (decision.action === 'terminal') {
+            flagRtsMarketplaceCancelled(db, entry.orderNumber, after.integration || before.integration);
+            logAudit('sync_rts_not_taking', {
+              order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+              before: hubStatus || '', after: after.status || '',
+              integration: after.integration || '',
+              marketplace: mpPlan.marketplace, verdict,
+              said: rtsRefused || 'marketplace cancelled — Ready-to-Ship not sent',
+            });
+            throw Object.assign(new Error(
+              `Marketplace ${mpPlan.marketplace} says "${after.integration || 'cancelled'}" — not sending Ready-to-Ship for a cancelled order.`
+            ), { terminal: true });
+          } else {
+            logAudit('sync_rts_not_taking', {
+              order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
+              before: hubStatus || '',
+              after: after.status || (after.read ? 'not recognised' : (after.why || 'could not read the hub')),
+              integration: after.integration || '',
+              marketplace: mpPlan.marketplace, verdict, said: rtsRefused || _zortSaid(resp),
             });
             if (!after.read && /no order/i.test(after.why || '')) {
               try {
@@ -25783,15 +25886,11 @@ async function _zortSendOutboxEntry(db, store, entry) {
                 });
               } catch (_) {}
             }
-            const err = new Error(after.read
-              ? `Ready-to-Ship was sent but the marketplace still says "${after.integration || 'not ready'}" (${verdict}) — not confirmed.`
-              : `Ready-to-Ship was sent but ${after.why || 'the channel could not be read back'}, so it is not confirmed.`);
-            if (verdict === 'cancelled') err.terminal = true;
-            throw err;
+            const refused = rtsRefused ? ` The channel refused Ready-to-Ship (${rtsRefused}).` : '';
+            throw new Error(after.read
+              ? `Ready-to-Ship was sent but the marketplace still says "${after.integration || 'not ready'}" (${verdict}) — not confirmed.${refused}`
+              : `Ready-to-Ship was sent but ${after.why || 'the channel could not be read back'}, so it is not confirmed.${refused}`);
           }
-          rtsHubStatus = after.status;
-          rtsIntegration = after.integration || '';
-          rtsMarketplace = mpPlan.marketplace;
         } else if (!after.read || !ZORT_RTS_DONE.includes(after.status)) {
           logAudit('sync_rts_not_taking', {
             order: entry.orderNumber, client: store.clientName || '', storeId: store.id,
@@ -25868,6 +25967,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
       ...(rtsHubStatus ? { hubStatus: rtsHubStatus } : {}),
       ...(rtsIntegration ? { integration: rtsIntegration } : {}),
       ...(rtsMarketplace ? { marketplace: rtsMarketplace } : {}),
+      ...(rtsNote ? { note: rtsNote } : {}),
     });
     return true;
   }
@@ -26108,6 +26208,18 @@ async function drainZortOutbox({ only = null } = {}) {
           heldForBudget++;
           entry.lastError = String(err.message).slice(0, 1200);
           entry.nextAttemptAt = new Date(Date.now() + ZORT_OUTBOX_MS).toISOString();
+          changed = true; remaining.push(entry); continue;
+        }
+        // An unrecognised marketplace status is not a refusal to retry until
+        // the entry stalls. Hold it, name the word, and look again later
+        // without counting an attempt. A previous "600 Arrange shipment
+        // failed" must not keep painting Channel refused once we are holding.
+        if (err.unknownStatus) {
+          const why = String(err.holdReason || err.message || '').slice(0, 500);
+          rtsGuard.applyOutboxHold(entry, why);
+          if (entry.lastError) delete entry.lastError;
+          // 15 minutes: the third rung of [1, 5, 15, 60]. ZORT_BACKOFF_MS flattens it in tests.
+          entry.nextAttemptAt = new Date(Date.now() + _zortBackoffMs(2)).toISOString();
           changed = true; remaining.push(entry); continue;
         }
         entry.attempts = (entry.attempts || 0) + 1;
