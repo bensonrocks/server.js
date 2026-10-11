@@ -27957,6 +27957,30 @@ app.post('/api/master/onecart/stores/:id/pull', async (req, res) => {
     res.status(502).json({ error: e.message, requestId: e.requestId || '' });
   }
 });
+// 🧾 Customer-details backfill — ADMIN-TRIGGERED, never automatic. DRY-RUN
+// by default: reports which of THIS store's own open orders (same onecart_id
+// + store) would get blank customer/merchant/alias fields filled from the
+// current /delivery_orders queue. Writes only with {apply:true, confirm:'APPLY'}.
+// Bounded: at most 5 queue pages (5 requests) and maxOrders (≤500) per call.
+// Fill-blanks only; reference_only, client, scan state and lines untouched.
+app.post('/api/master/onecart/stores/:id/backfill-details', express.json(), async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const body = req.body || {};
+  const apply = body.apply === true && String(body.confirm || '').toUpperCase() === 'APPLY';
+  const maxOrders = Math.max(1, Math.min(500, Number(body.maxOrders) || 200));
+  const s0 = onecartStores(readDb()).find(x => x.id === req.params.id);
+  if (!s0) return res.status(404).json({ error: 'Store not found' });
+  let queue;
+  try { queue = await onecartApi.getDeliveryOrders(s0, { maxPages: 5 }); }
+  catch (e) { return res.status(502).json({ error: e.message, requestId: e.requestId || '' }); }
+  const db = readDb();
+  const plan = onecartApi.planDetailsBackfill(db.batches || [], queue.rows, s0.id, { maxOrders, dryRun: !apply });
+  if (apply && plan.wouldFill) {
+    writeDb(db);
+    logAudit('onecart_details_backfill', { storeId: s0.id, client: s0.clientName, filled: plan.wouldFill, reason: String(body.reason || '').slice(0, 200) });
+  }
+  res.json({ ok: true, dryRun: !apply, store: s0.clientName, mode: s0.mode || 'reference', queueRows: queue.rows.length, queueTruncated: queue.truncated || undefined, ...plan });
+});
 // 🏷 Get Labels — fetch shipping labels for this company's open, unlabelled
 // orders NOW. The manual counterpart of labelSync:'intake'; admin-driven so
 // the operator controls WHEN the channel is asked to generate an AWB.
@@ -28013,6 +28037,8 @@ app.post('/api/master/onecart/stores/:id/labels', async (req, res) => {
 //      already hold, cancellations on orders we hold, and the read-back for a
 //      completion push the channel took its time over.
 // Same batch shape as pullShopifyStore, single-client.
+const applyOnecartDetails = (o, meta) => onecartApi.applyOnecartDetails(o, meta).changed;
+
 async function pullOnecartStore(db, store) {
   // REFERENCE MODE (default, per the user): what this connection imports is
   // the channel's own record of each order — kept for the tracking number,
@@ -28051,7 +28077,7 @@ async function pullOnecartStore(db, store) {
   } catch (e) { awaiting.error = String(e.message || e).slice(0, 160); }
 
   const rows = []; const meta = {};
-  let fetched = 0, skippedExisting = 0, trackingFilled = 0, cancelled = 0, confirmedLater = 0;
+  let fetched = 0, skippedExisting = 0, trackingFilled = 0, cancelled = 0, confirmedLater = 0, detailsFilled = 0;
   const skippedByStatus = {}; const skippedNoLines = []; const cancelConflicts = []; const filled = new Set();
   // ISOLATION, per the user: OneCart orders have nothing to do with the rest
   // of the current processes. An order number already held by something
@@ -28160,6 +28186,7 @@ async function pullOnecartStore(db, store) {
         skippedExisting++;
         ensureState(held);
         fillTracking(held, m.meta.tracking, 'onecart');         // a blank is filled, never overwritten
+        if (applyOnecartDetails(held.order, m.meta)) detailsFilled++;
         continue;
       }
     }
@@ -28234,6 +28261,7 @@ async function pullOnecartStore(db, store) {
       // Only on an order whose lines were completed from the order record:
       // which line came from where (delivery_orders vs orders_fallback).
       if (m2.line_sources) o.onecart_line_sources = m2.line_sources;
+      applyOnecartDetails(o, m2);
     }
     let tracked = false;
     // A REFERENCE record reserves nothing — it is not work, and the client's
@@ -28282,7 +28310,7 @@ async function pullOnecartStore(db, store) {
     at: now, fetched, imported, skippedExisting, skippedByStatus,
     skippedNoLines: skippedNoLines.slice(0, 20),
     heldElsewhere: heldElsewhere.slice(0, 20), heldElsewhereCount: heldElsewhere.length,
-    trackingFilled, cancelled, cancelConflicts: cancelConflicts.slice(0, 20), confirmedLater, batchId,
+    trackingFilled, detailsFilled, cancelled, cancelConflicts: cancelConflicts.slice(0, 20), confirmedLater, batchId,
     awaiting, linked: linked.slice(0, 20), linkedCount: linked.length,
     sweepRows: sweep.rows.length, queueTruncated: queue.truncated || undefined,
     lineFallback: lineFallback.candidates ? {
