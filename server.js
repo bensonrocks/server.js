@@ -27993,6 +27993,31 @@ app.post('/api/master/onecart/stores/:id/labels', async (req, res) => {
 //      already hold, cancellations on orders we hold, and the read-back for a
 //      completion push the channel took its time over.
 // Same batch shape as pullShopifyStore, single-client.
+// Customer / merchant details + channel order name from a mapped OneCart row
+// onto an order. ONLY BLANKS ARE FILLED (a bare "Singapore" counts as blank);
+// a non-blank value — typed by hand or already synced — is never overwritten.
+// Does not touch client filing, reference_only, scan state or lines.
+function applyOnecartDetails(o, meta) {
+  if (!o || !meta) return false;
+  let changed = false;
+  const c = meta.customer || {};
+  const setIf = (k, v, blank) => { if (v && blank(o[k])) { o[k] = v; changed = true; } };
+  const isBlank = (v) => !String(v == null ? '' : v).trim();
+  setIf('customer_name', c.name, isBlank);
+  setIf('delivery_address', c.address, onecartApi.isBlankAddress);
+  setIf('tel', c.tel, isBlank);
+  if (meta.channel_order_name) {
+    setIf('channel_order_name', meta.channel_order_name, isBlank);
+    setIf('po_number', meta.channel_order_name, isBlank);
+  }
+  const mer = meta.merchant || {};
+  const cur = o.onecart_merchant || {};
+  const next = { ...cur };
+  for (const k of ['shop_id', 'shop_name', 'platform', 'company_name']) if (mer[k] && !cur[k]) next[k] = mer[k];
+  if (JSON.stringify(next) !== JSON.stringify(cur)) { o.onecart_merchant = next; changed = true; }
+  return changed;
+}
+
 async function pullOnecartStore(db, store) {
   // REFERENCE MODE (default, per the user): what this connection imports is
   // the channel's own record of each order — kept for the tracking number,
@@ -28019,7 +28044,7 @@ async function pullOnecartStore(db, store) {
   const queue = await onecartApi.getDeliveryOrders(store, { maxPages: 20 });
 
   const rows = []; const meta = {};
-  let fetched = 0, skippedExisting = 0, trackingFilled = 0, cancelled = 0, confirmedLater = 0;
+  let fetched = 0, skippedExisting = 0, trackingFilled = 0, cancelled = 0, confirmedLater = 0, detailsFilled = 0;
   const skippedByStatus = {}; const skippedNoLines = []; const cancelConflicts = []; const filled = new Set();
   // ISOLATION, per the user: OneCart orders have nothing to do with the rest
   // of the current processes. An order number already held by something
@@ -28115,6 +28140,7 @@ async function pullOnecartStore(db, store) {
         skippedExisting++;
         ensureState(held);
         fillTracking(held, m.meta.tracking, 'onecart');         // a blank is filled, never overwritten
+        if (applyOnecartDetails(held.order, m.meta)) detailsFilled++;
         continue;
       }
     }
@@ -28189,6 +28215,7 @@ async function pullOnecartStore(db, store) {
       // Only on an order whose lines were completed from the order record:
       // which line came from where (delivery_orders vs orders_fallback).
       if (m2.line_sources) o.onecart_line_sources = m2.line_sources;
+      applyOnecartDetails(o, m2);
     }
     let tracked = false;
     // A REFERENCE record reserves nothing — it is not work, and the client's
@@ -28237,7 +28264,7 @@ async function pullOnecartStore(db, store) {
     at: now, fetched, imported, skippedExisting, skippedByStatus,
     skippedNoLines: skippedNoLines.slice(0, 20),
     heldElsewhere: heldElsewhere.slice(0, 20), heldElsewhereCount: heldElsewhere.length,
-    trackingFilled, cancelled, cancelConflicts: cancelConflicts.slice(0, 20), confirmedLater, batchId,
+    trackingFilled, detailsFilled, cancelled, cancelConflicts: cancelConflicts.slice(0, 20), confirmedLater, batchId,
     sweepRows: sweep.rows.length, queueTruncated: queue.truncated || undefined,
     lineFallback: lineFallback.candidates ? {
       candidates: lineFallback.candidates, attempted: lineFallback.attempted, capped: lineFallback.capped || undefined,
