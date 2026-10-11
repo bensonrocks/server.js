@@ -24633,6 +24633,26 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
     });
   };
 
+  // A OneCart-linked order (imported, or a hand order the pull linked): one
+  // read of the order record; a blank waybill is filled, never overwritten.
+  if (ord.onecart_id && ord.onecart_store_id && !(ord.zort_id && ord.zort_store_id)) {
+    const ocs = onecartStores(db).find(s => s.id === ord.onecart_store_id);
+    if (!ocs || !ocs.enabled) return res.status(400).json({ error: 'The OneCart store this order came from is not connected right now.' });
+    if (String(ord.waybill_number || '').trim()) { steps.push('waybill already on the order'); return done(); }
+    try {
+      const rec = await onecartApi.getOrder(ocs, ord.onecart_id);
+      const t = String(rec.tracking_no || '').trim();
+      if (!t) { steps.push(`OneCart has no tracking number yet (status ${rec.status || '?'})`); return done(); }
+      const db2 = readDb(); const f2 = lazadaFindOrder(db2, orderNumber, '');
+      if (f2 && !String(f2.ord.waybill_number || '').trim()) {
+        f2.ord.waybill_number = t; writeDb(db2);
+        logAudit('sync_waybill_backfilled', { order: orderNumber, tracking: t, storeId: ocs.id, via: 'waybill-now-onecart' });
+        scheduleLabelAutoRematch('waybill-now');
+        steps.push('waybill filled from OneCart');
+      }
+      return done();
+    } catch (e) { return res.status(502).json({ error: e.message, requestId: e.requestId || '' }); }
+  }
   if (!ord.zort_id || !ord.zort_store_id) {
     // An UPLOADED order's waybill comes from the client's own file or a label
     // PDF someone uploads — there is no channel to ask. Said plainly rather
@@ -28017,6 +28037,18 @@ async function pullOnecartStore(db, store) {
   const sweepByNo = new Map();
   for (const r of sweep.rows) { const no = String(r.order_no || '').trim(); if (no && !sweepByNo.has(no)) sweepByNo.set(no, r); }
   const queue = await onecartApi.getDeliveryOrders(store, { maxPages: 20 });
+  // TikTok AWAITING_SHIPMENT / AWAITING_COLLECTION, from the order record —
+  // only rows the queue did not already carry. Never able to fail the pull.
+  const awaiting = { fetched: 0, added: 0, error: undefined };
+  try {
+    const aw = await onecartApi.getAwaitingOrders(store);
+    awaiting.fetched = aw.rows.length;
+    const inQueue = new Set(queue.rows.filter(Boolean).map(d => String(d.id)));
+    for (const o of aw.rows) {
+      if (!o || o.id == null || inQueue.has(String(o.id))) continue;
+      queue.rows.push(onecartApi.orderRecordToDeliveryRow(o)); inQueue.add(String(o.id)); awaiting.added++;
+    }
+  } catch (e) { awaiting.error = String(e.message || e).slice(0, 160); }
 
   const rows = []; const meta = {};
   let fetched = 0, skippedExisting = 0, trackingFilled = 0, cancelled = 0, confirmedLater = 0;
@@ -28029,7 +28061,7 @@ async function pullOnecartStore(db, store) {
   // silent. Order numbers stay unique system-wide (the standing invariant:
   // scanning, labels and findBatchForOrder all key on it), so it is not
   // imported a second time either.
-  const heldElsewhere = [];
+  const heldElsewhere = []; const linked = [];
   const isOurs = (held, onecartId) => String(held.order.onecart_id || '') === String(onecartId || '') && held.order.onecart_store_id === store.id;
   const ensureState = (held) => (held.batch.orderStates = held.batch.orderStates || {})[held.order.order_number]
     || (held.batch.orderStates[held.order.order_number] = { status: 'pending', scanned: {}, updated_at: now });
@@ -28104,6 +28136,19 @@ async function pullOnecartStore(db, store) {
     }
     const held = existing.get(String(m.order_number));
     if (held) {
+      if (!isOurs(held, m.meta.onecart_id) && onecartApi.canLinkManualOrder(held, store, (x) => String(canonicalClientName(db, mayerFulfillClientName(x) || x) || '').trim().toLowerCase())) {
+        // A HAND-CREATED order with the same number, same client, no OneCart
+        // link yet: link it (ids only) so the sweep / waybill-now can fill its
+        // waybill. Lines, scan state and client are untouched; no new import.
+        held.order.onecart_id = m.meta.onecart_id;
+        held.order.onecart_store_id = store.id;
+        if (!held.order.onecart_shop) held.order.onecart_shop = m.meta.shop_name || '';
+        held.order.onecart_linked_at = now;
+        linked.push({ order: m.order_number, job: held.batch.idealscan_code || '' });
+        logAudit('onecart_manual_order_linked', { order: m.order_number, storeId: store.id, onecartId: m.meta.onecart_id, job: held.batch.idealscan_code || '' });
+        fillTracking(held, m.meta.tracking, 'onecart-link');
+        continue;
+      }
       if (!isOurs(held, m.meta.onecart_id)) {
         if (!heldElsewhere.some(h => h.order === m.order_number)) heldElsewhere.push({ order: m.order_number, client: held.batch.client_name || '', job: held.batch.idealscan_code || '' });
         // In WORK mode a number held elsewhere is hands-off (the double-
@@ -28238,6 +28283,7 @@ async function pullOnecartStore(db, store) {
     skippedNoLines: skippedNoLines.slice(0, 20),
     heldElsewhere: heldElsewhere.slice(0, 20), heldElsewhereCount: heldElsewhere.length,
     trackingFilled, cancelled, cancelConflicts: cancelConflicts.slice(0, 20), confirmedLater, batchId,
+    awaiting, linked: linked.slice(0, 20), linkedCount: linked.length,
     sweepRows: sweep.rows.length, queueTruncated: queue.truncated || undefined,
     lineFallback: lineFallback.candidates ? {
       candidates: lineFallback.candidates, attempted: lineFallback.attempted, capped: lineFallback.capped || undefined,
