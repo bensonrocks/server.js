@@ -28087,7 +28087,7 @@ async function pullOnecartStore(db, store) {
   // silent. Order numbers stay unique system-wide (the standing invariant:
   // scanning, labels and findBatchForOrder all key on it), so it is not
   // imported a second time either.
-  const heldElsewhere = []; const linked = [];
+  const heldElsewhere = []; const linked = []; const detailsPending = [];
   const isOurs = (held, onecartId) => String(held.order.onecart_id || '') === String(onecartId || '') && held.order.onecart_store_id === store.id;
   const ensureState = (held) => (held.batch.orderStates = held.batch.orderStates || {})[held.order.order_number]
     || (held.batch.orderStates[held.order.order_number] = { status: 'pending', scanned: {}, updated_at: now });
@@ -28173,6 +28173,11 @@ async function pullOnecartStore(db, store) {
         linked.push({ order: m.order_number, job: held.batch.idealscan_code || '' });
         logAudit('onecart_manual_order_linked', { order: m.order_number, storeId: store.id, onecartId: m.meta.onecart_id, job: held.batch.idealscan_code || '' });
         fillTracking(held, m.meta.tracking, 'onecart-link');
+        // Customer + shop details ride along on the link (blanks only); an
+        // order-record (awaiting-path) row has no recipient yet — later pulls
+        // fill it once the order reaches /delivery_orders.
+        if (applyOnecartDetails(held.order, m.meta)) detailsFilled++;
+        if (d._source === 'orders_status' && !String(held.order.customer_name || '').trim()) detailsPending.push(m.order_number);
         continue;
       }
       if (!isOurs(held, m.meta.onecart_id)) {
@@ -28187,6 +28192,7 @@ async function pullOnecartStore(db, store) {
         ensureState(held);
         fillTracking(held, m.meta.tracking, 'onecart');         // a blank is filled, never overwritten
         if (applyOnecartDetails(held.order, m.meta)) detailsFilled++;
+        if (d._source === 'orders_status' && !String(held.order.customer_name || '').trim()) detailsPending.push(m.order_number);
         continue;
       }
     }
@@ -28312,6 +28318,7 @@ async function pullOnecartStore(db, store) {
     heldElsewhere: heldElsewhere.slice(0, 20), heldElsewhereCount: heldElsewhere.length,
     trackingFilled, detailsFilled, cancelled, cancelConflicts: cancelConflicts.slice(0, 20), confirmedLater, batchId,
     awaiting, linked: linked.slice(0, 20), linkedCount: linked.length,
+    detailsPending: detailsPending.slice(0, 20), detailsPendingCount: detailsPending.length,
     sweepRows: sweep.rows.length, queueTruncated: queue.truncated || undefined,
     lineFallback: lineFallback.candidates ? {
       candidates: lineFallback.candidates, attempted: lineFallback.attempted, capped: lineFallback.capped || undefined,
