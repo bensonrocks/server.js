@@ -27937,6 +27937,30 @@ app.post('/api/master/onecart/stores/:id/pull', async (req, res) => {
     res.status(502).json({ error: e.message, requestId: e.requestId || '' });
   }
 });
+// 🧾 Customer-details backfill — ADMIN-TRIGGERED, never automatic. DRY-RUN
+// by default: reports which of THIS store's own open orders (same onecart_id
+// + store) would get blank customer/merchant/alias fields filled from the
+// current /delivery_orders queue. Writes only with {apply:true, confirm:'APPLY'}.
+// Bounded: at most 5 queue pages (5 requests) and maxOrders (≤500) per call.
+// Fill-blanks only; reference_only, client, scan state and lines untouched.
+app.post('/api/master/onecart/stores/:id/backfill-details', express.json(), async (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const body = req.body || {};
+  const apply = body.apply === true && String(body.confirm || '').toUpperCase() === 'APPLY';
+  const maxOrders = Math.max(1, Math.min(500, Number(body.maxOrders) || 200));
+  const s0 = onecartStores(readDb()).find(x => x.id === req.params.id);
+  if (!s0) return res.status(404).json({ error: 'Store not found' });
+  let queue;
+  try { queue = await onecartApi.getDeliveryOrders(s0, { maxPages: 5 }); }
+  catch (e) { return res.status(502).json({ error: e.message, requestId: e.requestId || '' }); }
+  const db = readDb();
+  const plan = onecartApi.planDetailsBackfill(db.batches || [], queue.rows, s0.id, { maxOrders, dryRun: !apply });
+  if (apply && plan.wouldFill) {
+    writeDb(db);
+    logAudit('onecart_details_backfill', { storeId: s0.id, client: s0.clientName, filled: plan.wouldFill, reason: String(body.reason || '').slice(0, 200) });
+  }
+  res.json({ ok: true, dryRun: !apply, store: s0.clientName, mode: s0.mode || 'reference', queueRows: queue.rows.length, queueTruncated: queue.truncated || undefined, ...plan });
+});
 // 🏷 Get Labels — fetch shipping labels for this company's open, unlabelled
 // orders NOW. The manual counterpart of labelSync:'intake'; admin-driven so
 // the operator controls WHEN the channel is asked to generate an AWB.
@@ -27993,30 +28017,7 @@ app.post('/api/master/onecart/stores/:id/labels', async (req, res) => {
 //      already hold, cancellations on orders we hold, and the read-back for a
 //      completion push the channel took its time over.
 // Same batch shape as pullShopifyStore, single-client.
-// Customer / merchant details + channel order name from a mapped OneCart row
-// onto an order. ONLY BLANKS ARE FILLED (a bare "Singapore" counts as blank);
-// a non-blank value — typed by hand or already synced — is never overwritten.
-// Does not touch client filing, reference_only, scan state or lines.
-function applyOnecartDetails(o, meta) {
-  if (!o || !meta) return false;
-  let changed = false;
-  const c = meta.customer || {};
-  const setIf = (k, v, blank) => { if (v && blank(o[k])) { o[k] = v; changed = true; } };
-  const isBlank = (v) => !String(v == null ? '' : v).trim();
-  setIf('customer_name', c.name, isBlank);
-  setIf('delivery_address', c.address, onecartApi.isBlankAddress);
-  setIf('tel', c.tel, isBlank);
-  if (meta.channel_order_name) {
-    setIf('channel_order_name', meta.channel_order_name, isBlank);
-    setIf('po_number', meta.channel_order_name, isBlank);
-  }
-  const mer = meta.merchant || {};
-  const cur = o.onecart_merchant || {};
-  const next = { ...cur };
-  for (const k of ['shop_id', 'shop_name', 'platform', 'company_name']) if (mer[k] && !cur[k]) next[k] = mer[k];
-  if (JSON.stringify(next) !== JSON.stringify(cur)) { o.onecart_merchant = next; changed = true; }
-  return changed;
-}
+const applyOnecartDetails = (o, meta) => onecartApi.applyOnecartDetails(o, meta).changed;
 
 async function pullOnecartStore(db, store) {
   // REFERENCE MODE (default, per the user): what this connection imports is

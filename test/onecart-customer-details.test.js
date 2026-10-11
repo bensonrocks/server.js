@@ -37,3 +37,37 @@ test('search finds the channel alias with and without #', () => {
   assert.deepStrictEqual(search.findMatchingOrderNumbers(db, 'SK0001'), ['100000000001']);
   assert.deepStrictEqual(search.findMatchingOrderNumbers(db, '#SK0001'), ['100000000001']);
 });
+
+test('applyOnecartDetails never overwrites non-blank manual values; fills blanks and "Singapore"', () => {
+  const o = { customer_name: 'Manual Name', delivery_address: 'Singapore', tel: '', po_number: 'PO-MANUAL', onecart_merchant: { shop_name: 'Kept' } };
+  const meta = { customer: { name: 'Jane Doe', address: '1 Test Road 000001', tel: '+6500000000' }, channel_order_name: '#SK0001',
+    merchant: { shop_id: '9', shop_name: 'Other', platform: 'Shopify', company_name: 'Fake Co' } };
+  const dry = oc.applyOnecartDetails({ ...o }, meta, { dryRun: true });
+  assert.deepStrictEqual(dry.fields.sort(), ['channel_order_name', 'delivery_address', 'onecart_merchant', 'tel']);
+  const r = oc.applyOnecartDetails(o, meta);
+  assert.ok(r.changed);
+  assert.strictEqual(o.customer_name, 'Manual Name');
+  assert.strictEqual(o.po_number, 'PO-MANUAL');
+  assert.strictEqual(o.delivery_address, '1 Test Road 000001');
+  assert.strictEqual(o.tel, '+6500000000');
+  assert.strictEqual(o.channel_order_name, '#SK0001');
+  assert.deepStrictEqual(o.onecart_merchant, { shop_name: 'Kept', shop_id: '9', platform: 'Shopify', company_name: 'Fake Co' });
+  assert.strictEqual(oc.applyOnecartDetails(o, meta).changed, false);
+});
+
+test('planDetailsBackfill: dry-run changes nothing, only own-store orders, bounded, reference stays reference', () => {
+  const batches = [
+    { reference_only: true, idealscan_code: 'IS-R', orders: [{ order_number: 'R1', onecart_id: '1', onecart_store_id: 'S', delivery_address: 'Singapore' }] },
+    { idealscan_code: 'IS-M', orders: [{ order_number: 'M1', onecart_id: '2', onecart_store_id: 'OTHER' }] },
+  ];
+  const q = [{ id: 1, order_no: 'R1', first_name: 'Jane', shipping_address: '1 Test Rd', line_items: [] }, { id: 2, order_no: 'M1', first_name: 'X', line_items: [] }];
+  const p = oc.planDetailsBackfill(batches, q, 'S');
+  assert.strictEqual(p.wouldFill, 1); assert.strictEqual(p.reference, 1);
+  assert.strictEqual(batches[0].orders[0].delivery_address, 'Singapore');
+  assert.strictEqual(batches[0].reference_only, true);
+  assert.strictEqual(oc.planDetailsBackfill(batches, q, 'S', { maxOrders: 0 }).examined <= 1, true);
+  oc.planDetailsBackfill(batches, q, 'S', { dryRun: false });
+  assert.strictEqual(batches[0].orders[0].customer_name, 'Jane');
+  assert.strictEqual(batches[0].reference_only, true);
+  assert.strictEqual(batches[1].orders[0].customer_name, undefined);
+});
