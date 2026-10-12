@@ -10957,11 +10957,50 @@ app.get('/api/system-health', (req, res) => {
 // file themselves must get the same rows, the same skipped-row count and the
 // same PDF issue list the office would have got from that file — otherwise the
 // preview an approver sees would not describe what actually gets created.
+// ── Upload ring-fence: rescue + account for every skipped row ───────────────
+// Reported live 12 Oct: a Betime iWMS "GoodsIssueAnalysis" file whose ORDER NO.
+// column held a store name ("Takashimaya Atrium") lost its whole 86-row order —
+// isMetadataRow treats a digit-less multi-word order number as a label row.
+// When the row carries a real GI number, use THAT as the order number (the
+// store name becomes the customer). Continuation rows with a blank order
+// number inherit the previous row's, but only within the same GI.
+function rescueOrderNumbers(all) {
+  let prev = null;
+  for (const r of all) {
+    const on = String(r.order_number || '').trim();
+    const gi = String(r.issue_no || '').trim();
+    const giOk = /^GI-?\d+$/i.test(gi);
+    if (on && on !== 'UNKNOWN' && /\s/.test(on) && !/\d/.test(on) && giOk && r.sku) {
+      if (!String(r.customer_name || '').trim()) r.customer_name = on;
+      r.order_number = gi;
+      r._orderRescued = 'gi';
+    } else if ((!on || on === 'UNKNOWN') && r.sku && prev && (!gi || gi === prev.gi)) {
+      r.order_number = prev.on;
+      r._orderRescued = 'forward-fill';
+    }
+    const now = String(r.order_number || '').trim();
+    if (now && now !== 'UNKNOWN' && r.sku && !isMetadataRow(r)) prev = { on: now, gi };
+  }
+  return all;
+}
+function skipReason(r) {
+  if (!r.sku) return 'no SKU';
+  const on = String(r.order_number || '').trim();
+  if (!on || on === 'UNKNOWN') return 'no order number';
+  return 'looks like a label/summary row (order number or SKU shape)';
+}
+function collectSkipped(all, kept, rowOffset) {
+  const keep = new Set(kept);
+  const out = [];
+  all.forEach((r, i) => { if (!keep.has(r)) out.push({ row: i + rowOffset, order_number: String(r.order_number || ''), sku: String(r.sku || ''), qty: r.qty, reason: skipReason(r) }); });
+  return out;
+}
+
 // Returns { unsupported } instead of throwing for a file type we don't take.
 async function parseOrderFileToRows(buffer, filename) {
   const ext = path.extname(filename || '').toLowerCase();
   const pdfWarnings = [];
-  let allRows = [], skipped = 0, flagged = [];
+  let allRows = [], skipped = 0, flagged = [], skippedRows = [];
   if (ext === '.pdf') {
     const detailed = await parsePdfPicklistDetailed(buffer);
     allRows = detailed.rows;
@@ -10979,9 +11018,10 @@ async function parseOrderFileToRows(buffer, filename) {
   } else if (ext === '.csv') {
     const records  = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
     const detected = detectColumnMap(records);
-    const all      = records.map(r => mapRow(r, detected));
+    const all      = rescueOrderNumbers(records.map(r => mapRow(r, detected)));
     allRows = all.filter(r => r.sku && !isMetadataRow(r));
     skipped = all.length - allRows.length;
+    skippedRows = collectSkipped(all, allRows, 2);
   } else if (ext === '.xlsx' || ext === '.xls') {
     const wb                   = XLSX.read(buffer, { type: 'buffer', cellDates: true });
     const ws                   = wb.Sheets[wb.SheetNames[0]];
@@ -10990,13 +11030,14 @@ async function parseOrderFileToRows(buffer, filename) {
     const finalRecs            = melted || records;
     const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
     const detected             = detectColumnMap(cleanRecs);
-    const all                  = cleanRecs.map(r => mapRow(r, detected));
+    const all                  = rescueOrderNumbers(cleanRecs.map(r => mapRow(r, detected)));
     allRows = all.filter(r => r.sku && !isMetadataRow(r));
     skipped = cleanRecs.length - allRows.length;
+    skippedRows = collectSkipped(all, allRows, 1); // data-row index (header excluded)
   } else {
     return { unsupported: true, allRows: [], skipped: 0, pdfWarnings: [], flagged: [] };
   }
-  return { unsupported: false, allRows, skipped, pdfWarnings, flagged };
+  return { unsupported: false, allRows, skipped, skippedRows, pdfWarnings, flagged };
 }
 
 app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (req, res) => {
@@ -11028,7 +11069,10 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
       previewEnrich = enrichLinesFromCatalogue(allRows, _clientForFile);
     }
     const orders     = summarizeOrders(allRows);
-    const errors     = skipped > 0 ? [`${skipped} row(s) skipped (missing SKU or order number)`] : [];
+    const skippedRows = parsed.skippedRows || [];
+    const rescued    = allRows.filter(r => r._orderRescued).length;
+    const errors     = skipped > 0 ? [`⛔ ${skipped} row(s) will NOT be uploaded (missing SKU or order number) — download the skipped-rows list and check before approving.`] : [];
+    if (rescued) errors.push(`ℹ ${rescued} row(s) had no usable order number; the GI number / previous row's order number was used.`);
     errors.push(...pdfWarnings);
     if (previewEnrich.unknown) {
       errors.push(`⚠ ${previewEnrich.unknown} line(s) are not in this client's item master — they will have no description. Check the item master is loaded under the same client name.`);
@@ -11149,6 +11193,8 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
       customerNames,
       flagged,
       duplicateWarnings,
+      skippedCount: skippedRows.length,
+      skippedRows: skippedRows.slice(0, 2000),
       stagingUnits: staging.units,
       stagingSkus: staging.skus.slice(0, 8),
       deliveryPlanningAvailable,
