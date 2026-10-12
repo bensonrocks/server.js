@@ -1167,7 +1167,7 @@
     const noClientChk = document.getElementById('confirmNoClientChk');
     clientField.value = clientName;
     noClientChk.checked = false;
-    const evaluateClientGate = () => {
+    let evaluateClientGate = () => {
       const hasName = clientField.value.trim() !== '';
       const resolved = hasName || noClientChk.checked;
       clientField.classList.toggle('needs-input', !resolved);
@@ -1201,6 +1201,39 @@
       errEl.classList.remove('hidden');
     } else {
       errEl.classList.add('hidden');
+    }
+    // SKIPPED ROWS ARE NEVER SILENT. Any row the parser dropped is listed for
+    // download, and Approve stays locked until the uploader ticks that they
+    // have checked it (12 Oct: a whole 86-line Betime GI vanished as "skipped").
+    const skipped = Array.isArray(preview.skippedRows) ? preview.skippedRows : [];
+    let skipAck = !skipped.length;
+    if (skipped.length) {
+      const li = document.createElement('li');
+      li.style.fontWeight = '700';
+      const dl = document.createElement('a');
+      dl.href = '#'; dl.textContent = `⬇ Download ${skipped.length} skipped row(s) (CSV)`;
+      dl.onclick = (ev) => {
+        ev.preventDefault();
+        const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+        const csv = ['Row,Order number,SKU,Qty,Reason', ...skipped.map(r => [r.row, r.order_number, r.sku, r.qty, r.reason].map(q).join(','))].join('\n');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+        a.download = `skipped-rows-${filename.replace(/[^\w.-]+/g, '_')}.csv`;
+        a.click();
+      };
+      const lbl = document.createElement('label');
+      lbl.style.display = 'block';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.onchange = () => { skipAck = chk.checked; evaluateClientGate(); };
+      lbl.append(chk, document.createTextNode(' I have checked the skipped rows — upload without them'));
+      li.append(dl, lbl);
+      errEl.appendChild(li);
+      errEl.classList.remove('hidden');
+      const baseGate = evaluateClientGate;
+      evaluateClientGate = () => { baseGate(); if (!skipAck) document.getElementById('confirmApproveBtn').disabled = true; };
+      clientField.oninput = evaluateClientGate;
+      noClientChk.onchange = evaluateClientGate;
     }
 
     // Same SKU appearing more than once in one order — not blocked (a
