@@ -88,6 +88,99 @@ test('the completion plan follows the marketplace only when the switch is on', (
   }).mode, 'send');
 });
 
+test('TikTok numeric codes: 121 is already in transit, 111 still needs RTS, 140 is cancelled', () => {
+  const plan = (integration) => g.completionRtsPlan({
+    confirm: true, channel: 'TIKTOKSmilefam', integration,
+  });
+  for (const code of [112, '112', 114, '114', 121, '121', '121.0', 122, '122', 130, '130']) {
+    assert.equal(g.marketplaceRtsVerdict('tiktok', code), 'done', String(code));
+    assert.equal(plan(code).mode, 'already', String(code));
+  }
+  for (const code of [100, '100', 105, '105', 111, '111']) {
+    assert.equal(g.marketplaceRtsVerdict('tiktok', code), 'not_done', String(code));
+    assert.equal(plan(code).mode, 'send', String(code));
+  }
+  for (const code of [140, '140', '140.0']) {
+    assert.equal(g.marketplaceRtsVerdict('tiktok', code), 'cancelled', String(code));
+    assert.equal(plan(code).mode, 'cancel', String(code));
+  }
+  assert.equal(g.marketplaceRtsVerdict('tiktok', 'IN_TRANSIT'), 'done');
+  assert.equal(g.marketplaceRtsVerdict('tiktok', 'partially_shipping'), 'done');
+  // A fractional code is not an integer status. JS number 121.0 stringifies as "121".
+  assert.equal(g.marketplaceRtsVerdict('tiktok', '121.5'), 'unknown');
+  assert.equal(g.marketplaceRtsVerdict('tiktok', 121.5), 'unknown');
+  assert.equal(plan('121.5').mode, 'unknown');
+});
+
+test('Lazada and Shopee have no numeric status map', () => {
+  for (const code of ['121', 121, '2', '4']) {
+    assert.equal(g.marketplaceRtsVerdict('lazada', code), 'unknown', 'lazada ' + code);
+    assert.equal(g.completionRtsPlan({
+      confirm: true, channel: 'Lazada20082026Mayer', integration: code,
+    }).mode, 'unknown', 'lazada ' + code);
+  }
+  for (const code of ['2', '4', 121, '121']) {
+    assert.equal(g.marketplaceRtsVerdict('shopee', code), 'unknown', 'shopee ' + code);
+    assert.equal(g.completionRtsPlan({
+      confirm: true, channel: 'ShopeeSmilefam', integration: code,
+    }).mode, 'unknown', 'shopee ' + code);
+  }
+});
+
+test('an unrecognised status is not sent again, and a blank word still is', () => {
+  const unknown = g.completionRtsPlan({
+    confirm: true, channel: 'TIKTOKSmilefam', integration: '999',
+  });
+  assert.equal(unknown.mode, 'unknown');
+  assert.match(unknown.reason, /unknown/i);
+  assert.match(unknown.reason, /999/);
+  const mystery = g.completionRtsPlan({
+    confirm: true, channel: 'Lazada20082026Mayer', integration: 'mystery_status',
+  });
+  assert.equal(mystery.mode, 'unknown');
+  assert.match(mystery.reason, /unknown/i);
+  assert.equal(g.completionRtsPlan({
+    confirm: true, channel: 'TIKTOKSmilefam', integration: '',
+  }).mode, 'send');
+  assert.equal(g.marketplaceBlocksPickup('not_done'), true);
+  assert.equal(g.marketplaceBlocksPickup('cancelled'), true);
+  assert.equal(g.marketplaceBlocksPickup('done'), false);
+  assert.equal(g.marketplaceBlocksPickup('unknown'), false);
+  assert.equal(g.marketplaceBlocksPickup(''), false);
+});
+
+test('a refused Ready-to-Ship stamps sent when the read-back is already shipped or in transit', () => {
+  const stamp = (integration) => g.afterSendDecision({
+    verdict: 'done', integration, marketplace: 'tiktok', zortStatus: 'pending', read: true,
+  });
+  assert.equal(stamp('121').action, 'stamp');
+  assert.equal(stamp('IN_TRANSIT').action, 'stamp');
+  assert.equal(stamp('shipped').action, 'stamp');
+  const held = g.afterSendDecision({
+    verdict: 'unknown', integration: '999', marketplace: 'tiktok', zortStatus: 'pending', read: true,
+  });
+  assert.equal(held.action, 'hold');
+  assert.match(held.reason, /unknown/i);
+  const viaZort = g.afterSendDecision({
+    verdict: 'unknown', integration: '999', marketplace: 'lazada', zortStatus: 'success', read: true,
+  });
+  assert.equal(viaZort.action, 'stamp');
+  assert.equal(viaZort.via, 'zort');
+  assert.equal(g.afterSendDecision({
+    verdict: 'not_done', integration: '111', marketplace: 'tiktok', zortStatus: 'packed', read: true,
+  }).action, 'retry');
+  assert.equal(g.afterSendDecision({
+    verdict: 'cancelled', integration: '140', marketplace: 'tiktok', zortStatus: 'success', read: true,
+  }).action, 'terminal');
+  // A blank word is still the ordinary retry, even when Zort already says success.
+  assert.equal(g.afterSendDecision({
+    verdict: 'unknown', integration: '', marketplace: 'lazada', zortStatus: 'success', read: true,
+  }).action, 'retry');
+  assert.equal(g.afterSendDecision({
+    verdict: 'unknown', integration: '', marketplace: 'lazada', zortStatus: '', read: false,
+  }).action, 'retry');
+});
+
 test('due completion entries move ahead of a label backlog only for a flagged store', () => {
   const labels = Array.from({ length: 30 }, (_, i) => ({
     kind: 'label', storeId: 'hub', orderNumber: 'L' + i, nextAttemptAt: '2026-10-06T02:00:00.000Z',
