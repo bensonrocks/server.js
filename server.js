@@ -1698,6 +1698,20 @@ function applyAddressBookToTransport(db) {
   return updated;
 }
 
+// Outlet lookup for B2B paperwork — per-client opt-in (clientProfiles[].outletLookup,
+// default off). Returns a display copy; the stored order is never changed.
+const outletLookup = require('./lib/outlet-lookup');
+function outletLookupOn(db, clientName) {
+  const c = String(clientName || '').trim().toLowerCase();
+  if (!c) return false;
+  return (db.clientProfiles || []).some(p => String(p.client || '').trim().toLowerCase() === c && p.outletLookup === true);
+}
+function outletViewFor(db, order, clientName) {
+  if (!order || String(order.waybill_number || '').trim() || !outletLookupOn(db, clientName)) return order;
+  try { return outletLookup.outletView(order, buildAddressBookIndex(db)).order; }
+  catch (e) { console.warn('[outlet-lookup]', e.message); return order; }
+}
+
 // ADDRESS BOOK → ORDERS. B2B / GI orders (no courier waybill) usually carry
 // only a store name or code ("BDM (173)", "GA-NEX", "Betime HQ"). Resolve it in
 // the same book Transport uses (exact, case-insensitive, name/code/chain combos)
@@ -4656,6 +4670,8 @@ app.post('/api/master/client-profiles', express.json(), (req, res) => {
   // barcodes for the scanners, a catalogue to push to their store — while
   // nothing is ever reserved at upload or deducted at completion.
   if (b.stock_tracking !== undefined) p.stock_tracking = !!b.stock_tracking;
+  // Outlet lookup on B2B paperwork (label / DO / carton label). Default off.
+  if (b.outletLookup !== undefined) p.outletLookup = !!b.outletLookup;
   // CHANNEL→HUB SOURCES: which other clients/channels fulfill into THIS hub.
   // Stored as clear names on the hub profile (e.g. Mayer2026.channel_hub_sources
   // = ["Lazada20082026Mayer","TIKTOKMayer"]). Self-references are dropped.
@@ -6604,7 +6620,7 @@ async function _sendDo(res, hit) {
   }
   const st = (b.orderStates || {})[o.order_number] || {};
   const buf = await buildDeliveryOrderPdf({
-    order: o, clientName: b.client_name || o.client_name || '', jobCode: b.idealscan_code || '',
+    order: outletViewFor(readDb(), o, b.client_name || o.client_name), clientName: b.client_name || o.client_name || '', jobCode: b.idealscan_code || '',
     date: st.endTime || b.uploaded_at || null,
   });
   res.setHeader('Content-Type', 'application/pdf');
@@ -12954,14 +12970,15 @@ app.get('/api/scan/carton-slip/:orderNumber', (req, res) => {
   // carton number alone is not enough to trace it back.
   const orderedTotal = uniqueSkuLines(ord).reduce((n, l) => n + (Number(l.qty) || 0), 0);
   const packedHere   = Object.values(carton.scans || {}).reduce((n, q) => n + (Number(q) || 0), 0);
+  const shipTo = outletViewFor(db, ord, batch.client_name || ord.client_name);
   res.json({
     orderNumber,
     cartonNum:    carton.num,
     cartonCount:  cartons.length,
-    customerName: ord.customer_name || '',
-    deliveryAddress: ord.delivery_address || '',
-    deliveryTel:  ord.tel || '',
-    postalCode:   ord.postal_code || '',
+    customerName: shipTo.customer_name || '',
+    deliveryAddress: shipTo.delivery_address || '',
+    deliveryTel:  shipTo.tel || '',
+    postalCode:   shipTo.postal_code || '',
     clientName:   batch.client_name || ord.client_name || '',
     // Every identifier this order carries — the label prints whichever exist.
     issueNo:      ord.issue_no || '',
@@ -18819,7 +18836,7 @@ const _mmPt = v => v * 72 / 25.4;
 // pdf-lib's standard fonts are WinAnsi only — a character outside it throws
 // mid-draw. Replaced with '?' rather than dropped, so a name that could not
 // be printed reads as "could not be printed" and not as a different name.
-function _pdfSafe(s) { return String(s ?? '').replace(/[^\x20-\x7E\xA0-\xFF]/g, '?').replace(/\s+/g, ' ').trim(); }
+function _pdfSafe(s) { return String(s ?? '').replace(/[^\x20-\x7E\xA0-\xFF\u2013\u2014\u2018\u2019\u201C\u201D]/g, '?').replace(/\s+/g, ' ').trim(); }
 function _wrapPdfText(text, font, size, maxW) {
   const out = [];
   for (const para of _pdfSafe(text).split(/\n/)) {
@@ -18902,7 +18919,12 @@ async function drawSystemLabelPage(doc, fonts, { order, batch, size, template, n
   // Deliver To
   if (showAddress) {
     const name = String(order.customer_name || '').trim() || '-';
-    const addrLines = _wrapPdfText(order.delivery_address || '-', reg, 8.5, innerW - _mmPt(5)).slice(0, 4);
+    // Outlet-resolved orders (outlet_code set) also print the postcode the book supplied.
+    const pc = String(order.postal_code || '').trim();
+    const addrText = order.outlet_code && pc && !String(order.delivery_address || '').includes(pc)
+      ? [String(order.delivery_address || '').trim(), `S(${pc})`].filter(Boolean).join(' ')
+      : (order.delivery_address || '-');
+    const addrLines = _wrapPdfText(addrText, reg, 8.5, innerW - _mmPt(5)).slice(0, 4);
     const tel = showTel ? String(order.tel || '').trim() : '';
     const boxH = _mmPt(3) + 12 + addrLines.length * 11 + (tel ? 10 : 0) + _mmPt(3.5);
     page.drawRectangle({ x: M, y: y - boxH, width: innerW, height: boxH, borderColor: black, borderWidth: 0.8 });
@@ -19000,7 +19022,7 @@ async function buildBulkLabelPdf(db, orderNumbers, { size, dry } = {}) {
     if (!entry) {
       const why = carrierWhy;
       entry = { order: n, source: 'system', pages: 1, waybill: String(order.waybill_number || '').trim(), why };
-      if (!dry) await drawSystemLabelPage(doc, fonts, { order, batch, size, template: tplFor(order.carrier), note: why ? 'SYSTEM LABEL - ' + why : '' });
+      if (!dry) await drawSystemLabelPage(doc, fonts, { order: outletViewFor(db, order, batch.client_name), batch, size, template: tplFor(order.carrier), note: why ? 'SYSTEM LABEL - ' + why : '' });
     }
     plan.push(entry);
   }
