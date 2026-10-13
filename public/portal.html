@@ -575,6 +575,25 @@
     </section>
 
     <section id="tab-orders" class="hidden">
+      <div class="ctrls"><button class="btn-sm" id="noOpen" style="font-weight:700">&#10133; New Order</button></div>
+      <form id="noForm" class="hidden" style="border:1px solid #ccc;border-radius:8px;padding:.7rem;margin:.5rem 0">
+        <b>New Order</b> <span class="muted" style="font-size:.75rem">— order number is generated for you (CLIENT-YYYYMMDD-NNN)</span>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.4rem;margin:.5rem 0">
+          <input id="noShipTo" placeholder="Ship-to name *" required>
+          <input id="noContact" placeholder="Contact person">
+          <input id="noPhone" placeholder="Phone">
+          <input id="noAddress" placeholder="Delivery address *" required style="grid-column:1/-1">
+          <input id="noPostal" placeholder="Postal code (6 digits)" pattern="\d{6}">
+          <label class="muted" style="font-size:.75rem">Delivery date <input id="noDate" type="date"></label>
+          <input id="noRemarks" placeholder="Remarks" style="grid-column:1/-1">
+        </div>
+        <datalist id="noSkuList"></datalist>
+        <table style="width:100%"><thead><tr><th style="text-align:left">SKU</th><th style="text-align:left">Description</th><th>Qty</th><th></th></tr></thead><tbody id="noLines"></tbody></table>
+        <button type="button" class="btn-sm" id="noAddLine">+ Add item</button>
+        <div id="noMsg" class="muted" style="margin:.4rem 0"></div>
+        <button type="submit" class="btn-sm" style="font-weight:700">Submit order</button>
+        <button type="button" class="btn-sm" id="noCancel">Cancel</button>
+      </form>
       <div class="ctrls">
         <input class="search" id="orSearch" placeholder="Search order no or waybill…">
         <button class="btn-sm" id="orExport" title="One dated workbook: Orders and Cancelled orders — each with SKU, description and quantity per line — plus the full stock statement">&#8681; Report</button>
