@@ -2967,7 +2967,7 @@ body.ls-open { overflow: hidden; }
 /* ── Scan busy shield: blocks double-clicks while a count request is in flight ── */
 .scan-busy-shield {
   position: absolute; inset: 0; z-index: 300;
-  cursor: wait; display: flex; align-items: flex-end; justify-content: center;
+  cursor: wait; display: flex; align-items: flex-start; justify-content: center;
   padding-bottom: 18vh; background: transparent;
 }
 .scan-busy-shield.hidden { display: none; }
@@ -3990,4 +3990,37 @@ tr.pa-split-row td { border-top: 0; }
   body:has(#handoverOverlay:not(.hidden)) #handoverOverlay .group-toggle,
   body:has(#handoverOverlay:not(.hidden)) #handoverOverlay .sign-choice,
   body:has(#handoverOverlay:not(.hidden)) #handoverOverlay .sign-live { display: none !important; }
+}
+
+/* ── Transport on phones ─────────────────────────────────────────
+   The tab used to be pinned to 100% of <main> with the map as flex:1, so
+   on a phone nothing extended below the fold (main never scrolled) and the
+   Leaflet map swallowed every swipe. On phones: natural page height, a
+   modest fixed map, one-finger swipes scroll the page until the map is
+   tapped, legend collapsed, stats scroll sideways, job list below. */
+.tr-map-shield, .tr-map-done { display: none; }
+.tr-legend-toggle { all: unset; cursor: pointer; font-weight: 700; }
+.tr-legend-caret { display: none; }
+@media (max-width: 768px) {
+  .tab.tab-transport-layout.active { height: auto; min-height: 0; }
+  #tab-transport .tr-map-wrap { flex: none !important; height: 45vh; min-height: 260px; }
+  #tab-transport .tr-stats { min-width: 0 !important; width: 100%; flex: 1 1 100% !important;
+    display: flex; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #tab-transport .tr-stats .stat-box { flex: 0 0 auto; }
+  .tr-map-shield { display: flex; position: absolute; inset: 0; z-index: 900; align-items: flex-start; justify-content: center;
+    padding-top: .6rem; border: 0; background: rgba(15,23,42,.06); color: #0f172a; font-size: 13px; font-weight: 600;
+    touch-action: pan-y; }
+  .tr-map-shield span { background: #fff; border-radius: 999px; padding: .3rem .8rem; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+  .tr-map-wrap.map-active .tr-map-shield { display: none; }
+  .tr-map-wrap.map-active .tr-map-done { display: block; position: absolute; top: .5rem; right: .5rem; z-index: 901;
+    background: #fff; border: 1px solid #cbd5e1; border-radius: 6px; padding: .35rem .6rem; font-size: 12px; }
+  .tr-legend { z-index: 902; padding: .45rem .6rem !important; }
+  .tr-legend h4 { margin: 0 !important; }
+  .tr-legend-caret { display: inline; }
+  .tr-legend.collapsed .tr-legend-body { display: none; }
+  .tr-legend:not(.collapsed) h4 { margin-bottom: .4rem !important; }
+  #transportToggleListBtn { display: none; }
+  #tab-transport .tr-list { display: block !important; max-height: none !important; overflow: visible !important; }
+  .tr-job { display: flex; justify-content: space-between; gap: .5rem; padding: .45rem 0; border-bottom: 1px solid #e2e8f0; }
+  .tr-job small { color: #64748b; }
 }
