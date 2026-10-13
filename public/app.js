@@ -2918,6 +2918,7 @@
           ${canScan ? `<button class="btn-secondary btn-sm btn-picklist" data-order="${esc(ord.order_number)}"
                 title="Print a pick list for this order — bins in walk order">&#128424;</button>` : ''}
           ${isDone && !ord.has_waybill_pdf && !ord.has_order_label ? `<button class="btn-reprint-label" data-order="${esc(ord.order_number)}" title="Reprint label">&#128438;</button>` : ''}
+          ${!ord.reference_only ? `<a class="btn-slip" data-auth-dl="/api/orders/${encodeURIComponent(ord.order_number)}/do" data-auth-dl-name="DO_${esc(ord.order_number)}.pdf" title="Delivery Order (PDF)">DO</a>` : ''}
           ${isDone && slipUrl ? `<a class="btn-slip" data-auth-dl="${esc(slipUrl)}" data-auth-dl-name="Slip_${esc(ord.order_number)}.xlsx" title="Download slip">&#128196;</a>` : ''}
           ${ord.has_waybill_pdf && ord.batchId ? `<button class="btn-print-waybill" data-order="${esc(ord.order_number)}" data-batchid="${esc(ord.batchId)}" title="Print waybill">&#128438; WB</button>` : ''}
           ${ord.has_order_label ? `<button class="btn-print-order-label" data-order="${esc(ord.order_number)}" title="${ord.label_pages > 1 ? `Print carrier labels — ${ord.label_pages} parcels, one page each` : 'Print carrier label'}">&#127991;${ord.label_pages > 1 ? `<small>&times;${ord.label_pages}</small>` : ''}</button>` : ''}
