@@ -11073,6 +11073,12 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
     const rescued    = allRows.filter(r => r._orderRescued).length;
     const errors     = skipped > 0 ? [`⛔ ${skipped} row(s) will NOT be uploaded (missing SKU or order number) — download the skipped-rows list and check before approving.`] : [];
     if (rescued) errors.push(`ℹ ${rescued} row(s) had no usable order number; the GI number / previous row's order number was used.`);
+    {
+      // B2B / GI work goes to a store, not a courier: no waybill AND no ship-to
+      // means the carton label prints no delivery location (12 Oct, 78 orders).
+      const noShip = orders.filter(o => !String(o.waybill_number || '').trim() && !String(o.customer_name || '').trim());
+      if (noShip.length) errors.push(`⚠ ${noShip.length} order(s) have no ship-to / delivery location and no waybill — their carton labels will print no destination: ${noShip.slice(0, 8).map(o => o.order_number).join(', ')}${noShip.length > 8 ? '…' : ''}. Check the file has a Ship To Name / Customer column.`);
+    }
     errors.push(...pdfWarnings);
     if (previewEnrich.unknown) {
       errors.push(`⚠ ${previewEnrich.unknown} line(s) are not in this client's item master — they will have no description. Check the item master is loaded under the same client name.`);
@@ -19012,6 +19018,58 @@ app.post('/api/orders/backfill-gi', upload.single('file'), tenantMiddleware, (re
     });
   } catch (e) {
     console.error('[backfill-gi]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── BACKFILL SHIP-TO (customer_name) FROM THE ORIGINAL FILE ──────────────────
+// Same contract as /api/orders/backfill-gi: re-parse the file the orders came
+// from with the corrected mapper (ShipToName/ShipToCode now recognised) and
+// write ONE field — a BLANK customer_name on an existing order, matched by
+// order_number (GI as fallback). Never overwrites, never touches state, scans,
+// status or cartons; one writeDb; audited. Optional ?dryRun=1 writes nothing.
+app.post('/api/orders/backfill-shipto', upload.single('file'), tenantMiddleware, (req, res) => {
+  if (!requireInboundAdmin(req, res, 'backfill ship-to names')) return;
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Re-supply the order file (XLSX or CSV) the orders were uploaded from.' });
+    const dryRun = String(req.query.dryRun || req.body?.dryRun || '') === '1';
+    let rows;
+    try { rows = parseUploadedFile(req.file.buffer, req.file.originalname || 'orders.xlsx'); }
+    catch (e) { return res.status(400).json({ error: `Could not read the file: ${e.message}` }); }
+    const byOrder = new Map(), byGi = new Map();
+    for (const r of rows) {
+      const name = String(r.customer_name || '').trim();
+      if (!name) continue;
+      const on = String(r.order_number || '').trim();
+      const gi = String(r.issue_no || '').trim().toUpperCase();
+      if (on && on !== 'UNKNOWN' && !byOrder.has(on)) byOrder.set(on, name);
+      if (gi && !byGi.has(gi)) byGi.set(gi, name);
+    }
+    if (!byOrder.size && !byGi.size) return res.status(422).json({ error: 'No ship-to names could be read from this file. Nothing was changed.' });
+    const db = readDb();
+    const filled = [], alreadyHad = [];
+    for (const b of db.batches || []) {
+      for (const o of b.orders || []) {
+        const on = String(o.order_number || '').trim();
+        const name = byOrder.get(on) || byGi.get(String(o.issue_no || '').trim().toUpperCase());
+        if (!name) continue;
+        if (String(o.customer_name || '').trim()) { alreadyHad.push({ order: on, stored: o.customer_name }); continue; }
+        if (!dryRun) o.customer_name = name;
+        filled.push({ order: on, gi: o.issue_no || '', name, job: b.idealscan_code || '', client: b.client_name || '',
+                      status: b.orderStates?.[on]?.status || 'pending' });
+      }
+    }
+    if (filled.length && !dryRun) {
+      writeDb(db);
+      logAudit('orders_shipto_backfilled', {
+        filled: filled.length, orders: filled.slice(0, 100).map(f => `${f.order}→${f.name}`),
+        alreadyHad: alreadyHad.length, filename: req.file.originalname || '', by: req.userId || _tokenUserId(req) || 'master',
+      });
+    }
+    res.json({ ok: true, dryRun, filled, alreadyHad: alreadyHad.length,
+      summary: `${filled.length} order(s) ${dryRun ? 'would be' : ''} given their ship-to · ${alreadyHad.length} already had one (left alone)` });
+  } catch (e) {
+    console.error('[backfill-shipto]', e);
     res.status(500).json({ error: e.message });
   }
 });
