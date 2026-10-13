@@ -4615,6 +4615,7 @@
       <div class="stat-box done"><div class="val">${statusCounts.delivered}</div><div class="lbl">Delivered</div></div>
       <div class="stat-box"><div class="val">${doneYesterday}</div><div class="lbl">Done Yday</div></div>`;
 
+    renderTransportMobileList();
     // Initialize and update the main Singapore map (Leaflet — bundled locally)
     if (window.L) {
       initTransportMainMap();
@@ -4788,6 +4789,40 @@
     try { map.remove(); } catch (e) {}
   }
 
+  function setupTransportMobileMap(map, phone) {
+    const wrap = document.getElementById('transportMapContainer');
+    const shield = document.getElementById('transportMapShield');
+    const done = document.getElementById('transportMapDone');
+    const legend = document.getElementById('transportLegend');
+    const lt = document.getElementById('transportLegendToggle');
+    if (wrap) wrap.classList.remove('map-active');
+    if (legend && lt && !lt._wired) {
+      lt._wired = true;
+      if (phone) legend.classList.add('collapsed');
+      lt.setAttribute('aria-expanded', String(!legend.classList.contains('collapsed')));
+      lt.addEventListener('click', () => {
+        legend.classList.toggle('collapsed');
+        lt.setAttribute('aria-expanded', String(!legend.classList.contains('collapsed')));
+      });
+    }
+    if (!phone || !shield || !done) return;
+    shield.onclick = () => { wrap.classList.add('map-active'); done.hidden = false; try { map.dragging.enable(); } catch (e) {} };
+    done.onclick = () => { wrap.classList.remove('map-active'); done.hidden = true; try { map.dragging.disable(); } catch (e) {} };
+  }
+
+  // Phones: the jobs as a plain list under the map, so they can be reached by scrolling.
+  function renderTransportMobileList() {
+    const panel = document.getElementById('transportListPanel');
+    const box = document.getElementById('transportListContent');
+    if (!panel || !box) return;
+    const h = panel.querySelector('h3'); if (h) h.textContent = `Jobs (${transportRequests.length})`;
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    box.innerHTML = transportRequests.length ? transportRequests.map(r => `
+      <div class="tr-job"><div><b>${esc(r.shipping?.name || r.clientName || r.referenceId)}</b><br>
+        <small>${esc(r.referenceId)} · ${esc(r.shipping?.zip || 'no postal code')}${r.assignedDriverName ? ' · ' + esc(r.assignedDriverName) : ''}</small></div>
+        <div><small>${esc(r.status)}</small></div></div>`).join('') : '<p class="hint">No jobs.</p>';
+  }
+
   function initTransportMainMap() {
     const mapContainer = document.getElementById('transportMainMap');
     if (!mapContainer) return;
@@ -4814,7 +4849,12 @@
     try { delete mapContainer._leaflet_id; } catch (e) { mapContainer._leaflet_id = undefined; }
     // Hidden tab / zero-size container: do not setView yet.
     if (!document.body.contains(mapContainer) || mapContainer.clientWidth === 0 || mapContainer.clientHeight === 0) return;
-    transportMainMap = L.map(mapContainer, { zoomAnimation: false, fadeAnimation: false }).setView(singaporeCenter, 11, { animate: false });
+    // Phones: no one-finger drag until the user taps "Tap to use map", so a
+    // swipe over the map scrolls the page. Two-finger pinch still zooms.
+    const trPhone = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+    transportMainMap = L.map(mapContainer, { zoomAnimation: false, fadeAnimation: false,
+      dragging: !trPhone, tap: false, scrollWheelZoom: !trPhone }).setView(singaporeCenter, 11, { animate: false });
+    setupTransportMobileMap(transportMainMap, trPhone);
     wireTransportMapPopups(transportMainMap);
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 19,
