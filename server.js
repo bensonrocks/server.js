@@ -1698,6 +1698,32 @@ function applyAddressBookToTransport(db) {
   return updated;
 }
 
+// ADDRESS BOOK → ORDERS. B2B / GI orders (no courier waybill) usually carry
+// only a store name or code ("BDM (173)", "GA-NEX", "Betime HQ"). Resolve it in
+// the same book Transport uses (exact, case-insensitive, name/code/chain combos)
+// and fill ONLY blank delivery_address / tel / postal_code. Never overwrites.
+// Returns per-order results so the upload preview can say matched / no match.
+function applyAddressBookToOrders(db, orders, idx) {
+  idx = idx || buildAddressBookIndex(db);
+  const results = [];
+  for (const o of orders || []) {
+    if (String(o.waybill_number || '').trim()) continue;          // courier parcel — not ours to address
+    const keys = [o.customer_name, o.ship_to_code].map(_abNorm).filter(Boolean);
+    if (!keys.length) { results.push({ order: o.order_number, shipTo: '', matched: false }); continue; }
+    let entry = null;
+    for (const k of keys) { entry = idx.get(k); if (entry) break; }
+    if (!entry) { results.push({ order: o.order_number, shipTo: o.customer_name || o.ship_to_code, matched: false }); continue; }
+    const filled = [];
+    const addr = String(entry.address || '').trim();
+    if (!String(o.delivery_address || '').trim() && addr) { o.delivery_address = addr; filled.push('address'); }
+    if (!String(o.tel || '').trim() && entry.phone) { o.tel = entry.phone; filled.push('tel'); }
+    if (!String(o.postal_code || '').trim() && entry.zip) { o.postal_code = String(entry.zip); filled.push('postal'); }
+    results.push({ order: o.order_number, shipTo: o.customer_name || o.ship_to_code, matched: true,
+                   entry: [entry.chain, entry.name].filter(Boolean).join(' '), filled });
+  }
+  return results;
+}
+
 // Every uploaded picking-list order ALSO becomes a transport delivery job,
 // so the Transport tab reflects the day's real workload without a second
 // upload. Deduped by order number (referenceId), so re-uploading a batch or
@@ -2819,6 +2845,7 @@ function summarizeOrders(lines) {
         order_number:     key,
         customer_name:    line.customer_name,
         tel:              line.tel              || '',
+        ship_to_code:     line.ship_to_code     || '',
         delivery_address: line.delivery_address || '',
         carrier:          line.carrier,
         waybill_number:   line.waybill_number,
@@ -11069,10 +11096,17 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
       previewEnrich = enrichLinesFromCatalogue(allRows, _clientForFile);
     }
     const orders     = summarizeOrders(allRows);
+    let addressBookResults = [];
+    try { addressBookResults = applyAddressBookToOrders(readDb(), orders.map(x => ({ ...x }))); } catch (_) {}
     const skippedRows = parsed.skippedRows || [];
     const rescued    = allRows.filter(r => r._orderRescued).length;
     const errors     = skipped > 0 ? [`⛔ ${skipped} row(s) will NOT be uploaded (missing SKU or order number) — download the skipped-rows list and check before approving.`] : [];
     if (rescued) errors.push(`ℹ ${rescued} row(s) had no usable order number; the GI number / previous row's order number was used.`);
+    {
+      const abHit = addressBookResults.filter(r => r.matched).length, abMiss = addressBookResults.filter(r => !r.matched && r.shipTo);
+      if (abHit) errors.push(`ℹ ${abHit} B2B order(s) matched to address book — delivery address/postal filled where blank.`);
+      if (abMiss.length) errors.push(`⚠ ${abMiss.length} B2B order(s) — no match in address book: ${[...new Set(abMiss.map(r => r.shipTo))].slice(0, 8).join(', ')}${abMiss.length > 8 ? '…' : ''}`);
+    }
     {
       // B2B / GI work goes to a store, not a courier: no waybill AND no ship-to
       // means the carton label prints no delivery location (12 Oct, 78 orders).
@@ -11200,6 +11234,7 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
       flagged,
       duplicateWarnings,
       skippedCount: skippedRows.length,
+      addressBook: { matched: addressBookResults.filter(r => r.matched).length, noMatch: addressBookResults.filter(r => !r.matched).length, results: addressBookResults.slice(0, 500) },
       skippedRows: skippedRows.slice(0, 2000),
       stagingUnits: staging.units,
       stagingSkus: staging.skus.slice(0, 8),
@@ -11517,6 +11552,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     // `let`: the stock gate below can DROP short orders from this list when the
     // uploader chooses to take the rest.
     let orders      = summarizeOrders(mapped);
+    try { applyAddressBookToOrders(readDb(), orders); } catch (e) { console.warn('[address-book→orders]', e.message); }
 
     // SAFETY RULE — duplicate order numbers: re-uploading the same file (or
     // the same picking lists in another file) would create twin orders.
@@ -12875,6 +12911,9 @@ app.get('/api/scan/carton-slip/:orderNumber', (req, res) => {
     cartonNum:    carton.num,
     cartonCount:  cartons.length,
     customerName: ord.customer_name || '',
+    deliveryAddress: ord.delivery_address || '',
+    deliveryTel:  ord.tel || '',
+    postalCode:   ord.postal_code || '',
     clientName:   batch.client_name || ord.client_name || '',
     // Every identifier this order carries — the label prints whichever exist.
     issueNo:      ord.issue_no || '',
@@ -13925,6 +13964,7 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
     let orders = summarizeOrders(rows);
 
     const db = readDb();
+    try { applyAddressBookToOrders(db, orders); } catch (e) { console.warn('[address-book→orders]', e.message); }
     // ── LAYER TWO: tell the OFFICE, at approval ─────────────────────────
     // The SAME detector the client saw, so the two notices describe the same
     // facts — and so "the client already confirmed this" means they confirmed
@@ -19059,14 +19099,26 @@ app.post('/api/orders/backfill-shipto', upload.single('file'), tenantMiddleware,
                       status: b.orderStates?.[on]?.status || 'pending' });
       }
     }
-    if (filled.length && !dryRun) {
+    // Address book: fill blank address/tel/postal on every order this file names, never overwriting.
+    const addressBook = [];
+    {
+      const idx = buildAddressBookIndex(db);
+      for (const b of db.batches || []) for (const o of b.orders || []) {
+        const on = String(o.order_number || '').trim(), gi = String(o.issue_no || '').trim().toUpperCase();
+        if (!byOrder.has(on) && !byGi.has(gi)) continue;
+        const tgt = dryRun ? { ...o, customer_name: o.customer_name || byOrder.get(on) || byGi.get(gi) } : o;
+        addressBook.push(...applyAddressBookToOrders(db, [tgt], idx));
+      }
+    }
+    const abFilled = addressBook.filter(r => r.matched && r.filled.length).length;
+    if ((filled.length || abFilled) && !dryRun) {
       writeDb(db);
       logAudit('orders_shipto_backfilled', {
         filled: filled.length, orders: filled.slice(0, 100).map(f => `${f.order}→${f.name}`),
         alreadyHad: alreadyHad.length, filename: req.file.originalname || '', by: req.userId || _tokenUserId(req) || 'master',
       });
     }
-    res.json({ ok: true, dryRun, filled, alreadyHad: alreadyHad.length,
+    res.json({ ok: true, dryRun, filled, alreadyHad: alreadyHad.length, addressBook,
       summary: `${filled.length} order(s) ${dryRun ? 'would be' : ''} given their ship-to · ${alreadyHad.length} already had one (left alone)` });
   } catch (e) {
     console.error('[backfill-shipto]', e);

@@ -10427,6 +10427,7 @@
       data.issueNo && data.orderNumber && data.issueNo !== data.orderNumber
         ? `<div class="ref-alt">${esc(String(data.orderNumber))}</div>` : '',
       data.customerName ? `<div class="ref-cust">${esc(String(data.customerName))}</div>` : '',
+      (data.deliveryAddress || data.postalCode) ? `<div class="ref-addr">${esc([data.deliveryAddress, data.postalCode && !String(data.deliveryAddress || '').includes(data.postalCode) ? 'S(' + data.postalCode + ')' : ''].filter(Boolean).join(' '))}${data.deliveryTel ? ' &middot; ' + esc(String(data.deliveryTel)) : ''}</div>` : '',
     ].join('');
     const refBlock = `
       <div class="ref">
@@ -10799,6 +10800,7 @@
           <h1>${esc(data.orderNumber)}</h1>
           <div class="ctn">&#128230; CARTON ${data.cartonNum}</div>
           <div class="meta">${esc(data.customerName)}${data.clientName ? ' &middot; ' + esc(data.clientName) : ''}</div>
+          ${(data.deliveryAddress || data.postalCode) ? `<div class="meta">&#128205; ${esc([data.deliveryAddress, data.postalCode && !String(data.deliveryAddress || '').includes(data.postalCode) ? 'S(' + data.postalCode + ')' : ''].filter(Boolean).join(' '))}${data.deliveryTel ? ' &middot; ' + esc(String(data.deliveryTel)) : ''}</div>` : ''}
           <svg id="bc"></svg>
           <table><thead><tr><th>SKU</th><th>Description</th><th>Qty</th></tr></thead><tbody>${rows}</tbody></table>
           <script>
