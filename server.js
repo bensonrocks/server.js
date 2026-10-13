@@ -6590,8 +6590,18 @@ function _findOrderAnyBatch(db, wanted, clientNorm) {
   }
   return null;
 }
+const portalNewOrder = require('./lib/portal-new-order');
 async function _sendDo(res, hit) {
-  const { b, o } = hit;
+  const { b } = hit;
+  // Orders approved before the form fields were carried over: read them from
+  // the originating keyed-in submission (display only, nothing is written).
+  const o = { ...hit.o };
+  if (!o.keyed_in_portal) {
+    const cn = String(b.client_name || '').trim().toLowerCase();
+    const sub = clientSubs(readDb()).find(x => x.new_order && String(x.new_order.order_number) === String(o.order_number)
+      && String(x.client_name || '').trim().toLowerCase() === cn);
+    if (sub) portalNewOrder.applyNewOrderFields(o, sub.new_order);
+  }
   const st = (b.orderStates || {})[o.order_number] || {};
   const buf = await buildDeliveryOrderPdf({
     order: o, clientName: b.client_name || o.client_name || '', jobCode: b.idealscan_code || '',
@@ -13835,7 +13845,6 @@ app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {
 // Lines are checked against the client's OWN item master. The order goes in as
 // a normal client submission (status pending → office approves, same rules as
 // a file upload), and its DO is available straight away from the submission.
-const portalNewOrder = require('./lib/portal-new-order');
 function _portalOrderTaken(db, n) {
   for (const b of db.batches || []) for (const o of b.orders || []) if (String(o.order_number) === n) return true;
   return clientSubs(db).some(x => x.kind === 'orders' && (x.summary?.orders || []).some(o => o.order_number === n));
@@ -14090,6 +14099,8 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
     normalizeOrderRowsToInhouseSku(rows, () => cid);
     enrichLinesFromCatalogue(rows, s0.client_name);
     let orders = summarizeOrders(rows);
+    // Keyed-in portal order: carry the form's delivery date, contact, remarks etc.
+    if (s0.new_order) for (const o of orders) portalNewOrder.applyNewOrderFields(o, s0.new_order);
 
     const db = readDb();
     try { applyAddressBookToOrders(db, orders); } catch (e) { console.warn('[address-book→orders]', e.message); }
