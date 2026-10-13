@@ -1018,6 +1018,7 @@
               ${fmtDate(o.date)} · ${num(o.lines)} line${o.lines === 1 ? '' : 's'} · ${num(o.total_qty)} pcs
             </div>
             ${o.waybill ? `<div class="muted mono" style="font-size:.7rem;margin-top:.1rem">Waybill ${esc(o.waybill)}</div>` : ''}
+            <div style="margin-top:.2rem"><a href="/api/portal/order/${encodeURIComponent(o.order_number)}/do?token=${encodeURIComponent(token)}" target="_blank" rel="noopener" style="font-size:.72rem">&#128196; Delivery Order (PDF)</a></div>
           </div>
           <div style="text-align:right">
             <span class="pill ${s.pill}">${s.label}</span>

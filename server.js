@@ -6578,6 +6578,44 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
 // ledger the export and the office report read.
 // Notices broadcast to this client. Any of their logins may acknowledge on the
 // account's behalf — see noticeRecipients.
+// ── DELIVERY ORDER (DO) PDF — office and client portal ─────────────────────
+// One printable DO per order: client, DO number, date, ship-to/address, lines,
+// signature boxes. Read-only. The portal route re-checks ownership.
+const { buildDeliveryOrderPdf, doNumber } = require('./lib/delivery-order');
+function _findOrderAnyBatch(db, wanted, clientNorm) {
+  for (const b of db.batches || []) {
+    if (clientNorm && String(b.client_name || '').trim().toLowerCase() !== clientNorm) continue;
+    const o = (b.orders || []).find(x => String(x.order_number) === wanted);
+    if (o) return { b, o };
+  }
+  return null;
+}
+async function _sendDo(res, hit) {
+  const { b, o } = hit;
+  const st = (b.orderStates || {})[o.order_number] || {};
+  const buf = await buildDeliveryOrderPdf({
+    order: o, clientName: b.client_name || o.client_name || '', jobCode: b.idealscan_code || '',
+    date: st.endTime || b.uploaded_at || null,
+  });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${doNumber(o)}.pdf"`);
+  res.end(buf);
+}
+app.get('/api/orders/:orderNumber/do', requireAuth, async (req, res) => {
+  try {
+    const hit = _findOrderAnyBatch(readDb(), String(req.params.orderNumber), null);
+    if (!hit) return res.status(404).json({ error: 'Order not found' });
+    await _sendDo(res, hit);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/portal/order/:orderNumber/do', requirePortalAuthMiddleware, async (req, res) => {
+  try {
+    const hit = _findOrderAnyBatch(readDb(), String(req.params.orderNumber), req.portalClient.trim().toLowerCase());
+    if (!hit) return res.status(404).json({ error: 'Order not found' });
+    await _sendDo(res, hit);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // The matched waybill page, for the client that owns the order. Ownership is
 // re-checked here rather than trusted from the caller — /api/order-label is the
 // STAFF route and must never be reachable with a portal token.
