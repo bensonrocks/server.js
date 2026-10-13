@@ -937,6 +937,9 @@ app.get('/api/ping', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 // Public marketing/waitlist landing page — deliberately outside the auth
 // gate (which only guards /api/*) so it's reachable by anyone, logged in or not.
 app.get('/home', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'home.html')));
+// Public IdealOne intro page (no login). Like /home, registered before every
+// auth gate; '/' (login) is left unchanged.
+app.get('/intro', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'intro.html')));
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
 );
