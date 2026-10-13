@@ -13840,7 +13840,17 @@ function _portalOrderTaken(db, n) {
   for (const b of db.batches || []) for (const o of b.orders || []) if (String(o.order_number) === n) return true;
   return clientSubs(db).some(x => x.kind === 'orders' && (x.summary?.orders || []).some(o => o.order_number === n));
 }
-app.post('/api/portal/new-order', express.json(), (req, res) => {
+// Light per-IP limit: each keyed order mints a number and pokes the office.
+const _newOrderHits = new Map();
+function newOrderRateLimit(req, res, next) {
+  const k = req.ip || 'x', now = Date.now();
+  const h = (_newOrderHits.get(k) || []).filter(t => now - t < 60000);
+  if (h.length >= 20) return res.status(429).json({ error: 'Too many orders in a minute. Please wait and try again.' });
+  h.push(now); _newOrderHits.set(k, h);
+  if (_newOrderHits.size > 5000) _newOrderHits.clear();
+  next();
+}
+app.post('/api/portal/new-order', newOrderRateLimit, express.json(), (req, res) => {
   requirePortalWrite(req, res, async () => {
     try {
       const client = req.portalClient;
