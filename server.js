@@ -13850,8 +13850,7 @@ function newOrderRateLimit(req, res, next) {
   if (_newOrderHits.size > 5000) _newOrderHits.clear();
   next();
 }
-app.post('/api/portal/new-order', newOrderRateLimit, express.json(), (req, res) => {
-  requirePortalWrite(req, res, async () => {
+app.post('/api/portal/new-order', newOrderRateLimit, express.json(), requirePortalWrite, async (req, res) => {
     try {
       const client = req.portalClient;
       const cid = invClientId(client);
@@ -13904,7 +13903,6 @@ app.post('/api/portal/new-order', newOrderRateLimit, express.json(), (req, res) 
       res.status(201).json({ ok: true, orderNumber, submission: clientSubPublic(db, sub),
         doUrl: `/api/portal/submissions/${id}/do` });
     } catch (e) { res.status(500).json({ error: e.message }); }
-  });
 });
 // DO for a keyed-in order, available before approval (from the submission).
 app.get('/api/portal/submissions/:id/do', requirePortalAuthMiddleware, async (req, res) => {
