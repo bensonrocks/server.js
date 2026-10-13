@@ -12939,6 +12939,7 @@
       $('obName').value = ''; $('obName').disabled = false;
       $('obType').value = ''; $('obCommodity').value = '';
       $('obStockTracking').checked = true;               // new clients: we hold their stock
+      if ($('obOutletLookup')) $('obOutletLookup').checked = false;  // outlet lookup: off by default
       $('obItemCount').textContent = ''; $('obItemStatus').classList.add('hidden');
       $('obInstrList').innerHTML = ''; $('obTestResult').textContent = '';
       $('obSaveStatus').textContent = '';
@@ -12955,6 +12956,7 @@
       $('obType').value = p.type || ''; $('obCommodity').value = p.commodity || '';
       // Absent reads as ON, so an existing client is unchanged by this arriving.
       $('obStockTracking').checked = p.stock_tracking !== false;
+      if ($('obOutletLookup')) $('obOutletLookup').checked = p.outletLookup === true;
       $('obItemCount').textContent = p.itemCount ? `${p.itemCount} items loaded` : 'no items yet';
       $('obItemStatus').classList.add('hidden'); $('obTestResult').textContent = ''; $('obSaveStatus').textContent = '';
       renderHubSources(p.channel_hub_sources || []);
@@ -13236,6 +13238,7 @@
       if (!client) { $('obSaveStatus').textContent = 'Name required.'; return; }
       const body = { client, type: $('obType').value, commodity: $('obCommodity').value.trim(),
                      stock_tracking: $('obStockTracking').checked,
+                     outletLookup: !!($('obOutletLookup') && $('obOutletLookup').checked),
                      channel_hub_sources: selectedHubSources() };
       const r = await fetch('/api/master/client-profiles', { method: 'POST', headers: mkJson(), body: JSON.stringify(body) });
       if (!r.ok) { const d = await r.json(); $('obSaveStatus').textContent = d.error || 'Save failed'; return; }
