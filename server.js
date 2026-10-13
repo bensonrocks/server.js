@@ -13830,6 +13830,96 @@ app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {
   });
 });
 
+// ── PORTAL "NEW ORDER" — client keys an order in, no file needed ───────────
+// Order number CLIENTNAME-YYYYMMDD-NNN (SGT, per client per day, clash-free).
+// Lines are checked against the client's OWN item master. The order goes in as
+// a normal client submission (status pending → office approves, same rules as
+// a file upload), and its DO is available straight away from the submission.
+const portalNewOrder = require('./lib/portal-new-order');
+function _portalOrderTaken(db, n) {
+  for (const b of db.batches || []) for (const o of b.orders || []) if (String(o.order_number) === n) return true;
+  return clientSubs(db).some(x => x.kind === 'orders' && (x.summary?.orders || []).some(o => o.order_number === n));
+}
+// Light per-IP limit: each keyed order mints a number and pokes the office.
+const _newOrderHits = new Map();
+function newOrderRateLimit(req, res, next) {
+  const k = req.ip || 'x', now = Date.now();
+  const h = (_newOrderHits.get(k) || []).filter(t => now - t < 60000);
+  if (h.length >= 20) return res.status(429).json({ error: 'Too many orders in a minute. Please wait and try again.' });
+  h.push(now); _newOrderHits.set(k, h);
+  if (_newOrderHits.size > 5000) _newOrderHits.clear();
+  next();
+}
+app.post('/api/portal/new-order', newOrderRateLimit, express.json(), requirePortalWrite, async (req, res) => {
+    try {
+      const client = req.portalClient;
+      const cid = invClientId(client);
+      let items = new Map();
+      try { for (const r of inventory.getAll({ clientId: cid })) { items.set(r.sku, r); items.set(String(r.sku).toUpperCase(), r); } } catch (_) {}
+      const { order: f, errors } = portalNewOrder.validateNewOrder(req.body, items);
+      if (errors.length) return res.status(400).json({ error: errors[0], errors });
+      const db = readDb();
+      const orderNumber = portalNewOrder.nextPortalOrderNumber(db, canonicalClientName(db, client), n => _portalOrderTaken(db, n));
+      const address = [f.address, f.postal && !f.address.includes(f.postal) ? `S(${f.postal})` : ''].filter(Boolean).join(' ');
+      // The same file shape a client would upload, so approval runs the ONE
+      // existing path (parser, item-master enrichment, stock gate).
+      const aoa = [['Order No', 'SKU', 'Description', 'Qty', 'Customer Name', 'Delivery Address', 'Tel', 'Remarks']];
+      for (const l of f.lines) aoa.push([orderNumber, l.sku, l.description, l.qty, f.ship_to_name, address, f.phone, f.remarks]);
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Order');
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      const parsed = await parseOrderFileToRows(buf, `${orderNumber}.xlsx`);
+      const rows = parsed.allRows;
+      if (!rows.length || parsed.skipped) return res.status(500).json({ error: 'Could not build the order — nothing was saved.' });
+      normalizeOrderRowsToInhouseSku(rows, () => cid);
+      enrichLinesFromCatalogue(rows, client);
+      const orders = summarizeOrders(rows);
+      const id = uuidv4();
+      fs.writeFileSync(path.join(CLIENT_SUB_DIR, id + '.xlsx'), buf);
+      const now = new Date().toISOString();
+      const sub = {
+        id, kind: 'orders',
+        code: nextIdealscanCode(db).replace(/^IS-/, 'CS-'),
+        client_name: canonicalClientName(db, client),
+        filename: `${orderNumber} (keyed in portal).xlsx`, stored_ext: '.xlsx',
+        contentHash: crypto.createHash('sha256').update(buf).digest('hex'),
+        submitted_at: now, submitted_by: `portal:${client}`, transmitted_at: now,
+        status: 'pending', linked_labels_id: null,
+        new_order: { order_number: orderNumber, ...f, postal: f.postal, by: req.portalUser?.id || '' },
+        summary: {
+          rowCount: rows.length, orderCount: orders.length,
+          totalQty: orders.reduce((n, o) => n + (o.total_qty || 0), 0), warnings: [],
+          orders: orders.map(o => ({ order_number: o.order_number, total_qty: o.total_qty, waybill_number: '', issue_no: '', po_number: '',
+            lines: (o.lines || []).map(l => ({ sku: l.sku, description: l.description, qty: l.qty })) })),
+        },
+      };
+      clientSubs(db).unshift(sub);
+      addPoke(db, {
+        kind: 'client_orders_submitted', client: sub.client_name, direction: 'outbound',
+        channel: clientChannel(db, sub.client_name), lines: rows.length, orders: 1, pieces: sub.summary.totalQty,
+        text: `${sub.client_name} keyed in order ${orderNumber} for approval (${sub.code})`, submissionId: id,
+      });
+      writeDb(db);
+      logAudit('client_order_keyed', { id, code: sub.code, client: sub.client_name, order: orderNumber, lines: rows.length, by: sub.submitted_by });
+      res.status(201).json({ ok: true, orderNumber, submission: clientSubPublic(db, sub),
+        doUrl: `/api/portal/submissions/${id}/do` });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// DO for a keyed-in order, available before approval (from the submission).
+app.get('/api/portal/submissions/:id/do', requirePortalAuthMiddleware, async (req, res) => {
+  try {
+    const db = readDb();
+    const s = clientSubs(db).find(x => x.id === req.params.id);
+    if (!s || !sameClient(s.client_name, req.portalClient) || !s.new_order) return res.status(404).json({ error: 'Not found' });
+    const f = s.new_order;
+    const order = { order_number: f.order_number, customer_name: f.ship_to_name, delivery_address: f.address, postal_code: f.postal,
+      tel: f.phone, contact: f.contact, delivery_date: f.delivery_date, remarks: f.remarks,
+      lines: (s.summary?.orders?.[0]?.lines) || f.lines };
+    const buf = await buildDeliveryOrderPdf({ order, clientName: s.client_name, jobCode: s.code, date: s.submitted_at });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${doNumber(order)}.pdf"`);
+    res.end(buf);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // PORTAL → my submissions and where they got to.
 app.get('/api/portal/submissions', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient.trim().toLowerCase();

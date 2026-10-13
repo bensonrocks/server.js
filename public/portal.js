@@ -2041,6 +2041,51 @@
     approved: ['p-sla-met', 'Approved'],
     rejected: ['p-sla-miss', 'Not accepted'],
   };
+
+  // ── NEW ORDER (keyed in) ─────────────────────────────────────────────────
+  (function setupNewOrder() {
+    const $ = id => document.getElementById(id);
+    if (!$('noOpen')) return;
+    let items = [];
+    const addLine = () => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td><input class="noSku" list="noSkuList" placeholder="Search SKU or name" style="width:100%"></td><td class="noDesc muted" style="font-size:.8rem"></td><td><input class="noQty" type="number" min="1" value="1" style="width:5rem"></td><td><button type="button" class="btn-sm noDel">&#10005;</button></td>';
+      const sku = tr.querySelector('.noSku');
+      sku.addEventListener('change', () => {
+        const v = sku.value.split(' — ')[0].trim(); sku.value = v;
+        const it = items.find(x => x.sku === v);
+        tr.querySelector('.noDesc').textContent = it ? (it.name || '') + (it.available != null ? ` · available ${it.available}` : '') : (v ? 'Not in your item master' : '');
+      });
+      tr.querySelector('.noDel').onclick = () => tr.remove();
+      $('noLines').appendChild(tr);
+    };
+    $('noOpen').onclick = async () => {
+      $('noForm').classList.remove('hidden'); $('noMsg').textContent = '';
+      if (!$('noLines').children.length) addLine();
+      try {
+        const d = await (await api('/api/portal/stock')).json();
+        items = (d && d.rows) || [];
+        $('noSkuList').innerHTML = items.map(i => `<option value="${esc(i.sku)} — ${esc(i.name || '')}"></option>`).join('');
+      } catch (_) {}
+    };
+    $('noCancel').onclick = () => $('noForm').classList.add('hidden');
+    $('noAddLine').onclick = addLine;
+    $('noForm').onsubmit = async (ev) => {
+      ev.preventDefault();
+      const body = {
+        ship_to_name: $('noShipTo').value, address: $('noAddress').value, postal: $('noPostal').value,
+        phone: $('noPhone').value, contact: $('noContact').value, delivery_date: $('noDate').value, remarks: $('noRemarks').value,
+        lines: [...$('noLines').querySelectorAll('tr')].map(tr => ({ sku: tr.querySelector('.noSku').value.trim(), qty: tr.querySelector('.noQty').value })),
+      };
+      $('noMsg').textContent = 'Submitting…';
+      try {
+        const r = await (await api('/api/portal/new-order', { method: 'POST', body: JSON.stringify(body) })).json();
+        if (!r || r.error) { $('noMsg').textContent = '⚠ ' + ((r && (r.errors || [r.error]).join(' ')) || 'Failed'); return; }
+        $('noMsg').innerHTML = `✅ Order <b>${esc(r.orderNumber)}</b> sent for approval. <a href="${r.doUrl}?token=${encodeURIComponent(token)}" target="_blank" rel="noopener">&#128196; Download Delivery Order (PDF)</a>`;
+        $('noLines').innerHTML = ''; addLine();
+      } catch (e) { $('noMsg').textContent = '⚠ ' + e.message; }
+    };
+  })();
   async function loadSubmissions() {
     try {
       const rows = await (await api('/api/portal/submissions')).json();
