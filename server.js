@@ -992,6 +992,10 @@ app.post('/api/public/enquiry', enquiryRateLimit, async (req, res) => {
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
 );
+// 24h processing timer — shared with tests (lib/order-sla.js, UMD).
+app.get('/vendor/order-sla.js', (_req, res) =>
+  res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'order-sla.js'))
+);
 // QR generator — substitute codes for long SKUs are QR (a 26-char SKU as
 // Code128 is too dense to scan; QR encodes it compactly)
 app.get('/vendor/qrcode.js', (_req, res) =>
@@ -4761,6 +4765,17 @@ app.post('/api/master/client-profiles', express.json(), (req, res) => {
   if (b.stock_tracking !== undefined) p.stock_tracking = !!b.stock_tracking;
   // Outlet lookup on B2B paperwork (label / DO / carton label). Default off.
   if (b.outletLookup !== undefined) p.outletLookup = !!b.outletLookup;
+  // 24h processing timer override for this client (blank clears → global).
+  if (b.slaHours !== undefined) {
+    const n = Number(b.slaHours);
+    if (b.slaHours === '' || b.slaHours === null) delete p.slaHours;
+    else if (n >= 1 && n <= 720) p.slaHours = n;
+  }
+  if (b.slaYellowHours !== undefined) {
+    const n = Number(b.slaYellowHours);
+    if (b.slaYellowHours === '' || b.slaYellowHours === null) delete p.slaYellowHours;
+    else if (n >= 0 && n <= 720) p.slaYellowHours = n;
+  }
   if (aliasesNext) p.aliases = aliasesNext;
   // CHANNEL→HUB SOURCES: which other clients/channels fulfill into THIS hub.
   // Stored as clear names on the hub profile (e.g. Mayer2026.channel_hub_sources
@@ -21730,6 +21745,47 @@ app.post('/api/master/pickup-policy', express.json(), (req, res) => {
 // Reading it is floor information — the packers need to know what today's
 // cut-offs are. Changing it is a commercial promise, so it follows the same
 // guard as the collection schedule: admin role or the master key.
+// ── 24H PROCESSING TIMER (lib/order-sla.js) ─────────────────────────────────
+// Flag: env ORDER_SLA_TIMER=1 (off by default → the Orders tab shows nothing
+// new). The timer is computed in the BROWSER from fields /api/orders already
+// returns; the server only hands out this small policy object, so no
+// per-order work is added to any request (freeze history). Global hours /
+// yellow threshold live in db.orderSlaPolicy; a client profile may override
+// with slaHours / slaYellowHours (its aliases follow it, like print settings).
+const orderSla = require('./lib/order-sla');
+const orderSlaTimerOn = () => /^(1|true|on|yes)$/i.test(String(process.env.ORDER_SLA_TIMER || ''));
+function orderSlaConfig(db) {
+  const g = db.orderSlaPolicy || {};
+  const clients = {};
+  for (const p of clientProfiles(db)) {
+    const has = v => v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v));
+    const v = {};
+    if (has(p.slaHours) && Number(p.slaHours) > 0) v.hours = Number(p.slaHours);
+    if (has(p.slaYellowHours) && Number(p.slaYellowHours) >= 0) v.yellowHours = Number(p.slaYellowHours);
+    if (!Object.keys(v).length) continue;
+    for (const n of [p.client, ...(p.aliases || [])]) { const k = String(n || '').trim().toLowerCase(); if (k) clients[k] = v; }
+  }
+  const pol = orderSla.policyFor({ hours: g.hours, yellowHours: g.yellowHours }, '');
+  return { enabled: orderSlaTimerOn(), hours: pol.hours, yellowHours: pol.yellowHours, clients };
+}
+app.get('/api/order-sla', (req, res) => {
+  res.json(orderSlaConfig(readDb()));
+});
+app.post('/api/master/order-sla', express.json(), (req, res) => {
+  if (req.headers['x-master-key'] !== MASTER_PASS) {
+    const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';
+    if (role !== 'admin') return res.status(403).json({ error: 'Only Admin users can change the processing timer.' });
+  }
+  const b = req.body || {};
+  const hours = Number(b.hours), yellow = Number(b.yellowHours);
+  if (!(hours >= 1 && hours <= 720)) return res.status(400).json({ error: 'Hours must be between 1 and 720.' });
+  if (!(yellow >= 0 && yellow < hours)) return res.status(400).json({ error: 'Yellow threshold must be at least 0 and less than the total hours.' });
+  const db = readDb();
+  db.orderSlaPolicy = { hours, yellowHours: yellow, updatedAt: new Date().toISOString(), by: req.userId || '' };
+  writeDb(db);
+  logAudit('order_sla_policy_saved', { hours, yellowHours: yellow, by: req.userId || '' });
+  res.json(orderSlaConfig(db));
+});
 app.get('/api/fulfilment-policy', (req, res) => {
   const db = readDb();
   res.json({ ...fulfilmentPolicy(db), handoverAt: pickupPolicy(db).cutoff });

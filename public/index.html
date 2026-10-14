@@ -694,6 +694,14 @@
                   <span class="hint" style="display:block;margin-top:.15rem">Orders filed under these client names use this profile's <b>label &amp; DO settings</b> (e.g. outlet lookup).
                     Stock, item master, billing, portal and reports are <b>not</b> affected &mdash; they stay with the order's own client name.</span>
                 </div>
+                <div class="form-group">
+                  <label for="obSlaHours" style="font-weight:600">&#9201; Hours to process (timer)</label>
+                  <input type="number" id="obSlaHours" min="1" max="720" step="1" placeholder="blank = global default" />
+                </div>
+                <div class="form-group">
+                  <label for="obSlaYellow" style="font-weight:600">Yellow when &le; hours left</label>
+                  <input type="number" id="obSlaYellow" min="0" max="720" step="1" placeholder="blank = global default" />
+                </div>
                 <div class="form-group" style="grid-column:1/3">
                   <label style="display:flex;align-items:flex-start;gap:.5rem;font-weight:600;cursor:pointer">
                     <input type="checkbox" id="obOutletLookup" style="margin-top:.2rem" />
@@ -4822,6 +4830,7 @@
   <script src="/vendor/jsqr.js"></script>
   <script src="batch-scan.js"></script>
   <script src="label-scan.js"></script>
+  <script src="/vendor/order-sla.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
