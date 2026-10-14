@@ -8455,6 +8455,19 @@ function attachLabelPage(db, orderNumber, entry) {
     ref.parcels.push({ ...entry });
     return 'parcel';
   }
+  // A RE-FETCH OF A SPLIT ORDER'S LABELS. The same tracking number is already
+  // held — replace THE PAGE THAT HOLDS IT, wherever it sits. Swapping the
+  // primary regardless (the old rule) let parcel 2's reprint overwrite parcel
+  // 1, so a second fetch of a two-parcel PDF left the order holding the same
+  // box twice and the other box not at all (live: 174179133225806, 12 Oct).
+  const t = String(entry.tracking || '').trim().toUpperCase();
+  if (t) {
+    const k = (ref.parcels || []).findIndex(p => String(p.tracking || '').trim().toUpperCase() === t);
+    if (k >= 0 && String(ref.tracking || '').trim().toUpperCase() !== t) {
+      ref.parcels[k] = { ...entry };
+      return 'replaced';
+    }
+  }
   db.orderLabels[orderNumber] = { ...entry, parcels: ref.parcels };
   if (!db.orderLabels[orderNumber].parcels) delete db.orderLabels[orderNumber].parcels;
   return 'replaced';
@@ -9080,6 +9093,38 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
       if (_forRef) pages[0].parcel = true;
       logAudit('sync_label_attached_by_request', { order: forTarget, importId, parcel: !!_forRef, viaReference: forTarget !== forOrder ? forOrder : undefined,
         why: 'fetched from the channel for this order; the text on it did not match' });
+    }
+  }
+
+  // A MULTI-PAGE PDF FETCHED FOR ONE ORDER (Lazada via ZORT hands back every
+  // package of a split order in ONE document). A page the text could not place
+  // — OCR garbled the order number and the tracking number is new to us — is
+  // that order's next parcel ONLY when everything we can check agrees: the
+  // import was fetched for this order, another page of it matched this order,
+  // the page carries a tracking number no other order holds, and its postcode
+  // is the order's postcode. Otherwise it stays unmatched for the Labels tab.
+  // (live: 174163589942399, page 2 LZSGD1015698443, order no. read as
+  // 174163583942309.)
+  if (forTarget && numPages > 1 && pages.some(p => p.matchStatus === 'matched' && p.matchedOrderNumber === forTarget)) {
+    const fb = findBatchForOrder(db, forTarget);
+    const fo = fb && (fb.orders || []).find(o => o.order_number === forTarget);
+    const pc = String(fo?.postal_code || '').trim() || (String(fo?.delivery_address || '').match(/\b(\d{6})\b(?!.*\b\d{6}\b)/) || [])[1] || '';
+    for (const pg of pages) {
+      if (pg.matchStatus !== 'unmatched') continue;
+      const tr = labelTrackingOf(pg);
+      if (!tr || !pc || String(pg.extracted?.postalCode || '').trim() !== pc) continue;
+      const elsewhere = Object.entries(db.orderLabels || {}).some(([on, r]) => on !== forTarget && labelHeldTrackings(r).has(tr))
+        || (db.batches || []).some(b => (b.orders || []).some(o => o.order_number !== forTarget && String(o.waybill_number || '').trim().toUpperCase() === tr));
+      if (elsewhere || !isAnotherParcel(db.orderLabels[forTarget], tr)) continue;
+      const role = attachLabelPage(db, forTarget, {
+        importId, pageIndex: pg.pageIndex, pageFile: pg.pageFile, tracking: tr,
+        attachedAt: new Date().toISOString(), attachedBy: uploadedBy, attachedVia: 'fetched-for-order-parcel',
+      });
+      if (role === 'parcel') {
+        Object.assign(pg, { matchStatus: 'matched', matchedOrderNumber: forTarget, matchMethod: 'fetched-for-order', matchConfidence: 'postcode', parcel: true });
+        logAudit('sync_label_attached_by_request', { order: forTarget, importId, parcel: true,
+          why: 'another package of a multi-page label fetched for this order; order number misread, postcode matches' });
+      }
     }
   }
 
