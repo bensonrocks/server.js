@@ -19125,7 +19125,6 @@ async function drawSystemLabelPage(doc, fonts, { order, batch, size, template, n
       const qimg = await doc.embedPng(qpng);
       const qy = M + _mmPt(2.5);
       page.drawImage(qimg, { x: W - M - qrS, y: qy, width: qrS, height: qrS });
-      rightAligned('DRIVER QR', W - M - qrS - _mmPt(1.5), qy + qrS / 2 - 3, 6, bold, grey);
     } catch (e) { console.warn('[print-labels] QR failed:', e.message); }
   }
   // Footer: the order number once more, small, so a trimmed label still says whose it is.

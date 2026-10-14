@@ -140,3 +140,16 @@ describe('delivery QR printed on the DO', () => {
     assert.match(buf.toString('latin1'), /\/Subtype\s*\/Image/);
   });
 });
+
+describe('driver QR carries no human-readable caption', () => {
+  test('no "Driver QR" text in the DO PDF, system label or carton label source', async () => {
+    const { buildDeliveryOrderPdf } = require('../lib/delivery-order');
+    const buf = await buildDeliveryOrderPdf({ order: { order_number: '26516084', lines: [{ sku: 'A', qty: 1 }] }, clientName: 'T' });
+    const { PDFDocument } = require('pdf-lib');
+    assert.ok(await PDFDocument.load(buf));
+    const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'latin1')
+      + require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'delivery-order.js'), 'latin1')
+      + require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'app.js'), 'latin1');
+    assert.doesNotMatch(src, /'DRIVER QR'|'Driver QR'|>DRIVER QR</);
+  });
+});
