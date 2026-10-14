@@ -41,3 +41,10 @@ test('invalid enquiry: 400, nothing stored', async () => {
   const r = await enq.handleEnquiry({ name: 'x' }, { store: () => stored++, sendMail: null });
   assert.equal(r.status, 400); assert.equal(stored, 0);
 });
+test('ENQUIRY_TO env overrides the recipient', async () => {
+  process.env.ENQUIRY_TO = 'sales@example.com';
+  const sent = [];
+  try { await enq.handleEnquiry(good, { store: () => {}, sendMail: async m => sent.push(m) }); }
+  finally { delete process.env.ENQUIRY_TO; }
+  assert.equal(sent[0].to, 'sales@example.com');
+});

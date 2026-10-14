@@ -943,14 +943,14 @@ app.get('/intro', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'in
 // ── PUBLIC SALES ENQUIRY (form on /intro) ─────────────────────────────────
 // No auth, registered before every gate. Validated + sanitised in
 // lib/enquiry.js, stored in global.json `enquiries` FIRST (so nothing is lost
-// if mail fails), then emailed to info@nimbustrade.co through the same
+// if mail fails), then emailed to ENQUIRY_TO (env, default in lib/enquiry.js) through the same
 // buildTransporter() the nightly backup uses. Honeypot field `website`.
 const enquiryLib = require('./lib/enquiry');
 const _enquiryHits = new Map();
 function enquiryRateLimit(req, res, next) {
   const k = req.ip || 'x', now = Date.now();
   const h = (_enquiryHits.get(k) || []).filter(t => now - t < 10 * 60000);
-  if (h.length >= 5) return res.status(429).json({ ok: false, errors: ['Too many enquiries. Please try again later or email info@nimbustrade.co.'] });
+  if (h.length >= 5) return res.status(429).json({ ok: false, errors: ['Too many enquiries. Please try again later.'] });
   h.push(now); _enquiryHits.set(k, h);
   if (_enquiryHits.size > 5000) _enquiryHits.clear();
   next();
@@ -975,7 +975,7 @@ app.post('/api/public/enquiry', enquiryRateLimit, async (req, res) => {
     res.status(r.status).json(r.body);
   } catch (e) {
     console.error('[enquiry] failed:', e.message);
-    res.status(500).json({ ok: false, errors: ['Something went wrong. Please email info@nimbustrade.co.'] });
+    res.status(500).json({ ok: false, errors: ['Something went wrong. Please try again later.'] });
   }
 });
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>

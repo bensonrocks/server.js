@@ -26,6 +26,7 @@ test('GET /intro returns 200 without auth', async () => {
   const html = await r.text();
   assert.match(html, /IdealOne/);
   assert.match(html, /href="\/portal"/);
+  assert.doesNotMatch(html, /nimbustrade/i, 'recipient address must not be exposed');
 });
 test('GET / still serves the login app', async () => {
   const r = await fetch(B + '/');
