@@ -378,11 +378,12 @@
       </div>
       <div class="scan-cam" id="scanCam"><video id="scanVideo" playsinline muted></video><div class="scan-frame"></div><div id="scanCamMsg" style="position:absolute;padding:1rem"></div></div>
       <form class="scan-manual" id="scanForm" autocomplete="off">
-        <input id="scanInput" inputmode="text" enterkeyhint="go" placeholder="Scan or type order / waybill / DO no." aria-label="Order label code">
+        <input id="scanInput" inputmode="text" enterkeyhint="go" placeholder="QR scanner input (IO-DLV:…)" aria-label="Delivery QR code from a QR scanner">
         <button type="submit">Close</button>
       </form>
       <div id="scanMsg" class="scan-msg hidden" role="status" aria-live="assertive"></div>
       <div id="scanDone" class="scan-done hidden">&#10004; All orders on this job are closed. Job complete.</div>
+      <p style="font-size:12.5px;color:#64748b;margin:.5rem 0 0">Point the camera at the <b>QR code</b> on the label or DO. The barcode won't close a delivery.</p>
       <div class="scan-list"><h4>Orders on this job</h4><div id="scanList"></div></div>
     </div>
   </div>

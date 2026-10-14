@@ -18974,20 +18974,37 @@ async function drawSystemLabelPage(doc, fonts, { order, batch, size, template, n
   const bh = _mmPt(24);
   page.drawRectangle({ x: M, y: y - bh, width: innerW, height: bh, borderColor: black, borderWidth: 0.8 });
   let barcodeDrawn = false;
+  // DELIVERY QR at the right of the box: 'IO-DLV:' + the same value as the
+  // barcode. The driver app closes deliveries from this QR only; the 1D
+  // barcode stays the warehouse's.
+  // The 1D barcode and its caption keep the box's left area; box size unchanged.
+  const qrS = _mmPt(20), qrGap = _mmPt(2);
+  let qrDrawn = false;
+  if (bwipjs && bcValue) {
+    try {
+      const qpng = await bwipjs.toBuffer({ bcid: 'qrcode', text: require('./lib/driver-scan').deliveryQrPayload(bcValue), scale: 4, eclevel: 'M' });
+      const qimg = await doc.embedPng(qpng);
+      page.drawImage(qimg, { x: W - M - qrGap - qrS, y: y - (bh + qrS) / 2, width: qrS, height: qrS });
+      qrDrawn = true;
+    } catch (e) { console.warn('[print-labels] QR failed:', e.message); }
+  }
+  const areaW = qrDrawn ? innerW - qrS - 2 * qrGap : innerW;
+  const areaCx = M + areaW / 2;
+  const centredIn = (s, yy, sz, f, color) => text(s, areaCx - f.widthOfTextAtSize(_pdfSafe(s), sz) / 2, yy, sz, f, color);
   if (bwipjs && bcValue) {
     try {
       const png = await bwipjs.toBuffer({ bcid: 'code128', text: bcValue, scale: 3, height: 12, includetext: false });
       const img = await doc.embedPng(png);
-      const maxW = innerW - _mmPt(6), maxH = _mmPt(13);
+      const maxW = areaW - _mmPt(6), maxH = _mmPt(13);
       const sc = Math.min(maxW / img.width, maxH / img.height);
       const iw = img.width * sc, ih = img.height * sc;
-      page.drawImage(img, { x: (W - iw) / 2, y: y - _mmPt(2.5) - ih, width: iw, height: ih });
+      page.drawImage(img, { x: areaCx - iw / 2, y: y - _mmPt(2.5) - ih, width: iw, height: ih });
       barcodeDrawn = true;
     } catch (e) { console.warn('[print-labels] barcode failed:', e.message); }
   }
-  if (!barcodeDrawn) centred('(barcode unavailable)', y - _mmPt(9), 8, reg, grey);
-  centred(bcValue, y - bh + _mmPt(5.2), 10, bold);
-  centred(waybill ? 'WAYBILL' : 'ORDER NO - no waybill number on this order yet', y - bh + _mmPt(1.6), 6, bold, grey);
+  if (!barcodeDrawn) centredIn('(barcode unavailable)', y - _mmPt(9), 8, reg, grey);
+  centredIn(bcValue, y - bh + _mmPt(5.2), 10, bold);
+  centredIn(waybill ? 'WAYBILL' : 'ORDER NO - no waybill number on this order yet', y - bh + _mmPt(1.6), 6, bold, grey);
   y -= bh + _mmPt(2);
 
   const showAddress = !template || template.show_address !== false;

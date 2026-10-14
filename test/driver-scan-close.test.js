@@ -15,8 +15,9 @@ const mk = () => ([
   { id: 'T5', referenceId: 'ORD-5', assignedDriver: 'D1', routeNum: 1, stopSeq: 3, status: 'confirmed', driverAcceptedAt: 'x' },
 ]);
 const orders = { 'ORD-1': { order_number: 'ORD-1', waybill_number: 'SPX123', issue_no: 'GI-77' } };
+const Q = v => 'IO-DLV:' + v;
 const run = (transport, code, anchor = 'T1', driverId = 'D1') =>
-  ds.scanClose({ transport, driverId, anchorJobId: anchor, code, orderFor: j => orders[j.referenceId] || null, now: new Date('2026-10-14T03:00:00Z') });
+  ds.scanClose({ transport, driverId, anchorJobId: anchor, code: code.startsWith('RAW:') ? code.slice(4) : Q(code), orderFor: j => orders[j.referenceId] || null, now: new Date('2026-10-14T03:00:00Z') });
 
 describe('lib/driver-scan', () => {
   test('order number on this job closes it, with driver/timestamp, and reports progress', () => {
@@ -40,6 +41,17 @@ describe('lib/driver-scan', () => {
   test("another driver's order is refused", () => {
     const t = mk(); const before = JSON.stringify(t); const r = run(t, 'ORD-4');
     assert.equal(r.result, 'wrong_job'); assert.match(r.message, /not on your job/); assert.equal(JSON.stringify(t), before);
+  });
+  test('raw barcode value (no QR prefix) is refused: scan the QR, not the barcode', () => {
+    const t = mk(); const before = JSON.stringify(t);
+    for (const c of ['RAW:ORD-2', 'RAW:SPX123', 'RAW:DO-ORD-2']) {
+      const r = run(t, c); assert.equal(r.result, 'not_qr'); assert.equal(r.status, 400); assert.match(r.message, /Scan the QR code, not the barcode/);
+    }
+    assert.equal(JSON.stringify(t), before);
+  });
+  test('payload helpers', () => {
+    assert.equal(ds.deliveryQrPayload('SPX123'), 'IO-DLV:SPX123');
+    assert.equal(ds.parseDeliveryQr('io-dlv: ord-1 '), 'ord-1'); assert.equal(ds.parseDeliveryQr('ORD-1'), null);
   });
   test('unknown code is refused', () => {
     const t = mk(); const before = JSON.stringify(t); const r = run(t, 'NOPE-999');
@@ -65,7 +77,7 @@ describe('lib/driver-scan', () => {
   test('never touches warehouse/order scan state', () => {
     const o = { order_number: 'ORD-1', waybill_number: 'SPX123', status: 'pending', scanned: 0 };
     const t = mk(); const snap = JSON.stringify(o);
-    ds.scanClose({ transport: t, driverId: 'D1', anchorJobId: 'T1', code: 'ORD-1', orderFor: () => o });
+    ds.scanClose({ transport: t, driverId: 'D1', anchorJobId: 'T1', code: 'IO-DLV:ORD-1', orderFor: () => o });
     assert.equal(JSON.stringify(o), snap);
   });
 });
@@ -106,15 +118,25 @@ describe('POST /api/driver/scan-close (server)', () => {
     const jobs = await (await fetch(srv.B + '/api/driver/jobs', { headers: H })).json();
     assert.equal(jobs.features.scanClose, true);
     const post = b => fetch(srv.B + '/api/driver/scan-close', { method: 'POST', headers: H, body: JSON.stringify(b) });
-    let r = await post({ jobId: 'T1', code: 'ORD-3' }); assert.equal(r.status, 409); assert.equal((await r.json()).result, 'wrong_job');
-    r = await post({ jobId: 'T1', code: 'ZZZ-1' }); assert.equal(r.status, 404);
-    r = await post({ jobId: 'T1', code: 'ORD-2' }); assert.equal(r.status, 200);
+    let r = await post({ jobId: 'T1', code: 'ORD-2' }); assert.equal(r.status, 400); assert.equal((await r.json()).result, 'not_qr');
+    r = await post({ jobId: 'T1', code: 'IO-DLV:ORD-3' }); assert.equal(r.status, 409); assert.equal((await r.json()).result, 'wrong_job');
+    r = await post({ jobId: 'T1', code: 'IO-DLV:ZZZ-1' }); assert.equal(r.status, 404);
+    r = await post({ jobId: 'T1', code: 'IO-DLV:ORD-2' }); assert.equal(r.status, 200);
     const d = await r.json(); assert.equal(d.result, 'closed'); assert.deepEqual(d.progress, { closed: 1, total: 3, complete: false });
-    r = await post({ jobId: 'T1', code: 'ORD-2' }); assert.equal((await r.json()).result, 'already_closed');
+    r = await post({ jobId: 'T1', code: 'IO-DLV:ORD-2' }); assert.equal((await r.json()).result, 'already_closed');
     const after = await (await fetch(srv.B + '/api/driver/jobs', { headers: H })).json();
     assert.equal(after.jobs.find(j => j.id === 'T2').status, 'delivered');
     assert.equal(after.jobs.find(j => j.id === 'T3').status, 'in-transit');
     r = await fetch(srv.B + '/api/driver/scan-close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     assert.equal(r.status, 401);
+  });
+});
+
+describe('delivery QR printed on the DO', () => {
+  test('DO PDF embeds a QR image and still builds', async () => {
+    const { buildDeliveryOrderPdf } = require('../lib/delivery-order');
+    const buf = await buildDeliveryOrderPdf({ order: { order_number: '26516084', lines: [{ sku: 'A', qty: 1 }] }, clientName: 'T' });
+    assert.equal(buf.slice(0, 5).toString(), '%PDF-');
+    assert.match(buf.toString('latin1'), /\/Subtype\s*\/Image/);
   });
 });

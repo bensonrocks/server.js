@@ -534,9 +534,10 @@
   // The driver scans the label on an order while on a job. The server decides
   // (POST /api/driver/scan-close): only an order on THIS job (its route, or
   // the single stop if unrouted) is closed; anything else is refused and
-  // nothing changes. Camera via BarcodeDetector where the phone has it (all
-  // barcode types), jsQR for QR codes otherwise; typing / a Bluetooth
-  // scanner into the box always works.
+  // nothing changes. Only the delivery QR (IO-DLV:...) is accepted; the 1D
+  // barcode is refused by the server. Camera: BarcodeDetector (QR only) or
+  // jsQR. The text box is for a 2D/QR Bluetooth scanner and still needs the
+  // full QR payload, so typing a bare order number is refused too.
   let scanAnchor = null, scanStream = null, scanTimer = null, scanBusy = false, scanLast = { code: '', at: 0 }, scanDetector = null, jsqrCanvas = null;
   function scanScope(anchorId) {
     const a = jobs.find(j => j.id === anchorId);
@@ -598,8 +599,12 @@
       scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
       video.srcObject = scanStream; await video.play();
     } catch (e) { msg.textContent = 'Camera blocked. Allow camera access, or type the code below.'; return; }
+    // QR ONLY: deliveries close from the label/DO QR, never the warehouse 1D
+    // barcode. Native BarcodeDetector (Android Chrome) restricted to QR where
+    // the phone has it; jsQR otherwise (iPhone Safari and the rest).
+    scanDetector = null;
     if ('BarcodeDetector' in window) {
-      try { const fmts = await BarcodeDetector.getSupportedFormats(); scanDetector = new BarcodeDetector({ formats: fmts }); } catch { scanDetector = null; }
+      try { const fmts = await BarcodeDetector.getSupportedFormats(); if (fmts.includes('qr_code')) scanDetector = new BarcodeDetector({ formats: ['qr_code'] }); } catch { scanDetector = null; }
     }
     if (!scanDetector && !window.jsQR) {
       await new Promise(r => { const sc = document.createElement('script'); sc.src = '/vendor/jsqr.js'; sc.onload = sc.onerror = r; document.head.appendChild(sc); });
