@@ -6727,6 +6727,7 @@ async function _sendDo(res, hit) {
   const buf = await buildDeliveryOrderPdf({
     order: outletViewFor(readDb(), o, b.client_name || o.client_name), clientName: b.client_name || o.client_name || '', jobCode: b.idealscan_code || '',
     date: st.endTime || b.uploaded_at || null,
+    signature: _doSignatureFor(readDb(), o.order_number),
   });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${doNumber(o)}.pdf"`);
@@ -17334,6 +17335,7 @@ app.get('/api/transport', (req, res) => {
     podRemarks: req.podRemarks || '',
     podLocation: req.podLocation || null,
     podPhotos: (req.podPhotos || []).map(p => ({ id: p.id, uploadedAt: p.uploadedAt })),
+    podSignature: req.podSignature ? { receiverName: req.podSignature.receiverName, signedAt: req.podSignature.signedAt, driver: req.podSignature.driver, location: req.podSignature.location || null } : null,
     driverAcceptedAt: req.driverAcceptedAt || null,
     pendingDeletion: !!req.pending_deletion,
     region: regionForZip(req.shipping?.zip || ''),   // geofence zone for this stop
@@ -30067,6 +30069,7 @@ app.get('/api/driver/jobs', requireDriverAuthMiddleware, (req, res) => {
         driverAcceptedAt: t.driverAcceptedAt || null,
         podPhotos: (t.podPhotos || []).map(p => ({ id: p.id, uploadedAt: p.uploadedAt })),
         podLocation: t.podLocation || null,
+        podSignature: t.podSignature ? { receiverName: t.podSignature.receiverName, signedAt: t.podSignature.signedAt } : null,
       };
     });
   // Today's running stats, so the driver sees drops/done/distance/idle
@@ -30076,7 +30079,7 @@ app.get('/api/driver/jobs', requireDriverAuthMiddleware, (req, res) => {
   const idleMin = t.idleSince ? Math.round((Date.now() - new Date(t.idleSince).getTime()) / 60000) : 0;
   res.json({
     jobs,
-    features: { scanClose: driverScanCloseOn() },
+    features: { scanClose: driverScanCloseOn(), signRequired: driverSign.signRequiredOn(), proofMode: driverSign.proofMode() },
     driver: {
       id: drv.id || driverId, name: drv.name || '', vehicle: drv.vehicle || '', plate: drv.plate || '',
     },
@@ -30437,6 +30440,53 @@ app.get('/api/driver/jobs/:id/photo/:photoId', requireDriverOrStaffPhotoAuth, (r
   });
 });
 
+// ── RECEIVER SIGNATURE ON THE DO (lib/driver-sign.js) ──────────────────────
+// Flag DRIVER_SIGN_REQUIRED=1. The receiver signs on the driver's phone and
+// the driver types their name; one signature per transport job (= per DO).
+// The PNG (client-compressed, capped at 60 KB) is written next to the ePOD
+// photos on disk, never into db.json; the job keeps only a small record
+// (name, time, driver, GPS). Signing again replaces it (until delivered).
+const driverSign = require('./lib/driver-sign');
+app.post('/api/driver/jobs/:id/signature', requireDriverAuthMiddleware, express.json({ limit: '120kb' }), (req, res) => {
+  if (!driverSign.signRequiredOn()) return res.status(404).json({ error: 'Receiver signature is not enabled.' });
+  const driverId = req.driverId;
+  const v = driverSign.validateSignature(req.body || {});
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const db = readDb();
+  const job = (db.transport || []).find(t => t.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (job.assignedDriver !== driverId) return res.status(403).json({ error: 'This job is not assigned to you' });
+  if (job.status === 'delivered' || job.status === 'cancelled') return res.status(409).json({ error: `Job is already ${job.status}; the signature can't be changed.` });
+  const id = uuidv4(), file = `sig-${id}.png`, dir = path.join(POD_PHOTO_DIR, job.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, file), v.buf);
+  const old = job.podSignature && job.podSignature.file;
+  const { lat, lng, accuracy } = req.body || {};
+  const at = new Date().toISOString();
+  job.podSignature = { id, file, bytes: v.buf.length, receiverName: v.name, signedAt: at, driver: driverId,
+    location: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) && lat !== null && lng !== null ? { lat: Number(lat), lng: Number(lng), accuracy: Number(accuracy) || null } : null };
+  job.updatedAt = at;
+  writeDb(db);
+  if (old && old !== file) fs.unlink(path.join(dir, old), () => {});
+  logAudit('driver_do_signed', { jobId: job.id, driver: driverId, order: job.referenceId || '', receiver: v.name, bytes: v.buf.length, hasGps: !!job.podSignature.location });
+  res.json({ ok: true, signature: { receiverName: v.name, signedAt: at } });
+});
+app.get('/api/driver/jobs/:id/signature', requireDriverOrStaffPhotoAuth, (req, res) => {
+  const job = (readDb().transport || []).find(t => t.id === req.params.id);
+  const sig = job && job.podSignature;
+  if (!sig || !sig.file) return res.status(404).send('Not found');
+  res.type('png').sendFile(path.join(POD_PHOTO_DIR, job.id, sig.file), err => { if (err && !res.headersSent) res.status(404).send('Not found'); });
+});
+// Signature for an order's DO: the latest signed transport job for it.
+function _doSignatureFor(db, orderNumber) {
+  const ref = String(orderNumber || '');
+  const jobs = (db.transport || []).filter(t => String(t.referenceId || '') === ref && t.podSignature && t.podSignature.file);
+  if (!jobs.length) return null;
+  const j = jobs.sort((a, b) => String(b.podSignature.signedAt).localeCompare(String(a.podSignature.signedAt)))[0];
+  try { return { png: fs.readFileSync(path.join(POD_PHOTO_DIR, j.id, j.podSignature.file)), receiverName: j.podSignature.receiverName, signedAt: j.podSignature.signedAt }; }
+  catch (_) { return null; }
+}
+
 // POST /api/driver/jobs/:id/deliver — closes out the stop. Requires at
 // least one ePOD photo to already be uploaded (real proof of delivery, not
 // just a status flag). GPS coordinates are best-effort: the client attempts
@@ -30455,6 +30505,7 @@ app.post('/api/driver/jobs/:id/deliver', requireDriverAuthMiddleware, express.js
   if (job.assignedDriver !== driverId) return res.status(403).json({ error: 'This job is not assigned to you' });
   if (job.status === 'delivered' || job.status === 'cancelled') return res.status(409).json({ error: `Job is already ${job.status}` });
   if (!(job.podPhotos && job.podPhotos.length)) return res.status(409).json({ error: 'Take a delivery photo (ePOD) before marking this delivered.' });
+  if (driverSign.signRequiredOn()) { const miss = driverSign.proofMissing(job, driverSign.proofMode()); if (miss) return res.status(409).json({ error: miss, result: 'needs_signature' }); }
   job.status = 'delivered';
   job.deliveredAt = new Date().toISOString();
   if (String(remarks || '').trim()) job.podRemarks = String(remarks).trim();
@@ -30492,6 +30543,7 @@ app.post('/api/driver/scan-close', requireDriverAuthMiddleware, express.json(), 
   const r = driverScan.scanClose({
     transport: db.transport || [], driverId, anchorJobId: String(jobId || ''), code: String(code || '').slice(0, 200),
     orderFor: j => _orderForTransportJob(db, j), gps: { lat, lng, accuracy },
+    proofCheck: driverSign.signRequiredOn() ? (j => driverSign.proofMissing(j, driverSign.proofMode())) : null,
   });
   if (r.ok) {
     writeDb(db);

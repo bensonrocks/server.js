@@ -7117,6 +7117,14 @@
         ${row('Notes', esc(job.notes || ''))}
         ${String(job.podRemarks || '').trim() ? row('POD remarks', `<span style="color:#ef4444">${esc(job.podRemarks)}</span>`) : ''}
         ${job.podLocation ? row('POD location', `<a href="https://www.google.com/maps/search/?api=1&query=${job.podLocation.lat},${job.podLocation.lng}" target="_blank" rel="noopener">📍 View on map</a>`) : ''}
+        ${job.podSignature ? `
+        <div style="margin-top:.6rem">
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:.35rem">&#9997;&#65039; Receiver signature on DO</label>
+          <div style="display:flex;gap:.7rem;align-items:center;flex-wrap:wrap">
+            <img src="/api/driver/jobs/${esc(job.id)}/signature?token=${encodeURIComponent(localStorage.getItem('wms_token') || '')}" alt="Receiver signature" style="max-width:220px;max-height:80px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:4px" loading="lazy" />
+            <div style="font-size:12.5px;line-height:1.5"><b>${esc(job.podSignature.receiverName || '')}</b><br>${esc(new Date(job.podSignature.signedAt).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }))} SGT · driver ${esc(job.podSignature.driver || '')}${job.podSignature.location ? ` · <a href="https://www.google.com/maps/search/?api=1&query=${job.podSignature.location.lat},${job.podSignature.location.lng}" target="_blank" rel="noopener">&#128205; where signed</a>` : ''}<br><span style="color:#64748b">The DO PDF for ${esc(job.referenceId || '')} now prints signed.</span></div>
+          </div>
+        </div>` : ''}
         ${(job.podPhotos && job.podPhotos.length) ? `
         <div style="margin-top:.6rem">
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:.35rem">📷 ePOD Photos (${job.podPhotos.length})</label>
