@@ -1701,10 +1701,35 @@ function applyAddressBookToTransport(db) {
 // Outlet lookup for B2B paperwork — per-client opt-in (clientProfiles[].outletLookup,
 // default off). Returns a display copy; the stored order is never changed.
 const outletLookup = require('./lib/outlet-lookup');
-function outletLookupOn(db, clientName) {
+// PROFILE ALIASES — which client profile's PRINT/LABEL settings apply to an
+// order's client name. An exact profile name wins; otherwise a profile listing
+// the name in `aliases` (e.g. [BETIME] - BETIME with aliases ['betime']).
+// Settings lookup ONLY: stock, item master, billing, portal and reports stay
+// keyed on the order's own client name (batch.client_name) and never use this.
+function profileForClient(db, clientName) {
   const c = String(clientName || '').trim().toLowerCase();
-  if (!c) return false;
-  return (db.clientProfiles || []).some(p => String(p.client || '').trim().toLowerCase() === c && p.outletLookup === true);
+  if (!c) return null;
+  const list = db.clientProfiles || [];
+  return list.find(p => String(p.client || '').trim().toLowerCase() === c)
+    || list.find(p => Array.isArray(p.aliases) && p.aliases.some(a => String(a || '').trim().toLowerCase() === c))
+    || null;
+}
+function normalizeProfileAliases(raw, selfName) {
+  const arr = Array.isArray(raw) ? raw : String(raw || '').split(/[\n,]/);
+  const self = String(selfName || '').trim().toLowerCase();
+  const seen = new Set(), out = [];
+  for (const v of arr) {
+    const t = String(v || '').trim().slice(0, 120);
+    const k = t.toLowerCase();
+    if (!t || k === self || seen.has(k)) continue;
+    seen.add(k); out.push(t);
+    if (out.length >= 50) break;
+  }
+  return out;
+}
+function outletLookupOn(db, clientName) {
+  const p = profileForClient(db, clientName);
+  return !!(p && p.outletLookup === true);
 }
 function outletViewFor(db, order, clientName) {
   if (!order || String(order.waybill_number || '').trim() || !outletLookupOn(db, clientName)) return order;
@@ -4659,6 +4684,18 @@ app.post('/api/master/client-profiles', express.json(), (req, res) => {
   const db = readDb();
   const list = clientProfiles(db);
   let p = list.find(x => x.client === client);
+  // Aliases: other client names whose PRINT/LABEL settings follow this profile.
+  // Validated BEFORE anything is changed. A name that is itself a profile, or
+  // already another profile's alias, is refused so one client name never
+  // resolves to two profiles.
+  let aliasesNext = null;
+  if (b.aliases !== undefined) {
+    aliasesNext = normalizeProfileAliases(b.aliases, client);
+    const clash = aliasesNext.filter(a => list.some(x => x !== p && (
+      String(x.client || '').trim().toLowerCase() === a.toLowerCase() ||
+      (x.aliases || []).some(y => String(y).trim().toLowerCase() === a.toLowerCase()))));
+    if (clash.length) return res.status(400).json({ error: `Already a profile or another profile's alias: ${clash.join(', ')}` });
+  }
   if (!p) { p = { client, instructions: [], status: 'Deployed', createdAt: new Date().toISOString() }; list.push(p); }
   if (b.type !== undefined)      p.type = ['b2b', 'b2c'].includes(String(b.type).toLowerCase()) ? String(b.type).toLowerCase() : (p.type || '');
   if (b.commodity !== undefined) p.commodity = String(b.commodity).slice(0, 120);
@@ -4672,6 +4709,7 @@ app.post('/api/master/client-profiles', express.json(), (req, res) => {
   if (b.stock_tracking !== undefined) p.stock_tracking = !!b.stock_tracking;
   // Outlet lookup on B2B paperwork (label / DO / carton label). Default off.
   if (b.outletLookup !== undefined) p.outletLookup = !!b.outletLookup;
+  if (aliasesNext) p.aliases = aliasesNext;
   // CHANNEL→HUB SOURCES: which other clients/channels fulfill into THIS hub.
   // Stored as clear names on the hub profile (e.g. Mayer2026.channel_hub_sources
   // = ["Lazada20082026Mayer","TIKTOKMayer"]). Self-references are dropped.
