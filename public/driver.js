@@ -291,7 +291,10 @@
     $('signBtn').classList.toggle('hidden', !signOpen);
     $('signBtn').innerHTML = j.podSignature ? '&#9997;&#65039; Sign Again' : '&#9997;&#65039; Receiver Signs DO';
     const ss = $('signStatus');
-    if (features.signRequired && j.podSignature) { ss.className = 'sign-status ok'; ss.textContent = `✔ DO signed by ${j.podSignature.receiverName} · ${new Date(j.podSignature.signedAt).toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' })}`; }
+    $('signReqBtn').classList.toggle('hidden', !(signOpen && !j.podSignature && !j.podOverride));
+    $('signReqBtn').textContent = j.podOverrideRequested ? '🔔 Override requested — waiting for office' : 'Receiver refused / not here? Ask office to override';
+    if (features.signRequired && j.podOverride && !j.podSignature) { ss.className = 'sign-status ok'; ss.textContent = `✔ Office override: ${j.podOverride.reason} (${j.podOverride.byName}). You can scan to close.`; }
+    else if (features.signRequired && j.podSignature) { ss.className = 'sign-status ok'; ss.textContent = `✔ DO signed by ${j.podSignature.receiverName} · ${new Date(j.podSignature.signedAt).toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' })}`; }
     else if (signOpen) { ss.className = 'sign-status need'; ss.textContent = 'Receiver must sign the DO before you can scan to close.'; }
     else ss.className = 'sign-status hidden';
 
@@ -565,7 +568,7 @@
     $('scanDone').classList.toggle('hidden', !(total && closed === total));
     $('scanList').innerHTML = list.map(j => `<div class="scan-item"><div><div class="ref">${esc(j.referenceId || j.id)}</div><div class="sub">${j.stopSeq != null ? 'Stop ' + esc(j.stopSeq) + ' · ' : ''}${esc(j.client || '')}</div></div>`
       + `<span><span class="st ${j.status === 'delivered' ? 'closed' : 'open'}">${j.status === 'delivered' ? '&#10004; Closed' : esc(j.statusLabel || j.status)}</span>`
-      + (features.signRequired && j.status === 'in-transit' ? (j.podSignature ? ' <span class="st closed">&#9997; Signed</span>' : ` <button class="scan-sign" data-sign="${esc(j.id)}">&#9997; Sign</button>`) : '')
+      + (features.signRequired && j.status === 'in-transit' ? (j.podSignature ? ' <span class="st closed">&#9997; Signed</span>' : j.podOverride ? ' <span class="st closed" title="Office override">&#9888;&#65039; Override</span>' : ` <button class="scan-sign" data-sign="${esc(j.id)}">&#9997; Sign</button>`) : '')
       + `</span></div>`).join('');
     $('scanList').querySelectorAll('[data-sign]').forEach(b => b.addEventListener('click', () => openSign(b.dataset.sign, true)));
   }
@@ -727,6 +730,15 @@
     finally { btn.disabled = false; btn.innerHTML = '&#10004; Save Signature'; }
   });
   $('signBtn').addEventListener('click', () => { if (activeJobId) openSign(activeJobId, false); });
+  $('signReqBtn').addEventListener('click', async () => {
+    const j = jobs.find(x => x.id === activeJobId); if (!j || j.podOverrideRequested) return;
+    const note = prompt('Tell the office what happened (e.g. receiver refused, left with guard):', '');
+    if (note === null) return;
+    const r = await fetch(`/api/driver/jobs/${encodeURIComponent(j.id)}/override-request`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': driverToken }, body: JSON.stringify({ note }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(d.error || 'Could not send.'); return; }
+    j.podOverrideRequested = true; toast('🔔 Office asked to override'); $('signReqBtn').textContent = '🔔 Override requested — waiting for office';
+  });
 
   // ── Offline indicator ────────────────────────────────────────────────────
   function updateOnlineState() { $('offlinePill').classList.toggle('hidden', navigator.onLine); }

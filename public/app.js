@@ -2953,6 +2953,9 @@
         // FULFILMENT KPI. The countdown to this order's handover, so a packer
         // can see at a glance which of a screenful is actually urgent.
         fulfilmentChip(ord),
+        (ord.delivery_proof && ord.delivery_proof.override) ? `<span class="chip" style="background:#fff7ed;color:#9a3412;border:1px solid #fdba74" title="${esc('NOT SIGNED — office override: ' + ord.delivery_proof.override.reason + ' (' + ord.delivery_proof.override.byName + ')')}">&#9888;&#65039; Not signed · override</span>`
+          : (ord.delivery_proof && ord.delivery_proof.signed) ? `<span class="chip" style="background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd" title="DO signed">&#9997;&#65039; Signed · ${esc(ord.delivery_proof.signed.receiverName)}</span>`
+          : (ord.delivery_proof && ord.delivery_proof.requested) ? `<span class="chip" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">&#128276; Driver asks sign override</span>` : '',
         // 24h processing timer (R/Y/G), when switched on.
         slaPill(ord),
       ].filter(Boolean).join('');
@@ -7082,6 +7085,42 @@
 
   // ── Delivery detail — click a stop/job to see the full summary and fix
   //    its postal code (which also updates the Address Book master list) ─────
+  // OFFICE OVERRIDE of the receiver signature (sign-before-close).
+  function openSignOverrideDialog(job, onDone) {
+    const m = document.createElement('div');
+    m.className = 'modal-overlay'; m.id = 'signOverrideModal'; m.style.zIndex = 10050;
+    m.innerHTML = `<div class="modal-box" style="max-width:440px;width:92vw;background:#fff;border-radius:12px;padding:1.1rem 1.2rem">
+      <h3 style="margin:0 0 .3rem">Close without receiver signature</h3>
+      <p style="font-size:12.5px;color:#475569;margin:0 0 .8rem">Order <b>${esc(job.referenceId || job.id)}</b>${job.clientName ? ' · ' + esc(job.clientName) : ''}. The driver can then close it by QR scan. Your name, the time and the reason are logged and printed on the DO.</p>
+      <label style="font-size:12px;font-weight:700">Reason</label>
+      <div id="soReasons" style="display:grid;gap:.35rem;margin:.35rem 0 .7rem;font-size:13.5px">
+        <label><input type="radio" name="soR" value="refused"> Receiver refused to sign</label>
+        <label><input type="radio" name="soR" value="security"> Receiver not present - left with security/guard</label>
+        <label><input type="radio" name="soR" value="door"> Left at door per instruction</label>
+        <label><input type="radio" name="soR" value="other"> Other</label>
+      </div>
+      <label style="font-size:12px;font-weight:700" for="soNote">Details <span id="soNoteReq" style="color:#64748b;font-weight:500">(optional)</span></label>
+      <textarea id="soNote" rows="2" maxlength="200" style="width:100%;box-sizing:border-box;margin-top:.3rem" placeholder="e.g. Guard Ahmad at Block 10 lobby"></textarea>
+      <div id="soErr" style="color:#b91c1c;font-size:12.5px;min-height:1.1em;margin:.3rem 0"></div>
+      <div style="display:flex;gap:.5rem;justify-content:flex-end"><button class="btn-secondary" id="soCancel">Cancel</button><button class="btn-primary" id="soSave">Override &amp; allow close</button></div>
+    </div>`;
+    document.body.appendChild(m);
+    m.querySelectorAll('[name=soR]').forEach(r => r.addEventListener('change', () => { m.querySelector('#soNoteReq').textContent = r.value === 'other' ? '(required)' : '(optional)'; }));
+    m.querySelector('#soCancel').onclick = () => m.remove();
+    m.querySelector('#soSave').onclick = async () => {
+      const reason = (m.querySelector('[name=soR]:checked') || {}).value, note = m.querySelector('#soNote').value.trim();
+      const r = await fetch(`/api/transport/${encodeURIComponent(job.id)}/sign-override`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason, note }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { m.querySelector('#soErr').textContent = d.error || 'Could not save.'; return; }
+      job.podOverride = d.podOverride; m.remove(); if (onDone) onDone(d.podOverride);
+    };
+  }
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#ddSignOverrideBtn')) return;
+    const id = document.getElementById('ddSignOverrideBtn').dataset.job;
+    const job = (transportRequests || []).find(r => r.id === id) || (Array.isArray(_transportCacheAll) ? _transportCacheAll.find(r => r.id === id) : null);
+    if (job) openSignOverrideDialog(job, () => { document.querySelectorAll('.modal-overlay').forEach(x => x.remove()); openDeliveryDetail(id); });
+  });
   async function openDeliveryDetail(jobId) {
     const job = (transportRequests || []).find(r => r.id === jobId)
       || (Array.isArray(_transportCacheAll) ? _transportCacheAll.find(r => r.id === jobId) : null);
@@ -7125,6 +7164,16 @@
             <div style="font-size:12.5px;line-height:1.5"><b>${esc(job.podSignature.receiverName || '')}</b><br>${esc(new Date(job.podSignature.signedAt).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }))} SGT · driver ${esc(job.podSignature.driver || '')}${job.podSignature.location ? ` · <a href="https://www.google.com/maps/search/?api=1&query=${job.podSignature.location.lat},${job.podSignature.location.lng}" target="_blank" rel="noopener">&#128205; where signed</a>` : ''}<br><span style="color:#64748b">The DO PDF for ${esc(job.referenceId || '')} now prints signed.</span></div>
           </div>
         </div>` : ''}
+        ${job.podOverride ? `
+        <div style="margin-top:.6rem;padding:.55rem .7rem;background:#fff7ed;border:1px solid #fdba74;border-radius:6px;font-size:12.5px">
+          <b>&#9888;&#65039; NOT SIGNED — office override</b><br>${esc(job.podOverride.reason)}<br>
+          <span style="color:#64748b">${esc(job.podOverride.byName || job.podOverride.by || '')} · ${esc(new Date(job.podOverride.at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }))} SGT</span>
+        </div>` : (job.signRequired && !job.podSignature && !['delivered', 'cancelled'].includes(job.status) ? `
+        <div style="margin-top:.6rem;padding:.55rem .7rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12.5px">
+          ${job.podOverrideRequest && !job.podOverrideRequest.resolvedAt ? `<div style="color:#b45309;font-weight:700;margin-bottom:.35rem">&#128276; Driver asked for an override${job.podOverrideRequest.note ? ': “' + esc(job.podOverrideRequest.note) + '”' : ''}</div>` : ''}
+          Receiver has not signed the DO yet. The driver can't close this order until they do.
+          <button class="btn-secondary" id="ddSignOverrideBtn" data-job="${esc(job.id)}" style="margin-top:.45rem;display:block">&#9888;&#65039; Office override — close without signature…</button>
+        </div>` : '')}
         ${(job.podPhotos && job.podPhotos.length) ? `
         <div style="margin-top:.6rem">
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:.35rem">📷 ePOD Photos (${job.podPhotos.length})</label>

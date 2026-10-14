@@ -133,3 +133,70 @@ describe('server: flag off — nothing changes', () => {
     assert.equal((await fetch(srv.B + '/api/driver/jobs/T2/signature', { method: 'POST', headers: H, body: JSON.stringify({ dataUrl: dataUrl(PNG), receiverName: 'Tan' }) })).status, 404);
   });
 });
+
+// ── OFFICE OVERRIDE ──
+describe('lib: office override', () => {
+  test('reasons, Other needs text, override satisfies proof', () => {
+    assert.equal(sign.validateOverride({}).ok, false);
+    assert.equal(sign.validateOverride({ reason: 'refused' }).text, 'Receiver refused to sign');
+    assert.equal(sign.validateOverride({ reason: 'security', note: 'Guard Ahmad' }).text, 'Receiver not present - left with security/guard (Guard Ahmad)');
+    assert.match(sign.validateOverride({ reason: 'other', note: '' }).error, /Other/);
+    assert.equal(sign.validateOverride({ reason: 'other', note: 'Shop closed, manager phoned' }).text, 'Shop closed, manager phoned');
+    assert.equal(sign.proofMissing({ podOverride: { reason: 'x' } }), null);
+    assert.equal(sign.overrideLine({ reason: 'Left at door per instruction', byName: 'Office', at: '2026-10-15T00:30:00Z' }), 'NOT SIGNED - office override: Left at door per instruction (Office, 15/10/2026 08:30 SGT)');
+  });
+  test('DO prints the override text instead of a signature', async () => {
+    const buf = await buildDeliveryOrderPdf({ order: { order_number: 'O', lines: [{ sku: 'A', qty: 1 }] }, clientName: 'T', signature: { override: 'NOT SIGNED - office override: Receiver refused to sign (Office, 15/10/2026 08:30 SGT)' } });
+    const plain = await buildDeliveryOrderPdf({ order: { order_number: 'O', lines: [{ sku: 'A', qty: 1 }] }, clientName: 'T' });
+    assert.equal(images(buf), images(plain));
+    assert.ok(buf.length > plain.length);
+  });
+});
+
+describe('server: office override', () => {
+  let ctx, mk;
+  const MK = { ...J, 'x-master-key': 'mk-sign' };
+  const staff = async (id, role) => {
+    const c = await fetch(ctx.srv.B + '/api/master/users', { method: 'POST', headers: MK, body: JSON.stringify({ id, password: 'pw-' + id + '-123', role, name: id.toUpperCase() }) });
+    if (role === 'driver' && !c.ok) return null;          // roster may not allow driver-role staff logins
+    assert.ok(c.ok);
+    return (await (await fetch(ctx.srv.B + '/api/auth/login', { method: 'POST', headers: J, body: JSON.stringify({ id, password: 'pw-' + id + '-123' }) })).json()).token;
+  };
+  before(async () => { ctx = await seeded({ DRIVER_SCAN_CLOSE: '1', DRIVER_SIGN_REQUIRED: '1' }); });
+  after(async () => { if (ctx) { if (ctx.srv) await stop(ctx.srv.child); fs.rmSync(ctx.DDIR, { recursive: true, force: true }); } });
+
+  test('driver requests; only office roles override; then scan closes; DO + orders show it', async () => {
+    const { srv, H } = ctx;
+    const ov = (tok, id, b) => fetch(srv.B + `/api/transport/${id}/sign-override`, { method: 'POST', headers: { ...J, 'x-auth-token': tok }, body: JSON.stringify(b) });
+    assert.equal((await fetch(srv.B + '/api/driver/jobs/T1/override-request', { method: 'POST', headers: H, body: JSON.stringify({ note: 'Receiver refused' }) })).status, 200);
+    // driver token cannot override
+    assert.ok([401, 403].includes((await ov(H['x-auth-token'], 'T1', { reason: 'refused' })).status));
+    const drvRole = await staff('drvstaff', 'driver');
+    if (drvRole) assert.equal((await ov(drvRole, 'T1', { reason: 'refused' })).status, 403);
+    const wh = await staff('wh', 'warehouse'), adm = await staff('adm', 'admin');
+    assert.equal((await ov(adm, 'T1', {})).status, 400);
+    assert.equal((await ov(adm, 'T1', { reason: 'other' })).status, 400);
+    let r = await ov(wh, 'T1', { reason: 'security', note: 'Guard Ahmad' }); assert.equal(r.status, 200);
+    const po = (await r.json()).podOverride; assert.equal(po.by, 'wh'); assert.match(po.reason, /security\/guard \(Guard Ahmad\)/);
+    // T2 still blocked (per order); T1 closes by scan
+    const scan = c => fetch(srv.B + '/api/driver/scan-close', { method: 'POST', headers: H, body: JSON.stringify({ jobId: 'T1', code: 'IO-DLV:' + c }) });
+    assert.equal((await (await scan('ORD-2')).json()).result, 'needs_signature');
+    assert.equal((await (await scan('ORD-1')).json()).result, 'closed');
+    assert.equal((await ov(adm, 'T1', { reason: 'refused' })).status, 409);           // already delivered
+    // office views
+    const tj = await (await fetch(srv.B + '/api/transport', { headers: { 'x-auth-token': adm } })).json();
+    const t1 = (tj.transportRequests || tj.jobs || tj).find(t => t.id === 'T1');
+    assert.equal(t1.podOverride.by, 'wh'); assert.ok(t1.podOverrideRequest.resolvedAt);
+    const ord = await (await fetch(srv.B + '/api/orders', { headers: { 'x-auth-token': adm } })).json();
+    const o1 = (ord.orders || ord).find(o => o.order_number === 'ORD-1');
+    assert.match(o1.delivery_proof.override.reason, /security/);
+    const pdf = Buffer.from(await (await fetch(srv.B + '/api/orders/ORD-1/do', { headers: { 'x-auth-token': adm } })).arrayBuffer());
+    assert.equal(pdf.slice(0, 5).toString(), '%PDF-');
+    // audit
+    await stop(srv.child); ctx.srv = null;                                  // flush, then read the audit log
+    const db = JSON.parse(fs.readFileSync(path.join(ctx.DDIR, 'tenants', 'default', 'db.json'), 'utf8'));
+    const a = (db.auditLog || []).find(x => x.type === 'driver_sign_override');
+    assert.ok(a, 'audit recorded'); assert.equal(a.by, 'wh'); assert.equal(a.order, 'ORD-1'); assert.match(a.reason, /Guard Ahmad/);
+    assert.ok((db.auditLog || []).some(x => x.type === 'driver_sign_override_requested'));
+  });
+});

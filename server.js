@@ -3428,6 +3428,17 @@ function globalOrdersWithState(keep) {
   // closing the Wave Pick tab left a live wave with no visible way back).
   const activeWaveByOrder = new Map();
   const wavesById = new Map((db.waves || []).map(w => [w.id, w]));
+  // Receiver signature / office override per order (one pass over transport).
+  const _proofByRef = new Map();
+  for (const t of db.transport || []) {
+    if (!(t.podSignature || t.podOverride || (t.podOverrideRequest && !t.podOverrideRequest.resolvedAt))) continue;
+    _proofByRef.set(String(t.referenceId || ''), {
+      jobId: t.id,
+      signed: t.podSignature ? { receiverName: t.podSignature.receiverName, signedAt: t.podSignature.signedAt } : null,
+      override: t.podOverride ? { reason: t.podOverride.reason, byName: t.podOverride.byName, at: t.podOverride.at } : null,
+      requested: !!(t.podOverrideRequest && !t.podOverrideRequest.resolvedAt),
+    });
+  }
   // Fallback for COMPLETED waves: state.wave_id is stamped at completion
   // time, so waves completed before that stamping existed (or a rare
   // apply-failure) left no mark on their orders — derive membership from
@@ -3548,6 +3559,7 @@ function globalOrdersWithState(keep) {
         has_bundle:        enrichedLines.some(l => !!l.from_bundle),
         bundle_skus:        [...new Set(enrichedLines.filter(l => l.from_bundle).map(l => l.from_bundle))],
         uploadedAt:        batch.uploaded_at,
+        delivery_proof:    _proofByRef.get(String(ord.order_number)) || null,
         idealscan_code:    batch.idealscan_code || '',
         scan_status:       state.status           || 'pending',
         scanned:           { ...state.scanned },
@@ -17335,6 +17347,9 @@ app.get('/api/transport', (req, res) => {
     podRemarks: req.podRemarks || '',
     podLocation: req.podLocation || null,
     podPhotos: (req.podPhotos || []).map(p => ({ id: p.id, uploadedAt: p.uploadedAt })),
+    podOverride: req.podOverride || null,
+    signRequired: driverSign.signRequiredOn(),
+    podOverrideRequest: req.podOverrideRequest || null,
     podSignature: req.podSignature ? { receiverName: req.podSignature.receiverName, signedAt: req.podSignature.signedAt, driver: req.podSignature.driver, location: req.podSignature.location || null } : null,
     driverAcceptedAt: req.driverAcceptedAt || null,
     pendingDeletion: !!req.pending_deletion,
@@ -30069,6 +30084,8 @@ app.get('/api/driver/jobs', requireDriverAuthMiddleware, (req, res) => {
         driverAcceptedAt: t.driverAcceptedAt || null,
         podPhotos: (t.podPhotos || []).map(p => ({ id: p.id, uploadedAt: p.uploadedAt })),
         podLocation: t.podLocation || null,
+        podOverride: t.podOverride ? { reason: t.podOverride.reason, byName: t.podOverride.byName, at: t.podOverride.at } : null,
+        podOverrideRequested: !!(t.podOverrideRequest && !t.podOverrideRequest.resolvedAt),
         podSignature: t.podSignature ? { receiverName: t.podSignature.receiverName, signedAt: t.podSignature.signedAt } : null,
       };
     });
@@ -30477,11 +30494,51 @@ app.get('/api/driver/jobs/:id/signature', requireDriverOrStaffPhotoAuth, (req, r
   if (!sig || !sig.file) return res.status(404).send('Not found');
   res.type('png').sendFile(path.join(POD_PHOTO_DIR, job.id, sig.file), err => { if (err && !res.headersSent) res.status(404).send('Not found'); });
 });
+// OFFICE OVERRIDE (staff only — admin or warehouse role; never a driver
+// token). Waives the signature for ONE order (transport job) with a reason
+// from the pick list; who/when/reason go on the job and into the audit log.
+// The driver can then close it by QR scan or Mark Delivered.
+app.post('/api/transport/:id/sign-override', express.json(), (req, res) => {
+  if (!driverSign.signRequiredOn()) return res.status(404).json({ error: 'Receiver signature is not enabled.' });
+  const u = readUsers().find(x => x.id === req.userId);
+  if (!u || !['admin', 'warehouse'].includes(u.role)) return res.status(403).json({ error: 'Only office users can override the signature.' });
+  const v = driverSign.validateOverride(req.body || {});
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const db = readDb();
+  const job = (db.transport || []).find(t => t.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (job.status === 'delivered' || job.status === 'cancelled') return res.status(409).json({ error: `Job is already ${job.status}.` });
+  if (job.podSignature && job.podSignature.file) return res.status(409).json({ error: 'This order is already signed; no override needed.' });
+  const at = new Date().toISOString();
+  job.podOverride = { reasonCode: v.code, reason: v.text, note: v.note, by: u.id, byName: u.name || u.id, at };
+  if (job.podOverrideRequest) job.podOverrideRequest.resolvedAt = at;
+  job.updatedAt = at;
+  writeDb(db);
+  logAudit('driver_sign_override', { jobId: job.id, order: job.referenceId || '', by: u.id, reason: v.text, driver: job.assignedDriver || '' });
+  res.json({ ok: true, podOverride: job.podOverride });
+});
+// Driver asks the office to override (receiver refused / not there). Only a
+// flag + note for the office; it does NOT unlock anything by itself.
+app.post('/api/driver/jobs/:id/override-request', requireDriverAuthMiddleware, express.json(), (req, res) => {
+  if (!driverSign.signRequiredOn()) return res.status(404).json({ error: 'Receiver signature is not enabled.' });
+  const db = readDb();
+  const job = (db.transport || []).find(t => t.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (job.assignedDriver !== req.driverId) return res.status(403).json({ error: 'This job is not assigned to you' });
+  if (job.status !== 'in-transit') return res.status(409).json({ error: `Job is "${job.status}".` });
+  const note = String((req.body && req.body.note) || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  job.podOverrideRequest = { at: new Date().toISOString(), driver: req.driverId, note };
+  writeDb(db);
+  logAudit('driver_sign_override_requested', { jobId: job.id, order: job.referenceId || '', driver: req.driverId, note });
+  res.json({ ok: true });
+});
+
 // Signature for an order's DO: the latest signed transport job for it.
 function _doSignatureFor(db, orderNumber) {
   const ref = String(orderNumber || '');
+  const ov = (db.transport || []).filter(t => String(t.referenceId || '') === ref && t.podOverride && t.podOverride.reason && !(t.podSignature && t.podSignature.file));
   const jobs = (db.transport || []).filter(t => String(t.referenceId || '') === ref && t.podSignature && t.podSignature.file);
-  if (!jobs.length) return null;
+  if (!jobs.length) return ov.length ? { override: driverSign.overrideLine(ov.sort((a, b) => String(b.podOverride.at).localeCompare(String(a.podOverride.at)))[0].podOverride) } : null;
   const j = jobs.sort((a, b) => String(b.podSignature.signedAt).localeCompare(String(a.podSignature.signedAt)))[0];
   try { return { png: fs.readFileSync(path.join(POD_PHOTO_DIR, j.id, j.podSignature.file)), receiverName: j.podSignature.receiverName, signedAt: j.podSignature.signedAt }; }
   catch (_) { return null; }
