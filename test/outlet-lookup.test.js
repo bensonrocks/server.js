@@ -7,7 +7,7 @@ const ol = require('../lib/outlet-lookup');
 const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const grab = (a, b) => src.slice(src.indexOf(a), src.indexOf(b, src.indexOf(a)));
 eval(grab('function _abNorm', '// Fuzzy similarity'));            // the #65 index, unchanged
-eval(grab('function outletLookupOn', '// ADDRESS BOOK → ORDERS.'));
+eval(grab('// PROFILE ALIASES', '// ADDRESS BOOK → ORDERS.'));
 const outletLookup = ol;
 const db = {
   addressBook: [
