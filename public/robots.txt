@@ -1,8 +1,7 @@
 User-agent: *
-Allow: /home
+Allow: /intro
+Allow: /brand/
 Allow: /og-image.png
-Allow: /icons/
-Disallow: /home.html
 Disallow: /
 
-Sitemap: https://idealscan.up.railway.app/sitemap.xml
+Sitemap: https://www.idealone.tech/sitemap.xml

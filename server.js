@@ -940,6 +940,44 @@ app.get('/home', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'hom
 // Public IdealOne intro page (no login). Like /home, registered before every
 // auth gate; '/' (login) is left unchanged.
 app.get('/intro', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'intro.html')));
+// ── PUBLIC SALES ENQUIRY (form on /intro) ─────────────────────────────────
+// No auth, registered before every gate. Validated + sanitised in
+// lib/enquiry.js, stored in global.json `enquiries` FIRST (so nothing is lost
+// if mail fails), then emailed to info@nimbustrade.co through the same
+// buildTransporter() the nightly backup uses. Honeypot field `website`.
+const enquiryLib = require('./lib/enquiry');
+const _enquiryHits = new Map();
+function enquiryRateLimit(req, res, next) {
+  const k = req.ip || 'x', now = Date.now();
+  const h = (_enquiryHits.get(k) || []).filter(t => now - t < 10 * 60000);
+  if (h.length >= 5) return res.status(429).json({ ok: false, errors: ['Too many enquiries. Please try again later or email info@nimbustrade.co.'] });
+  h.push(now); _enquiryHits.set(k, h);
+  if (_enquiryHits.size > 5000) _enquiryHits.clear();
+  next();
+}
+app.post('/api/public/enquiry', enquiryRateLimit, async (req, res) => {
+  try {
+    const transporter = buildTransporter();
+    const r = await enquiryLib.handleEnquiry(req.body, {
+      from: getFromEmail(),
+      sendMail: transporter ? msg => transporter.sendMail(msg) : null,
+      meta: { ip: String(req.ip || '').slice(0, 64), user_agent: String(req.headers['user-agent'] || '').slice(0, 200) },
+      store: e => {
+        const g = readGlobalDb();
+        if (!Array.isArray(g.enquiries)) g.enquiries = [];
+        const i = g.enquiries.findIndex(x => x.id === e.id);
+        if (i >= 0) g.enquiries[i] = { ...e }; else g.enquiries.push({ ...e });
+        if (g.enquiries.length > 5000) g.enquiries = g.enquiries.slice(-5000);
+        writeGlobalDb(g);
+      },
+    });
+    if (r.body && r.body.id) console.log(`[enquiry] ${r.body.id} stored, emailed=${r.body.emailed}`);
+    res.status(r.status).json(r.body);
+  } catch (e) {
+    console.error('[enquiry] failed:', e.message);
+    res.status(500).json({ ok: false, errors: ['Something went wrong. Please email info@nimbustrade.co.'] });
+  }
+});
 app.get('/vendor/jsbarcode.min.js', (_req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/jsbarcode/dist/JsBarcode.all.min.js'))
 );
