@@ -10539,7 +10539,7 @@
               <div class="pb">powered by IdealOne</div>
             </div>
           </div>
-          ${dlvQr ? `<div class="dqr-wrap"><span class="dqr-cap">DRIVER QR</span><div class="dqr" data-qr="${esc(dlvQr)}"></div></div>` : ''}
+          ${dlvQr ? `<div class="dqr-wrap"><div class="dqr" data-qr="${esc(dlvQr)}"></div></div>` : ''}
         </div>
       </div>`;
   }
@@ -10636,7 +10636,6 @@
           /* Driver QR, bottom right, far from the carton barcode; the white
              padding is the quiet zone. */
           .dqr-wrap { display: flex; align-items: center; gap: 1.5mm; flex: none; }
-          .dqr-cap { font-size: 7px; font-weight: 800; color: #444; letter-spacing: .4px; }
           .dqr { width: 18mm; height: 18mm; background: #fff; }
           .dqr svg { width: 100%; height: 100%; display: block; }
           .brand img { height: 16px; width: auto; }
