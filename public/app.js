@@ -1909,7 +1909,7 @@
   async function renderOrdersDash(opts) {
     // skipFetch: re-render from the in-memory list (already patched locally)
     // instead of downloading the whole Orders list again.
-    if (!(opts && opts.skipFetch)) await refreshOrders();
+    if (!(opts && opts.skipFetch)) await Promise.all([refreshOrders(), loadSlaCfg()]);
     if (!loadedOrders.length) {
       document.getElementById('ordersEmpty').classList.remove('hidden');
       document.getElementById('ordersDashboard').classList.add('hidden');
@@ -1974,6 +1974,39 @@
   // and the pills below it can never disagree. Each tile is a filter — the
   // point of knowing 6 orders are critical is being able to see those 6.
   let kpiFilter = 'all';
+  // ── 24H PROCESSING TIMER (R/Y/G) — lib/order-sla.js via /vendor/order-sla.js ──
+  // Flagged server-side (ORDER_SLA_TIMER). Computed here from fields the list
+  // already carries; the server only supplies the small policy object.
+  let _slaCfg = null, _slaCfgAt = 0, slaFilter = 'all', slaSortUrgent = true;
+  async function loadSlaCfg() {
+    if (_slaCfg && Date.now() - _slaCfgAt < 5 * 60000) return _slaCfg;
+    try {
+      const r = await fetchT('/api/order-sla', { headers: hdrs() });
+      _slaCfg = r.ok ? await r.json() : { enabled: false };
+    } catch { _slaCfg = _slaCfg || { enabled: false }; }
+    _slaCfgAt = Date.now();
+    return _slaCfg;
+  }
+  const slaOn = () => !!(_slaCfg && _slaCfg.enabled && window.OrderSla);
+  function slaPill(ord) {
+    if (!slaOn()) return '';
+    const s = OrderSla.compute(ord, _slaCfg);
+    if (!s) return '';
+    const due = new Date(s.dueAt).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const tip = `${s.hours}h processing timer from when the order entered IdealOne · due ${due} SGT`;
+    return `<span class="chip sla-pill sla-${s.state}${s.state === 'done' && s.late ? ' sla-done-late' : ''}" data-sla-due="${s.dueAt}" data-sla-yellow="${s.state === 'done' ? '' : OrderSla.policyFor(_slaCfg, ord.client_name).yellowHours}" title="${esc(tip)}">&#9201; ${esc(s.label)}</span>`;
+  }
+  // Ticks the countdown text once a minute without re-rendering the list.
+  setInterval(() => {
+    if (!slaOn() || document.hidden) return;
+    const now = Date.now(), yH = _slaCfg.yellowHours;
+    document.querySelectorAll('.sla-pill[data-sla-due]:not(.sla-done)').forEach(el => {
+      const ms = Number(el.dataset.slaDue) - now;
+      const st = ms < 0 ? 'red' : (ms <= (Number(el.dataset.slaYellow) || yH) * 3600000 ? 'yellow' : 'green');
+      el.classList.remove('sla-red', 'sla-yellow', 'sla-green'); el.classList.add('sla-' + st);
+      el.innerHTML = '&#9201; ' + (ms < 0 ? 'Late ' + OrderSla.fmtDur(ms) : OrderSla.fmtDur(ms) + ' left');
+    });
+  }, 60000);
   function kpiCounts(list) {
     const k = { overdue: 0, critical: 0, dueSoon: 0, onTime: 0, met: 0, missed: 0 };
     for (const o of list) {
@@ -2633,6 +2666,19 @@
         return ma - mb || a[1] - b[1];
       })
       .map(x => x[0]);
+    // 24h timer: R/Y/G counts over the active work, then the chosen colour.
+    let slaBar = '';
+    if (slaOn()) {
+      const sum = OrderSla.summarize(activeOrders, _slaCfg);
+      const chip = (k, n, lbl) => `<button class="sla-tile sla-t-${k}${slaFilter === k ? ' active' : ''}" data-sla="${k}"><b>${n}</b><span>${lbl}</span></button>`;
+      slaBar = `<div class="sla-bar" id="slaBar">
+        <span class="sla-head">&#9201; ${esc(String(_slaCfg.hours))}h TIMER</span>
+        ${chip('red', sum.red, 'Late')}${chip('yellow', sum.yellow, '&le;' + esc(String(_slaCfg.yellowHours)) + 'h left')}${chip('green', sum.green, 'On track')}
+        <label class="sla-sort"><input type="checkbox" id="slaSortUrgent" ${slaSortUrgent ? 'checked' : ''}> Most urgent first</label>
+        ${(currentUser?.role || 'admin') === 'admin' ? '<button class="sla-cog" id="slaCogBtn" title="Set the processing timer">&#9881;</button>' : ''}
+      </div>`;
+    }
+    const slaKeep = o => slaFilter === 'all' || (OrderSla.compute(o, _slaCfg)?.state === slaFilter);
     const dateChips = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Last 7 Days'], ['all', 'All'], ['range', 'Date Range&hellip;']]
       .map(([k, lbl]) => `<button class="filter-chip ${ordersDateFilter === k ? 'active' : ''}" data-odate="${k}">${lbl}</button>`).join('');
     const KPI_NAME = { overdue: 'Overdue', critical: 'Critical', soon: 'Due soon',
@@ -2652,6 +2698,7 @@
           <input type="date" id="ordersDateTo" value="${esc(ordersDateTo)}" />` : ''}
       </div>`;
     const subTabsHTML = `
+      ${slaBar}
       ${kpiBanner}
       ${dateFilterHTML}
       <div class="orders-subtabs">
@@ -2718,6 +2765,14 @@
       orders = [...orders].sort((a, b) =>
         (sortPriority[a.scan_status] ?? 4) - (sortPriority[b.scan_status] ?? 4)
       );
+      if (slaOn()) {
+        orders = orders.filter(slaKeep);
+        if (slaSortUrgent) {
+          const now = Date.now();
+          orders = orders.map((o, i) => [o, OrderSla.urgencyKey(o, _slaCfg, now), i])
+            .sort((a, b) => a[1][0] - b[1][0] || a[1][1] - b[1][1] || a[2] - b[2]).map(x => x[0]);
+        }
+      }
     }
 
     const labels = { pending: 'Pending', processing: 'In Progress', done: 'Done', unprocessed: 'Cancelled' };
@@ -2733,6 +2788,22 @@
           refreshOrders().then(renderOrdersList);
         }
       }));
+      document.querySelectorAll('[data-sla]').forEach(b => b.addEventListener('click', () => {
+        slaFilter = slaFilter === b.dataset.sla ? 'all' : b.dataset.sla;
+        if (slaFilter !== 'all') ordersView = 'active';
+        renderOrdersList();
+      }));
+      document.getElementById('slaSortUrgent')?.addEventListener('change', e => { slaSortUrgent = e.target.checked; renderOrdersList(); });
+      document.getElementById('slaCogBtn')?.addEventListener('click', async () => {
+        const h = prompt('Hours to process an order (all clients; a client profile can override):', String(_slaCfg.hours));
+        if (h === null) return;
+        const y = prompt('Turn YELLOW when this many hours (or fewer) are left:', String(_slaCfg.yellowHours));
+        if (y === null) return;
+        const r = await fetchT('/api/master/order-sla', { method: 'POST', headers: hdrs(), body: JSON.stringify({ hours: Number(h), yellowHours: Number(y) }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(d.error || 'Could not save.'); return; }
+        _slaCfg = d; _slaCfgAt = Date.now(); renderOrdersList();
+      });
       document.getElementById('kpiClearBtn')?.addEventListener('click', () => {
         kpiFilter = 'all'; renderKpiBar(); renderOrdersList();
       });
@@ -2882,6 +2953,8 @@
         // FULFILMENT KPI. The countdown to this order's handover, so a packer
         // can see at a glance which of a screenful is actually urgent.
         fulfilmentChip(ord),
+        // 24h processing timer (R/Y/G), when switched on.
+        slaPill(ord),
       ].filter(Boolean).join('');
 
       // Date
@@ -12960,6 +13033,7 @@
       $('obType').value = ''; $('obCommodity').value = '';
       $('obStockTracking').checked = true;               // new clients: we hold their stock
       if ($('obOutletLookup')) $('obOutletLookup').checked = false;  // outlet lookup: off by default
+      if ($('obSlaHours')) $('obSlaHours').value = ''; if ($('obSlaYellow')) $('obSlaYellow').value = '';
       if ($('obAliases')) $('obAliases').value = '';
       $('obItemCount').textContent = ''; $('obItemStatus').classList.add('hidden');
       $('obInstrList').innerHTML = ''; $('obTestResult').textContent = '';
@@ -12978,6 +13052,7 @@
       // Absent reads as ON, so an existing client is unchanged by this arriving.
       $('obStockTracking').checked = p.stock_tracking !== false;
       if ($('obOutletLookup')) $('obOutletLookup').checked = p.outletLookup === true;
+      if ($('obSlaHours')) $('obSlaHours').value = p.slaHours ?? ''; if ($('obSlaYellow')) $('obSlaYellow').value = p.slaYellowHours ?? '';
       if ($('obAliases')) $('obAliases').value = (p.aliases || []).join(', ');
       $('obItemCount').textContent = p.itemCount ? `${p.itemCount} items loaded` : 'no items yet';
       $('obItemStatus').classList.add('hidden'); $('obTestResult').textContent = ''; $('obSaveStatus').textContent = '';
@@ -13261,6 +13336,8 @@
       const body = { client, type: $('obType').value, commodity: $('obCommodity').value.trim(),
                      stock_tracking: $('obStockTracking').checked,
                      outletLookup: !!($('obOutletLookup') && $('obOutletLookup').checked),
+                     slaHours: $('obSlaHours') ? $('obSlaHours').value.trim() : undefined,
+                     slaYellowHours: $('obSlaYellow') ? $('obSlaYellow').value.trim() : undefined,
                      ...($('obAliases') ? { aliases: $('obAliases').value.split(',').map(x => x.trim()).filter(Boolean) } : {}),
                      channel_hub_sources: selectedHubSources() };
       const r = await fetch('/api/master/client-profiles', { method: 'POST', headers: mkJson(), body: JSON.stringify(body) });
