@@ -4,4 +4,4 @@ Allow: /brand/
 Allow: /og-image.png
 Disallow: /
 
-Sitemap: https://www.idealone.tech/sitemap.xml
+Sitemap: https://idealone.tech/sitemap.xml
