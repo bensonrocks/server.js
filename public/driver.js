@@ -49,6 +49,7 @@
   let driverInfo = JSON.parse(localStorage.getItem(LS_DRIVER) || 'null');
   let jobs = [];
   let activeJobId = null;
+  let features = {};
   let refreshTimer = null;
   let pinBuf = '';
 
@@ -161,6 +162,7 @@
     try {
       const data = await api('/api/driver/jobs');
       jobs = data.jobs || [];
+      features = data.features || {};
       if (data.driver) driverInfo = { ...driverInfo, ...data.driver };
       renderStats(data.stats || {});
       renderList();
@@ -233,9 +235,12 @@
     }
     listEl.innerHTML = groups.map(g => {
       const doneN = g.items.filter(j => j.status === 'delivered').length;
-      return `<div class="route-hd"><span>${esc(g.key)}</span><span>${doneN}/${g.items.length} done</span></div>`
+      const open = g.items.find(j => j.status !== 'delivered');
+      const scanBtn = features.scanClose && open ? ` <button class="route-scan" data-scan="${esc(open.id)}">&#128247; Scan</button>` : '';
+      return `<div class="route-hd"><span>${esc(g.key)}</span><span>${doneN}/${g.items.length} done${scanBtn}</span></div>`
            + g.items.map(cardHtml).join('');
     }).join('');
+    listEl.querySelectorAll('[data-scan]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); openScan(b.dataset.scan); }));
     listEl.querySelectorAll('.job-card').forEach(el => el.addEventListener('click', (e) => {
       if (e.target.closest('[data-noopen]')) return;   // Navigate/Call handle themselves
       openSheet(el.dataset.id);
@@ -280,6 +285,7 @@
           deliverBtn = $('deliverBtn'), doneNote = $('sheetDoneNote');
     acceptBtn.classList.add('hidden'); pickupBtn.classList.add('hidden');
     podSection.classList.add('hidden'); deliverBtn.classList.add('hidden'); doneNote.classList.add('hidden');
+    $('scanCloseBtn').classList.toggle('hidden', !(features.scanClose && j.status !== 'delivered'));
 
     if (j.status === 'confirmed' && !j.driverAcceptedAt) {
       acceptBtn.classList.remove('hidden');
@@ -522,6 +528,124 @@
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && driverToken) { startLocationWatch(); ensureLocation(); }
   });
+
+
+  // ── Scan-to-close ────────────────────────────────────────────────────────
+  // The driver scans the label on an order while on a job. The server decides
+  // (POST /api/driver/scan-close): only an order on THIS job (its route, or
+  // the single stop if unrouted) is closed; anything else is refused and
+  // nothing changes. Only the delivery QR (IO-DLV:...) is accepted; the 1D
+  // barcode is refused by the server. Camera: BarcodeDetector (QR only) or
+  // jsQR. The text box is for a 2D/QR Bluetooth scanner and still needs the
+  // full QR payload, so typing a bare order number is refused too.
+  let scanAnchor = null, scanStream = null, scanTimer = null, scanBusy = false, scanLast = { code: '', at: 0 }, scanDetector = null, jsqrCanvas = null;
+  function scanScope(anchorId) {
+    const a = jobs.find(j => j.id === anchorId);
+    if (!a) return [];
+    return jobs.filter(j => a.routeNum != null ? j.routeNum === a.routeNum : j.id === a.id);
+  }
+  function renderScanScope(progress) {
+    const list = scanScope(scanAnchor);
+    const a = jobs.find(j => j.id === scanAnchor) || {};
+    const closed = progress ? progress.closed : list.filter(j => j.status === 'delivered').length;
+    const total = progress ? progress.total : list.length;
+    const pct = total ? Math.round(closed * 100 / total) : 0;
+    $('scanSub').textContent = a.routeNum != null ? `Route ${a.routeNum} · ${total} order(s)` : `Job ${a.id || ''}`;
+    $('scanProgText').textContent = `${closed} of ${total} closed`;
+    $('scanProgPct').textContent = pct + '%';
+    $('scanBar').style.width = pct + '%';
+    $('scanDone').classList.toggle('hidden', !(total && closed === total));
+    $('scanList').innerHTML = list.map(j => `<div class="scan-item"><div><div class="ref">${esc(j.referenceId || j.id)}</div><div class="sub">${j.stopSeq != null ? 'Stop ' + esc(j.stopSeq) + ' · ' : ''}${esc(j.client || '')}</div></div>`
+      + `<span class="st ${j.status === 'delivered' ? 'closed' : 'open'}">${j.status === 'delivered' ? '&#10004; Closed' : esc(j.statusLabel || j.status)}</span></div>`).join('');
+  }
+  function scanMsg(kind, text) {
+    const el = $('scanMsg');
+    el.className = 'scan-msg ' + kind; el.textContent = text; el.classList.remove('hidden');
+    if (navigator.vibrate) navigator.vibrate(kind === 'ok' ? 80 : [60, 60, 60]);
+  }
+  async function submitScan(code) {
+    code = String(code || '').trim();
+    if (!code || scanBusy) return;
+    const now = Date.now();
+    if (code === scanLast.code && now - scanLast.at < 2500) return;   // same label still in frame
+    scanLast = { code, at: now };
+    scanBusy = true;
+    scanMsg('info', `Checking ${code}…`);
+    const gps = _lastFix ? { lat: _lastFix.lat, lng: _lastFix.lng, accuracy: _lastFix.accuracy } : {};
+    try {
+      const resp = await fetch('/api/driver/scan-close', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': driverToken },
+        body: JSON.stringify({ jobId: scanAnchor, code, ...gps }) });
+      let d = {}; try { d = await resp.json(); } catch {}
+      if (resp.status === 401) { closeScan(); doLogout(false); return; }
+      if (d.ok) {
+        const j = jobs.find(x => x.id === d.jobId);
+        if (j) { j.status = 'delivered'; j.statusLabel = 'Delivered'; j.deliveredAt = new Date().toISOString(); }
+        scanMsg('ok', '✔ ' + d.message);
+      } else {
+        scanMsg('err', '✖ ' + (d.message || d.error || `Not closed (${resp.status})`));
+      }
+      renderScanScope(d.progress);
+      loadJobs();
+    } catch (e) {
+      scanMsg('err', '✖ No connection. Nothing was closed, so scan again when you have signal.');
+    } finally { scanBusy = false; }
+  }
+  async function startCamera() {
+    const msg = $('scanCamMsg'), video = $('scanVideo');
+    msg.textContent = '';
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { msg.textContent = 'Camera not available. Type or use a scanner below.'; return; }
+    try {
+      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      video.srcObject = scanStream; await video.play();
+    } catch (e) { msg.textContent = 'Camera blocked. Allow camera access, or type the code below.'; return; }
+    // QR ONLY: deliveries close from the label/DO QR, never the warehouse 1D
+    // barcode. Native BarcodeDetector (Android Chrome) restricted to QR where
+    // the phone has it; jsQR otherwise (iPhone Safari and the rest).
+    scanDetector = null;
+    if ('BarcodeDetector' in window) {
+      try { const fmts = await BarcodeDetector.getSupportedFormats(); if (fmts.includes('qr_code')) scanDetector = new BarcodeDetector({ formats: ['qr_code'] }); } catch { scanDetector = null; }
+    }
+    if (!scanDetector && !window.jsQR) {
+      await new Promise(r => { const sc = document.createElement('script'); sc.src = '/vendor/jsqr.js'; sc.onload = sc.onerror = r; document.head.appendChild(sc); });
+    }
+    const tick = async () => {
+      if (!scanStream) return;
+      try {
+        if (video.readyState >= 2 && !scanBusy) {
+          let code = '';
+          if (scanDetector) { const r = await scanDetector.detect(video); if (r && r[0]) code = r[0].rawValue; }
+          else if (window.jsQR) {
+            if (!jsqrCanvas) jsqrCanvas = document.createElement('canvas');
+            const w = jsqrCanvas.width = Math.min(640, video.videoWidth), h = jsqrCanvas.height = Math.round(w * video.videoHeight / video.videoWidth);
+            const ctx = jsqrCanvas.getContext('2d'); ctx.drawImage(video, 0, 0, w, h);
+            const q = window.jsQR(ctx.getImageData(0, 0, w, h).data, w, h); if (q) code = q.data;
+          }
+          if (code) await submitScan(code);
+        }
+      } catch {}
+      scanTimer = setTimeout(tick, 200);
+    };
+    tick();
+  }
+  function stopCamera() {
+    clearTimeout(scanTimer); scanTimer = null;
+    if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+  }
+  function openScan(anchorId) {
+    if (!features.scanClose) return;
+    scanAnchor = anchorId;
+    $('sheetOverlay').classList.add('hidden');
+    $('scanMsg').classList.add('hidden');
+    $('scanInput').value = '';
+    renderScanScope();
+    $('scanOverlay').classList.remove('hidden');
+    startCamera();
+  }
+  function closeScan() { stopCamera(); $('scanOverlay').classList.add('hidden'); scanAnchor = null; }
+  $('scanCloseX').addEventListener('click', closeScan);
+  $('scanCloseBtn').addEventListener('click', () => { if (activeJobId) openScan(activeJobId); });
+  $('scanForm').addEventListener('submit', e => { e.preventDefault(); const v = $('scanInput').value; $('scanInput').value = ''; scanLast = { code: '', at: 0 }; submitScan(v); $('scanInput').focus(); });
 
   // ── Offline indicator ────────────────────────────────────────────────────
   function updateOnlineState() { $('offlinePill').classList.toggle('hidden', navigator.onLine); }
