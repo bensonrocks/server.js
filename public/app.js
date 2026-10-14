@@ -10499,6 +10499,12 @@
         ${ordered ? `<span class="muted">${ordered} on the order</span>` : ''}
       </div>`;
     const label = data.labelText || `${data.orderNumber}-${String(data.cartonNum).padStart(2, '0')}`;
+    // DRIVER QR, bottom right (same as the system label and DO since #74):
+    // 'IO-DLV:' + waybill, else order number — the ORDER's delivery code, so
+    // any carton of the order closes that order's delivery in the driver app.
+    // The 1D barcode above stays the carton id for the warehouse.
+    const dlvVal = String(data.waybill || '').trim() || String(data.orderNumber || '');
+    const dlvQr = dlvVal ? 'IO-DLV:' + dlvVal : '';
     // ── "OF N" IS ONLY PRINTED ONCE N IS TRUE ──────────────────────────
     // How many boxes an order takes is not knowable when the first one is
     // labelled — it depends on the goods, the cartons to hand and the
@@ -10526,11 +10532,14 @@
         <div class="foot"><span>${esc(String(data.orderNumber))}</span><span>${
           new Date(data.printedAt || Date.now()).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false })}</span></div>
         <div class="brand">
-          <img src="/icons/idealone-mark.png" alt="" />
-          <div>
-            <div class="bn">UNITED LOGISTICS AND DISTRIBUTION</div>
-            <div class="pb">powered by IdealOne</div>
+          <div class="brand-l">
+            <img src="/icons/idealone-mark.png" alt="" />
+            <div>
+              <div class="bn">UNITED LOGISTICS AND DISTRIBUTION</div>
+              <div class="pb">powered by IdealOne</div>
+            </div>
           </div>
+          ${dlvQr ? `<div class="dqr-wrap"><span class="dqr-cap">DRIVER QR</span><div class="dqr" data-qr="${esc(dlvQr)}"></div></div>` : ''}
         </div>
       </div>`;
   }
@@ -10565,6 +10574,7 @@
     w.document.write(`
         <html><head><title>${esc(title)}</title>
         <script src="/vendor/jsbarcode.min.js"><\/script>
+        <script src="/vendor/qrcode.js"><\/script>
         <style>
           @page { size: 100mm 150mm; margin: 4mm; }
           @media print { .hint { display: none; } }
@@ -10621,7 +10631,14 @@
              print fires from window.onload, which waits for images — so the
              logo is always on the page before the printer sees it. */
           .brand { margin-top: 2mm; padding-top: 1.5mm; border-top: 1px solid #000;
-                   display: flex; align-items: center; justify-content: center; gap: 2mm; }
+                   display: flex; align-items: center; justify-content: space-between; gap: 2mm; }
+          .brand-l { display: flex; align-items: center; gap: 2mm; min-width: 0; }
+          /* Driver QR, bottom right, far from the carton barcode; the white
+             padding is the quiet zone. */
+          .dqr-wrap { display: flex; align-items: center; gap: 1.5mm; flex: none; }
+          .dqr-cap { font-size: 7px; font-weight: 800; color: #444; letter-spacing: .4px; }
+          .dqr { width: 18mm; height: 18mm; background: #fff; }
+          .dqr svg { width: 100%; height: 100%; display: block; }
           .brand img { height: 16px; width: auto; }
           .brand .bn { font-size: 10px; font-weight: 800; letter-spacing: .6px; }
           .brand .pb { font-size: 8px; color: #555; letter-spacing: .3px; }
@@ -10641,6 +10658,9 @@
             });
             // focus() first: printing an iframe prints the TOP document unless
             // the frame has focus, which would send the whole app to the printer.
+            document.querySelectorAll('.dqr[data-qr]').forEach(function (el) {
+              try { var q = qrcode(0, 'M'); q.addData(el.getAttribute('data-qr')); q.make(); el.innerHTML = q.createSvgTag(4, 4); } catch (e) {}
+            });
             window.onload = () => setTimeout(() => { try { window.focus(); } catch (e) {} window.print(); }, 350);
           <\/script>
         </body></html>`);
