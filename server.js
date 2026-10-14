@@ -939,7 +939,18 @@ app.get('/api/ping', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 app.get('/home', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'home.html')));
 // Public IdealOne intro page (no login). Like /home, registered before every
 // auth gate; '/' (login) is left unchanged.
-app.get('/intro', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'intro.html')));
+// Light per-IP limit (same pattern as the enquiry / portal new-order limiters):
+// the page is public and hits the filesystem.
+const _introHits = new Map();
+function introRateLimit(req, res, next) {
+  const k = req.ip || 'x', now = Date.now();
+  const h = (_introHits.get(k) || []).filter(t => now - t < 60000);
+  if (h.length >= 120) return res.status(429).type('text').send('Too many requests. Please try again shortly.');
+  h.push(now); _introHits.set(k, h);
+  if (_introHits.size > 5000) _introHits.clear();
+  next();
+}
+app.get('/intro', introRateLimit, (_req, res) => res.sendFile(path.join(__dirname, 'public', 'intro.html')));
 // ── PUBLIC SALES ENQUIRY (form on /intro) ─────────────────────────────────
 // No auth, registered before every gate. Validated + sanitised in
 // lib/enquiry.js, stored in global.json `enquiries` FIRST (so nothing is lost

@@ -26,6 +26,9 @@ test('GET /intro returns 200 without auth', async () => {
   const html = await r.text();
   assert.match(html, /IdealOne/);
   assert.match(html, /href="\/portal"/);
+  assert.doesNotMatch(html, /www\.idealone\.tech/);
+  assert.match(html, /<link rel="canonical" href="https:\/\/idealone\.tech\/intro">/);
+  assert.match(html, /property="og:url" content="https:\/\/idealone\.tech\/intro"/);
   assert.doesNotMatch(html, /nimbustrade/i, 'recipient address must not be exposed');
   assert.match(html, /Built for operations, by operations/);
   assert.match(html, /SGD 80/); assert.match(html, /SGD 500/); assert.match(html, /SGD 76/); assert.match(html, /SGD 73\.60/); assert.match(html, /SGD 72/);
@@ -57,4 +60,11 @@ test('POST /api/public/enquiry: no auth, validates, honeypot, stores', async () 
 test('robots.txt allows /intro only', async () => {
   const t = await (await fetch(B + '/robots.txt')).text();
   assert.match(t, /Allow: \/intro/); assert.match(t, /Disallow: \/$/m);
+});
+test('robots.txt and sitemap.xml point at the apex idealone.tech', async () => {
+  const robots = await (await fetch(B + '/robots.txt')).text();
+  const sm = await (await fetch(B + '/sitemap.xml')).text();
+  assert.doesNotMatch(robots, /www\.idealone\.tech/); assert.doesNotMatch(sm, /www\.idealone\.tech/);
+  assert.match(robots, /^Sitemap: https:\/\/idealone\.tech\/sitemap\.xml$/m);
+  assert.match(sm, /<loc>https:\/\/idealone\.tech\/intro<\/loc>/);
 });
