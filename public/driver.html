@@ -204,6 +204,39 @@
     .install-hint-btn { border: 0; background: #0ea5e9; color: #fff; font-weight: 700; border-radius: 8px;
       padding: .45rem .9rem; font-size: 12px; cursor: pointer; flex-shrink: 0; }
     .install-hint-close { border: 0; background: none; color: #94a3b8; font-size: 1rem; cursor: pointer; flex-shrink: 0; padding: .2rem .3rem; }
+
+    /* ── Scan-to-close (feature-flagged) ── */
+    .action-scan { background: #0f766e; }
+    .route-scan { border: none; background: #0f766e; color: #fff; font-weight: 800; font-size: 11px; border-radius: 999px; padding: .25rem .6rem; cursor: pointer; text-transform: none; letter-spacing: 0; }
+    .scan-overlay { position: fixed; inset: 0; background: #f8fafc; z-index: 600; display: flex; flex-direction: column; }
+    .scan-head { background: #0f172a; color: #fff; padding: calc(.7rem + env(safe-area-inset-top)) 1rem .7rem; display: flex; justify-content: space-between; align-items: center; gap: .6rem; }
+    .scan-head b { font-size: 15px; display: block; }
+    .scan-head small { color: #94a3b8; font-size: 12px; }
+    .scan-x { background: #1e293b; color: #fff; border: none; border-radius: 8px; padding: .5rem .8rem; font-weight: 700; cursor: pointer; }
+    .scan-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: .8rem 1rem 1.5rem; }
+    .scan-prog { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: .7rem .9rem; margin-bottom: .7rem; }
+    .scan-prog-top { display: flex; justify-content: space-between; font-weight: 800; font-size: 14px; }
+    .scan-bar { height: 10px; background: #e2e8f0; border-radius: 999px; margin-top: .5rem; overflow: hidden; }
+    .scan-bar i { display: block; height: 100%; background: #16a34a; width: 0; transition: width .3s; }
+    .scan-cam { position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 4/3; max-height: 42vh; width: 100%; display: grid; place-items: center; color: #cbd5e1; font-size: 13px; text-align: center; }
+    .scan-cam video { width: 100%; height: 100%; object-fit: cover; }
+    .scan-cam .scan-frame { position: absolute; inset: 22% 10%; border: 3px solid rgba(255,255,255,.85); border-radius: 10px; pointer-events: none; }
+    .scan-manual { display: flex; gap: .5rem; margin-top: .7rem; }
+    .scan-manual input { flex: 1; font-size: 16px; padding: .75rem .8rem; border: 1px solid #cbd5e1; border-radius: 10px; min-width: 0; }
+    .scan-manual button { border: none; background: #0f766e; color: #fff; font-weight: 800; border-radius: 10px; padding: 0 1rem; font-size: 15px; }
+    .scan-msg { margin-top: .7rem; padding: .75rem .9rem; border-radius: 10px; font-weight: 700; font-size: 14px; }
+    .scan-msg.ok { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+    .scan-msg.err { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .scan-msg.info { background: #e0f2fe; color: #075985; border: 1px solid #7dd3fc; }
+    .scan-done { margin-top: .7rem; padding: 1rem; border-radius: 12px; background: #16a34a; color: #fff; text-align: center; font-weight: 800; font-size: 16px; }
+    .scan-list { margin-top: .9rem; }
+    .scan-list h4 { margin: 0 0 .4rem; font-size: 12px; color: #475569; text-transform: uppercase; letter-spacing: .04em; }
+    .scan-item { display: flex; justify-content: space-between; align-items: center; gap: .6rem; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: .55rem .75rem; margin-bottom: .4rem; font-size: 13px; }
+    .scan-item .ref { font-weight: 800; }
+    .scan-item .sub { color: #64748b; font-size: 12px; }
+    .scan-item .st { font-weight: 800; font-size: 11.5px; padding: .2rem .5rem; border-radius: 999px; white-space: nowrap; }
+    .scan-item .st.closed { background: #dcfce7; color: #166534; }
+    .scan-item .st.open { background: #fef3c7; color: #92400e; }
   </style>
 </head>
 <body>
@@ -313,6 +346,7 @@
         <input type="file" id="podPhotoInput" accept="image/*" capture="environment" hidden />
         <div class="pod-location-note hidden" id="podLocationNote"></div>
       </div>
+      <button class="action-btn action-scan hidden" id="scanCloseBtn">&#128247; Scan Label to Close</button>
       <button class="action-btn action-deliver hidden" id="deliverBtn" disabled>&#10003; Mark Delivered</button>
       <div class="sheet-done hidden" id="sheetDoneNote"></div>
     </div>
@@ -330,6 +364,28 @@
     </div>
   </div>
 
+
+  <!-- Scan-to-close: driver scans the order label while on a job (route) -->
+  <div id="scanOverlay" class="scan-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="scanTitle">
+    <div class="scan-head">
+      <div><b id="scanTitle">Scan to close</b><small id="scanSub">—</small></div>
+      <button class="scan-x" id="scanCloseX">Done</button>
+    </div>
+    <div class="scan-body">
+      <div class="scan-prog">
+        <div class="scan-prog-top"><span id="scanProgText">0 of 0 closed</span><span id="scanProgPct">0%</span></div>
+        <div class="scan-bar"><i id="scanBar"></i></div>
+      </div>
+      <div class="scan-cam" id="scanCam"><video id="scanVideo" playsinline muted></video><div class="scan-frame"></div><div id="scanCamMsg" style="position:absolute;padding:1rem"></div></div>
+      <form class="scan-manual" id="scanForm" autocomplete="off">
+        <input id="scanInput" inputmode="text" enterkeyhint="go" placeholder="Scan or type order / waybill / DO no." aria-label="Order label code">
+        <button type="submit">Close</button>
+      </form>
+      <div id="scanMsg" class="scan-msg hidden" role="status" aria-live="assertive"></div>
+      <div id="scanDone" class="scan-done hidden">&#10004; All orders on this job are closed. Job complete.</div>
+      <div class="scan-list"><h4>Orders on this job</h4><div id="scanList"></div></div>
+    </div>
+  </div>
   <div id="offlinePill" class="offline-pill hidden">&#128246; Offline — will retry</div>
 
   <div id="installHintBar" class="install-hint hidden">

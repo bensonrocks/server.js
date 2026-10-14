@@ -29951,6 +29951,7 @@ app.get('/api/driver/jobs', requireDriverAuthMiddleware, (req, res) => {
   const idleMin = t.idleSince ? Math.round((Date.now() - new Date(t.idleSince).getTime()) / 60000) : 0;
   res.json({
     jobs,
+    features: { scanClose: driverScanCloseOn() },
     driver: {
       id: drv.id || driverId, name: drv.name || '', vehicle: drv.vehicle || '', plate: drv.plate || '',
     },
@@ -30338,6 +30339,44 @@ app.post('/api/driver/jobs/:id/deliver', requireDriverAuthMiddleware, express.js
   writeDb(db);
   logAudit('driver_job_delivered', { jobId: job.id, driver: driverId, client: job.clientName || '', withRemarks: !!String(remarks || '').trim(), hasGps: !!job.podLocation });
   res.json({ ok: true, job });
+});
+
+// POST /api/driver/scan-close — DRIVER SCAN-TO-CLOSE (lib/driver-scan.js).
+// Feature-flagged: env DRIVER_SCAN_CLOSE=1 turns it on (off by default, so a
+// deploy changes nothing until the flag is set). Body { jobId, code, lat?,
+// lng?, accuracy? }: jobId is the job the driver has open; its route (or the
+// single stop if unrouted) is the scope. A code matching an order on that
+// scope closes ONLY that transport job's delivery status — warehouse
+// pick/pack/scan state is never touched. Anything else (unknown, another
+// route, another driver, already closed, not picked up) is refused with a
+// message and nothing is written. ePOD photo is optional on this path: the
+// label scan is the proof; photos can still be added from the stop.
+const driverScan = require('./lib/driver-scan');
+const driverScanCloseOn = () => /^(1|true|on|yes)$/i.test(String(process.env.DRIVER_SCAN_CLOSE || ''));
+function _orderForTransportJob(db, job) {
+  const ref = String(job.referenceId || job.clientId || '');
+  if (!ref) return null;
+  for (const b of db.batches || []) for (const o of b.orders || []) if (String(o.order_number) === ref) return o;
+  return null;
+}
+app.post('/api/driver/scan-close', requireDriverAuthMiddleware, express.json(), (req, res) => {
+  if (!driverScanCloseOn()) return res.status(404).json({ error: 'Scan-to-close is not enabled.' });
+  const driverId = req.driverId;
+  const { jobId, code, lat, lng, accuracy } = req.body || {};
+  const db = readDb();
+  const r = driverScan.scanClose({
+    transport: db.transport || [], driverId, anchorJobId: String(jobId || ''), code: String(code || '').slice(0, 200),
+    orderFor: j => _orderForTransportJob(db, j), gps: { lat, lng, accuracy },
+  });
+  if (r.ok) {
+    writeDb(db);
+    logAudit('driver_job_delivered', { jobId: r.job.id, driver: driverId, client: r.job.clientName || '', via: 'scan', code: r.job.closedScanCode, hasGps: !!r.job.podLocation });
+    if (r.progress.complete) logAudit('driver_route_completed', { driver: driverId, anchor: r.job.id, routeNum: r.job.routeNum ?? null, stops: r.progress.total });
+  } else {
+    logAudit('driver_scan_close_refused', { driver: driverId, anchor: String(jobId || ''), code: String(code || '').slice(0, 120), result: r.result });
+  }
+  res.status(r.status).json({ ok: r.ok, result: r.result, message: r.message, error: r.ok ? undefined : r.message,
+    jobId: r.job ? r.job.id : null, progress: r.progress || null });
 });
 
 // GET /api/master/drivers — List all drivers (admin only)
