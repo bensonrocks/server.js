@@ -28,11 +28,11 @@ test('GET /intro returns 200 without auth', async () => {
   assert.match(html, /href="\/portal"/);
   assert.doesNotMatch(html, /nimbustrade/i, 'recipient address must not be exposed');
   assert.match(html, /Built for operations, by operations/);
-  assert.match(html, /SGD 80/); assert.match(html, /SGD 500/);
+  assert.match(html, /SGD 80/); assert.match(html, /SGD 500/); assert.match(html, /SGD 76/); assert.match(html, /SGD 73\.60/); assert.match(html, /SGD 72/);
   assert.doesNotMatch(html, /Contact for pricing/);
   const ld = JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
   const app = ld.find(x => x['@type'] === 'SoftwareApplication');
-  assert.deepEqual(app.offers.map(o => [o.price, o.priceCurrency]), [['80', 'SGD'], ['500', 'SGD']]);
+  assert.deepEqual(app.offers.map(o => [o.price, o.priceCurrency]), [['80', 'SGD'], ['76', 'SGD'], ['73.60', 'SGD'], ['72', 'SGD'], ['500', 'SGD']]);
   assert.doesNotMatch(html, /zort|onecart|keyfields|shopee|lazada|tiktok/i, 'no named integration partners');
 });
 test('GET / still serves the login app', async () => {
