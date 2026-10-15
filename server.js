@@ -10261,7 +10261,7 @@ const _LABEL_WORDS = new Set([
   'footer','serial','sequence','count','sum','balance','debit','credit',
 ]);
 
-function isMetadataRow(r) {
+function isMetadataRow(r, knownSkus) {
   const on  = String(r.order_number || '').trim();
   const sku = String(r.sku          || '').trim();
   if (!on || on === 'UNKNOWN') return true;
@@ -10273,6 +10273,13 @@ function isMetadataRow(r) {
   // from AI-DETECTED columns. A SKU from a KNOWN schema column (d-SKUCODE,
   // "SKU", "Item Code", …) is real data and may legitimately contain spaces
   // ("Thermal Grease X23-7783D") or label-like words — trust it outright.
+  // A SKU that IS in the client's item master is real data, spaces or not
+  // ("NV-PROMO 2" under an iWMS "ItemCode" header was dropped as a label row
+  // and blocked a BETIME - ECOM upload, 15 Oct). Labels are never item-master SKUs.
+  if (knownSkus && knownSkus.has(sku.toLowerCase())) return false;
+  // Summary/total labels never become lines, even under a recognised SKU
+  // header (more no-space headers are recognised now, e.g. iWMS "ItemCode").
+  if (/^(total|grand\s+total|sub\s*-?total|whole\s+qty|loose\s+qty)\b/i.test(sku) && /\s/.test(sku)) return true;
   if (r._skuSource === 'schema') return false;
   // SKU with spaces → a summary label like "Total Whole Qty", "Grand Total Loose"
   if (/\s/.test(sku)) return true;
@@ -10652,13 +10659,48 @@ function parsePicklistText(text) {
   }));
 }
 
+
+// ── Known item-master SKUs for an upload (SKU-with-space rescue) ─────────────
+// Built ONCE per upload, lower-cased + trimmed, from the upload client's own
+// item master (the scope catalogueLookup matches in; profile aliases stay
+// print/label-only per #72). With no client known, falls back to
+// every item-master SKU in the tenant that contains a space — the only SKUs
+// the space rule could wrongly drop. Cached briefly so a burst of previews
+// doesn't re-read the catalogue.
+const _knownSkuCache = new Map();
+function knownSkuSetFor(clientName) {
+  const name = String(clientName || '').trim();
+  let tid = ''; try { tid = tenantContext.currentTenantId() || ''; } catch (_) {}
+  const key = tid + '|' + name.toLowerCase();
+  const hit = _knownSkuCache.get(key);
+  if (hit && Date.now() - hit.at < 30000) return hit.set;
+  const set = new Set();
+  const add = cid => { try { for (const r of inventory.getAll({ clientId: cid }) || []) { const v = String(r.sku || '').trim().toLowerCase(); if (v && (name || /\s/.test(v))) set.add(v); } } catch (_) {} };
+  try {
+    if (inventory.available()) {
+      if (name) { add(invClientId(name));   // the client's own item master — the same scope catalogueLookup matches against
+      } else {
+        for (const cid of inventory.listClientIds() || []) add(cid);
+      }
+    }
+  } catch (_) {}
+  _knownSkuCache.set(key, { at: Date.now(), set });
+  if (_knownSkuCache.size > 200) _knownSkuCache.delete(_knownSkuCache.keys().next().value);
+  return set;
+}
+function _fileClientName(rows, given) {
+  return String(given || '').trim() || String((rows.find(r => r.client_name) || {}).client_name || '').trim();
+}
+
 // ── File parsing ────────────────────────────────────────────────────────────
-function parseUploadedFile(buffer, filename) {
+function parseUploadedFile(buffer, filename, opts = {}) {
   const ext = path.extname(filename).toLowerCase();
   if (ext === '.csv') {
     const records  = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
     const detected = detectColumnMap(records);
-    return records.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
+    const mapped   = records.map(r => mapRow(r, detected));
+    const known    = knownSkuSetFor(_fileClientName(mapped, opts.clientName));
+    return mapped.filter(r => r.sku && !isMetadataRow(r, known));
   }
   if (ext === '.xlsx' || ext === '.xls') {
     const wb                   = XLSX.read(buffer, { type: 'buffer', cellDates: true });
@@ -10668,7 +10710,9 @@ function parseUploadedFile(buffer, filename) {
     const finalRecs            = melted || records;
     const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
     const detected             = detectColumnMap(cleanRecs);
-    return cleanRecs.map(r => mapRow(r, detected)).filter(r => r.sku && !isMetadataRow(r));
+    const mapped               = cleanRecs.map(r => mapRow(r, detected));
+    const known                = knownSkuSetFor(_fileClientName(mapped, opts.clientName));
+    return mapped.filter(r => r.sku && !isMetadataRow(r, known));
   }
   throw new Error('Unsupported file type. Upload XLSX or CSV.');
 }
@@ -11218,7 +11262,7 @@ app.get('/api/system-health', (req, res) => {
 // When the row carries a real GI number, use THAT as the order number (the
 // store name becomes the customer). Continuation rows with a blank order
 // number inherit the previous row's, but only within the same GI.
-function rescueOrderNumbers(all) {
+function rescueOrderNumbers(all, knownSkus) {
   let prev = null;
   for (const r of all) {
     const on = String(r.order_number || '').trim();
@@ -11233,7 +11277,7 @@ function rescueOrderNumbers(all) {
       r._orderRescued = 'forward-fill';
     }
     const now = String(r.order_number || '').trim();
-    if (now && now !== 'UNKNOWN' && r.sku && !isMetadataRow(r)) prev = { on: now, gi };
+    if (now && now !== 'UNKNOWN' && r.sku && !isMetadataRow(r, knownSkus)) prev = { on: now, gi };
   }
   return all;
 }
@@ -11251,7 +11295,7 @@ function collectSkipped(all, kept, rowOffset) {
 }
 
 // Returns { unsupported } instead of throwing for a file type we don't take.
-async function parseOrderFileToRows(buffer, filename) {
+async function parseOrderFileToRows(buffer, filename, opts = {}) {
   const ext = path.extname(filename || '').toLowerCase();
   const pdfWarnings = [];
   let allRows = [], skipped = 0, flagged = [], skippedRows = [];
@@ -11272,8 +11316,10 @@ async function parseOrderFileToRows(buffer, filename) {
   } else if (ext === '.csv') {
     const records  = parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
     const detected = detectColumnMap(records);
-    const all      = rescueOrderNumbers(records.map(r => mapRow(r, detected)));
-    allRows = all.filter(r => r.sku && !isMetadataRow(r));
+    const mappedC  = records.map(r => mapRow(r, detected));
+    const known    = knownSkuSetFor(_fileClientName(mappedC, opts.clientName));
+    const all      = rescueOrderNumbers(mappedC, known);
+    allRows = all.filter(r => r.sku && !isMetadataRow(r, known));
     skipped = all.length - allRows.length;
     skippedRows = collectSkipped(all, allRows, 2);
   } else if (ext === '.xlsx' || ext === '.xls') {
@@ -11284,8 +11330,10 @@ async function parseOrderFileToRows(buffer, filename) {
     const finalRecs            = melted || records;
     const cleanRecs            = finalRecs.filter(r => !_isFooterRow(r));
     const detected             = detectColumnMap(cleanRecs);
-    const all                  = rescueOrderNumbers(cleanRecs.map(r => mapRow(r, detected)));
-    allRows = all.filter(r => r.sku && !isMetadataRow(r));
+    const mappedX              = cleanRecs.map(r => mapRow(r, detected));
+    const known                = knownSkuSetFor(_fileClientName(mappedX, opts.clientName));
+    const all                  = rescueOrderNumbers(mappedX, known);
+    allRows = all.filter(r => r.sku && !isMetadataRow(r, known));
     skipped = cleanRecs.length - allRows.length;
     skippedRows = collectSkipped(all, allRows, 1); // data-row index (header excluded)
   } else {
@@ -11298,7 +11346,7 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const parsed = await parseOrderFileToRows(req.file.buffer, req.file.originalname);
+    const parsed = await parseOrderFileToRows(req.file.buffer, req.file.originalname, { clientName: req.body?.client_name });
     if (parsed.unsupported) {
       return res.json({ rowCount: 0, orderCount: 0, errors: ['Unsupported file type. Upload XLSX, CSV, or PDF.'], converted: false });
     }
@@ -11677,7 +11725,7 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       mapped = detailed.rows;
       pdfIssues = detailed.issues;
     } else {
-      mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname);
+      mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname, { clientName: req.body?.client_name });
     }
     // SAFETY RULE — no picking list may be silently dropped
     const criticalPdf = pdfIssues.filter(i => i.critical);
@@ -13536,7 +13584,7 @@ function clientSubPublic(db, s) {
 // Confirm dialog a client approves is computed exactly like the submission it
 // then creates — the same relationship /api/preview has to /api/upload.
 async function previewClientOrderFile(buffer, filename, client) {
-  const parsed = await parseOrderFileToRows(buffer, filename);
+  const parsed = await parseOrderFileToRows(buffer, filename, { clientName: client });
   if (parsed.unsupported) return { error: 'Unsupported file type. Please upload XLSX, CSV or PDF.' };
   const rows = parsed.allRows;
   if (!rows.length) {
@@ -13918,7 +13966,7 @@ app.post('/api/portal/submit-orders', upload.single('file'), (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
       const client = req.portalClient;
-      const parsed = await parseOrderFileToRows(req.file.buffer, req.file.originalname);
+      const parsed = await parseOrderFileToRows(req.file.buffer, req.file.originalname, { clientName: client });
       if (parsed.unsupported) {
         return res.status(400).json({ error: 'Unsupported file type. Please upload XLSX, CSV or PDF.' });
       }
@@ -14056,7 +14104,7 @@ app.post('/api/portal/new-order', newOrderRateLimit, express.json(), requirePort
       for (const l of f.lines) aoa.push([orderNumber, l.sku, l.description, l.qty, f.ship_to_name, address, f.phone, f.remarks]);
       const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Order');
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-      const parsed = await parseOrderFileToRows(buf, `${orderNumber}.xlsx`);
+      const parsed = await parseOrderFileToRows(buf, `${orderNumber}.xlsx`, { clientName: client });
       const rows = parsed.allRows;
       if (!rows.length || parsed.skipped) return res.status(500).json({ error: 'Could not build the order — nothing was saved.' });
       normalizeOrderRowsToInhouseSku(rows, () => cid);
@@ -14272,7 +14320,7 @@ app.post('/api/client-submissions/:id/approve', express.json(), async (req, res)
   }
 
   try {
-    const parsed = await parseOrderFileToRows(buf, s0.filename);
+    const parsed = await parseOrderFileToRows(buf, s0.filename, { clientName: s0.client_name });
     let rows = parsed.allRows;
     if (!rows.length) return res.status(400).json({ error: 'The stored file no longer yields any order lines.' });
     const cid = invClientId(s0.client_name);
