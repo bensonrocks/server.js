@@ -2384,6 +2384,8 @@
   // not judged — "we don't track this" must never read as "no stock", and an
   // order with nothing trackable gets no pill at all.
   function orderStockVerdict(ord) {
+    // Stock held in the client's own system (Betime → Keyfields): no verdict.
+    if (ord && ord.stock_external) return null;
     const all   = (ord.lines || ord.items || []).filter(l => l && l.sku);
     const lines = all.filter(l => l.stock_onhand !== null && l.stock_onhand !== undefined);
     // NOT IN ANY ITEM MASTER is its own answer, not silence. A row with no
