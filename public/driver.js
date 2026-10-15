@@ -286,6 +286,17 @@
     acceptBtn.classList.add('hidden'); pickupBtn.classList.add('hidden');
     podSection.classList.add('hidden'); deliverBtn.classList.add('hidden'); doneNote.classList.add('hidden');
     $('scanCloseBtn').classList.toggle('hidden', !(features.scanClose && j.status !== 'delivered'));
+    // Receiver signature (per DO) — required before scan-to-close when on.
+    const signOpen = features.signRequired && j.status === 'in-transit';
+    $('signBtn').classList.toggle('hidden', !signOpen);
+    $('signBtn').innerHTML = j.podSignature ? '&#9997;&#65039; Sign Again' : '&#9997;&#65039; Receiver Signs DO';
+    const ss = $('signStatus');
+    $('signReqBtn').classList.toggle('hidden', !(signOpen && !j.podSignature && !j.podOverride));
+    $('signReqBtn').textContent = j.podOverrideRequested ? '🔔 Override requested — waiting for office' : 'Receiver refused / not here? Ask office to override';
+    if (features.signRequired && j.podOverride && !j.podSignature) { ss.className = 'sign-status ok'; ss.textContent = `✔ Office override: ${j.podOverride.reason} (${j.podOverride.byName}). You can scan to close.`; }
+    else if (features.signRequired && j.podSignature) { ss.className = 'sign-status ok'; ss.textContent = `✔ DO signed by ${j.podSignature.receiverName} · ${new Date(j.podSignature.signedAt).toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' })}`; }
+    else if (signOpen) { ss.className = 'sign-status need'; ss.textContent = 'Receiver must sign the DO before you can scan to close.'; }
+    else ss.className = 'sign-status hidden';
 
     if (j.status === 'confirmed' && !j.driverAcceptedAt) {
       acceptBtn.classList.remove('hidden');
@@ -556,7 +567,10 @@
     $('scanBar').style.width = pct + '%';
     $('scanDone').classList.toggle('hidden', !(total && closed === total));
     $('scanList').innerHTML = list.map(j => `<div class="scan-item"><div><div class="ref">${esc(j.referenceId || j.id)}</div><div class="sub">${j.stopSeq != null ? 'Stop ' + esc(j.stopSeq) + ' · ' : ''}${esc(j.client || '')}</div></div>`
-      + `<span class="st ${j.status === 'delivered' ? 'closed' : 'open'}">${j.status === 'delivered' ? '&#10004; Closed' : esc(j.statusLabel || j.status)}</span></div>`).join('');
+      + `<span><span class="st ${j.status === 'delivered' ? 'closed' : 'open'}">${j.status === 'delivered' ? '&#10004; Closed' : esc(j.statusLabel || j.status)}</span>`
+      + (features.signRequired && j.status === 'in-transit' ? (j.podSignature ? ' <span class="st closed">&#9997; Signed</span>' : j.podOverride ? ' <span class="st closed" title="Office override">&#9888;&#65039; Override</span>' : ` <button class="scan-sign" data-sign="${esc(j.id)}">&#9997; Sign</button>`) : '')
+      + `</span></div>`).join('');
+    $('scanList').querySelectorAll('[data-sign]').forEach(b => b.addEventListener('click', () => openSign(b.dataset.sign, true)));
   }
   function scanMsg(kind, text) {
     const el = $('scanMsg');
@@ -584,6 +598,11 @@
         scanMsg('ok', '✔ ' + d.message);
       } else {
         scanMsg('err', '✖ ' + (d.message || d.error || `Not closed (${resp.status})`));
+        if (d.result === 'needs_signature' && d.jobId) {
+          const b = document.createElement('button'); b.className = 'action-btn action-sign'; b.style.marginTop = '.6rem';
+          b.innerHTML = '&#9997;&#65039; Receiver signs now'; b.onclick = () => openSign(d.jobId, true);
+          $('scanMsg').appendChild(b);
+        }
       }
       renderScanScope(d.progress);
       loadJobs();
@@ -646,6 +665,80 @@
   $('scanCloseX').addEventListener('click', closeScan);
   $('scanCloseBtn').addEventListener('click', () => { if (activeJobId) openScan(activeJobId); });
   $('scanForm').addEventListener('submit', e => { e.preventDefault(); const v = $('scanInput').value; $('scanInput').value = ''; scanLast = { code: '', at: 0 }; submitScan(v); $('scanInput').focus(); });
+
+  // ── Receiver signature pad ───────────────────────────────────────────────
+  // Pointer events on a canvas; saved as a small PNG (cropped to the ink and
+  // scaled to max 600x200, ~5–25 KB) so upload and storage stay cheap.
+  let signJobId = null, signBackToScan = null, signInk = false;
+  const pad = $('signPad'), pctx = pad.getContext('2d');
+  function sizePad() {
+    const r = pad.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+    pad.width = Math.round(r.width * dpr); pad.height = Math.round(r.height * dpr);
+    pctx.setTransform(dpr, 0, 0, dpr, 0, 0); pctx.lineWidth = 2.6; pctx.lineCap = pctx.lineJoin = 'round'; pctx.strokeStyle = '#0f172a';
+    signInk = false;
+  }
+  let drawing = false, bbox = null;
+  const pt = e => { const r = pad.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const grow = ([x, y]) => { bbox = bbox ? [Math.min(bbox[0], x), Math.min(bbox[1], y), Math.max(bbox[2], x), Math.max(bbox[3], y)] : [x, y, x, y]; };
+  pad.addEventListener('pointerdown', e => { e.preventDefault(); pad.setPointerCapture(e.pointerId); drawing = true; const p = pt(e); grow(p); pctx.beginPath(); pctx.moveTo(p[0], p[1]); pctx.lineTo(p[0] + .1, p[1] + .1); pctx.stroke(); });
+  pad.addEventListener('pointermove', e => { if (!drawing) return; const p = pt(e); grow(p); pctx.lineTo(p[0], p[1]); pctx.stroke(); signInk = true; });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => pad.addEventListener(t, () => { drawing = false; }));
+  function clearPad() { pctx.save(); pctx.setTransform(1, 0, 0, 1, 0, 0); pctx.clearRect(0, 0, pad.width, pad.height); pctx.restore(); signInk = false; bbox = null; }
+  function padPng() {
+    const dpr = pad.width / pad.getBoundingClientRect().width, m = 6;
+    const sx = Math.max(0, (bbox[0] - m) * dpr), sy = Math.max(0, (bbox[1] - m) * dpr);
+    const sw = Math.min(pad.width - sx, (bbox[2] - bbox[0] + 2 * m) * dpr), sh = Math.min(pad.height - sy, (bbox[3] - bbox[1] + 2 * m) * dpr);
+    const k = Math.min(1, 600 / sw, 200 / sh), out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(sw * k)); out.height = Math.max(1, Math.round(sh * k));
+    out.getContext('2d').drawImage(pad, sx, sy, sw, sh, 0, 0, out.width, out.height);
+    return out.toDataURL('image/png');
+  }
+  function signMsg(kind, t) { const el = $('signMsg'); el.className = 'scan-msg ' + kind; el.textContent = t; }
+  function openSign(jobId, fromScan) {
+    const j = jobs.find(x => x.id === jobId); if (!j) return;
+    signJobId = jobId; signBackToScan = fromScan ? scanAnchor : null;
+    if (fromScan) { stopCamera(); $('scanOverlay').classList.add('hidden'); }
+    $('sheetOverlay').classList.add('hidden');
+    $('signSub').textContent = `Order ${j.referenceId || j.id}${j.client ? ' · ' + j.client : ''}`;
+    $('signName').value = ''; $('signMsg').className = 'scan-msg hidden';
+    $('signOverlay').classList.remove('hidden');
+    requestAnimationFrame(() => { sizePad(); clearPad(); });
+  }
+  function closeSign(saved) {
+    $('signOverlay').classList.add('hidden');
+    const back = signBackToScan; signJobId = null; signBackToScan = null;
+    if (back) { openScan(back); if (saved) scanMsg('ok', '✔ Signed. Now scan the QR on the DO to close.'); }
+  }
+  $('signClear').addEventListener('click', clearPad);
+  $('signCancel').addEventListener('click', () => closeSign(false));
+  $('signSave').addEventListener('click', async () => {
+    const name = $('signName').value.trim();
+    if (name.length < 2) { signMsg('err', "Enter the receiver's name."); $('signName').focus(); return; }
+    if (!signInk || !bbox) { signMsg('err', 'The receiver needs to sign in the box.'); return; }
+    const btn = $('signSave'); btn.disabled = true; btn.textContent = 'Saving…';
+    const gps = _lastFix ? { lat: _lastFix.lat, lng: _lastFix.lng, accuracy: _lastFix.accuracy } : {};
+    try {
+      const resp = await fetch(`/api/driver/jobs/${encodeURIComponent(signJobId)}/signature`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': driverToken },
+        body: JSON.stringify({ dataUrl: padPng(), receiverName: name, ...gps }) });
+      const d = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(d.error || 'Could not save the signature.');
+      const j = jobs.find(x => x.id === signJobId); if (j) j.podSignature = d.signature;
+      toast('✍️ DO signed by ' + name);
+      closeSign(true); loadJobs();
+    } catch (e) { signMsg('err', '✖ ' + (e.message || 'No connection. Try again.')); }
+    finally { btn.disabled = false; btn.innerHTML = '&#10004; Save Signature'; }
+  });
+  $('signBtn').addEventListener('click', () => { if (activeJobId) openSign(activeJobId, false); });
+  $('signReqBtn').addEventListener('click', async () => {
+    const j = jobs.find(x => x.id === activeJobId); if (!j || j.podOverrideRequested) return;
+    const note = prompt('Tell the office what happened (e.g. receiver refused, left with guard):', '');
+    if (note === null) return;
+    const r = await fetch(`/api/driver/jobs/${encodeURIComponent(j.id)}/override-request`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': driverToken }, body: JSON.stringify({ note }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(d.error || 'Could not send.'); return; }
+    j.podOverrideRequested = true; toast('🔔 Office asked to override'); $('signReqBtn').textContent = '🔔 Override requested — waiting for office';
+  });
 
   // ── Offline indicator ────────────────────────────────────────────────────
   function updateOnlineState() { $('offlinePill').classList.toggle('hidden', navigator.onLine); }

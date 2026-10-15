@@ -35,6 +35,7 @@ const doNumber = realPdf.doNumber;
 const subs = [{ client_name: 'TEST', new_order: nf }];
 const clientSubs = () => subs, readDb = () => ({});
 const outletViewFor = (db, o) => o;   // outlet lookup off (tested in outlet-lookup.test.js)
+const _doSignatureFor = () => null;   // receiver signature (tested in driver-sign.test.js)
 eval(grab('async function _sendDo', "app.get('/api/orders/:orderNumber/do'"));
 const res = () => ({ h: {}, setHeader(k, v) { this.h[k] = v; }, end(b) { this.body = b; } });
 (async () => {
