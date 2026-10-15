@@ -30494,14 +30494,14 @@ app.get('/api/driver/jobs/:id/signature', requireDriverOrStaffPhotoAuth, (req, r
   if (!sig || !sig.file) return res.status(404).send('Not found');
   res.type('png').sendFile(path.join(POD_PHOTO_DIR, job.id, sig.file), err => { if (err && !res.headersSent) res.status(404).send('Not found'); });
 });
-// OFFICE OVERRIDE (staff only — admin or warehouse role; never a driver
+// OFFICE OVERRIDE (Administrator role ONLY — not warehouse staff, never a driver
 // token). Waives the signature for ONE order (transport job) with a reason
 // from the pick list; who/when/reason go on the job and into the audit log.
 // The driver can then close it by QR scan or Mark Delivered.
 app.post('/api/transport/:id/sign-override', express.json(), (req, res) => {
   if (!driverSign.signRequiredOn()) return res.status(404).json({ error: 'Receiver signature is not enabled.' });
   const u = readUsers().find(x => x.id === req.userId);
-  if (!u || !['admin', 'warehouse'].includes(u.role)) return res.status(403).json({ error: 'Only office users can override the signature.' });
+  if (!u || u.role !== 'admin') return res.status(403).json({ error: 'Only an Administrator can override the signature.' });
   const v = driverSign.validateOverride(req.body || {});
   if (!v.ok) return res.status(400).json({ error: v.error });
   const db = readDb();

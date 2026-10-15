@@ -7117,6 +7117,7 @@
   }
   document.addEventListener('click', e => {
     if (!e.target.closest('#ddSignOverrideBtn')) return;
+    if (currentUser?.role !== 'admin') return;   // server enforces too (Administrator only)
     const id = document.getElementById('ddSignOverrideBtn').dataset.job;
     const job = (transportRequests || []).find(r => r.id === id) || (Array.isArray(_transportCacheAll) ? _transportCacheAll.find(r => r.id === id) : null);
     if (job) openSignOverrideDialog(job, () => { document.querySelectorAll('.modal-overlay').forEach(x => x.remove()); openDeliveryDetail(id); });
@@ -7172,7 +7173,7 @@
         <div style="margin-top:.6rem;padding:.55rem .7rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12.5px">
           ${job.podOverrideRequest && !job.podOverrideRequest.resolvedAt ? `<div style="color:#b45309;font-weight:700;margin-bottom:.35rem">&#128276; Driver asked for an override${job.podOverrideRequest.note ? ': “' + esc(job.podOverrideRequest.note) + '”' : ''}</div>` : ''}
           Receiver has not signed the DO yet. The driver can't close this order until they do.
-          <button class="btn-secondary" id="ddSignOverrideBtn" data-job="${esc(job.id)}" style="margin-top:.45rem;display:block">&#9888;&#65039; Office override — close without signature…</button>
+          ${currentUser?.role === 'admin' ? `<button class="btn-secondary" id="ddSignOverrideBtn" data-job="${esc(job.id)}" style="margin-top:.45rem;display:block">&#9888;&#65039; Office override — close without signature…</button>` : '<div style="margin-top:.35rem;color:#64748b">Only an Administrator can override.</div>'}
         </div>` : '')}
         ${(job.podPhotos && job.podPhotos.length) ? `
         <div style="margin-top:.6rem">
