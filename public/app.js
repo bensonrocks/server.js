@@ -2950,9 +2950,9 @@
           : '',
         // …and why the carrier label is missing, when it is.
         zortLabelChip(ord),
-        // FULFILMENT KPI. The countdown to this order's handover, so a packer
-        // can see at a glance which of a screenful is actually urgent.
-        fulfilmentChip(ord),
+        // (The older Handover-KPI countdown pill — fulfilmentChip — is no longer
+        // shown on the row: the #78 24h timer below is the one per-order timer.
+        // The Handover KPI tiles/reports above the list are unchanged.)
         (ord.delivery_proof && ord.delivery_proof.override) ? `<span class="chip" style="background:#fff7ed;color:#9a3412;border:1px solid #fdba74" title="${esc('NOT SIGNED — office override: ' + ord.delivery_proof.override.reason + ' (' + ord.delivery_proof.override.byName + ')')}">&#9888;&#65039; Not signed · override</span>`
           : (ord.delivery_proof && ord.delivery_proof.signed) ? `<span class="chip" style="background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd" title="DO signed">&#9997;&#65039; Signed · ${esc(ord.delivery_proof.signed.receiverName)}</span>`
           : (ord.delivery_proof && ord.delivery_proof.requested) ? `<span class="chip" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">&#128276; Driver asks sign override</span>` : '',
