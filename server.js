@@ -3572,6 +3572,9 @@ function globalOrdersWithState(keep) {
       });
       out.push({
         ...ord,
+        // Betime's stock is held in Keyfields, not here: the row shows no
+        // stock verdict at all (neither "No stock" nor "Not in item master").
+        stock_external:    isBetimeClient(batch.inventory_client || batch.client_name || '') && !batchStockTracked(batch, _goTracked),
         lines:             enrichedLines,
         items:             enrichedLines,
         // At least one line was exploded from a bundle/kit SKU — surfaced on
@@ -30870,7 +30873,13 @@ function clientStockTracking(clientId) {
   const norm = String(clientId || '').trim().toLowerCase();
   if (!norm) return true;
   try {
-    const p = clientProfiles(readDb()).find(x => String(x.client || '').trim().toLowerCase() === norm);
+    const list = clientProfiles(readDb());
+    // Exact profile first, then a profile listing this account as an ALIAS
+    // (e.g. inventory account 'betime' -> [BETIME] - BETIME, aliases ['betime']).
+    // Without the alias step an account with no profile of its own read as
+    // tracked even though its owning profile has stock_tracking off.
+    const p = list.find(x => String(x.client || '').trim().toLowerCase() === norm)
+      || list.find(x => Array.isArray(x.aliases) && x.aliases.some(a => String(a || '').trim().toLowerCase() === norm));
     return !p || p.stock_tracking !== false;      // absent reads as tracked
   } catch (_) { return true; }
 }
