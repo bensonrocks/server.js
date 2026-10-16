@@ -3,7 +3,14 @@ import { Source_Serif_4, Source_Sans_3, Source_Code_Pro } from "next/font/google
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, HOME_TITLE } from "@/lib/site-config";
+import {
+  SITE_URL,
+  SITE_NAME,
+  SITE_DESCRIPTION,
+  HOME_TITLE,
+  GA_MEASUREMENT_ID,
+  GOOGLE_SITE_VERIFICATION,
+} from "@/lib/site-config";
 import { OrganizationJsonLd } from "@/components/structured-data";
 
 const sourceSerif = Source_Serif_4({
@@ -83,6 +90,18 @@ export default function RootLayout({
       lang="en"
       className={`${sourceSerif.variable} ${sourceSans.variable} ${sourceCode.variable} h-full antialiased`}
     >
+      <head>
+        <meta name="google-site-verification" content={GOOGLE_SITE_VERIFICATION} />
+        <script async src={`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`} />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', '${GA_MEASUREMENT_ID}');`,
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col font-body bg-paper text-ink">
         <OrganizationJsonLd />
         <SiteHeader />
