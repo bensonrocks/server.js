@@ -1783,6 +1783,17 @@ function normalizeProfileAliases(raw, selfName) {
   }
   return out;
 }
+// ITEM MASTER HOME (display/management pointer ONLY). A profile may name the
+// inventory account that holds the item master it manages, e.g. Betime Online
+// -> 'betime'. Used ONLY by the Onboard Client screens (item count, item-master
+// upload target, test-resolve). Scanning, matching, labels, orders, stock,
+// portal, reports and wipes keep using invClientId(client_name) untouched, so
+// setting or clearing the pointer changes no resolution anywhere.
+function itemMasterAccountFor(db, client) {
+  const p = (db.clientProfiles || []).find(x => String(x.client || '').trim() === String(client || '').trim());
+  const acct = p && String(p.itemMasterAccount || '').trim();
+  return acct || invClientId(client);
+}
 function outletLookupOn(db, clientName) {
   const p = profileForClient(db, clientName);
   return !!(p && p.outletLookup === true);
@@ -4757,8 +4768,10 @@ function clientProfiles(db) { return db.clientProfiles || (db.clientProfiles = [
 app.get('/api/master/client-profiles', (req, res) => {
   if (!checkMaster(req, res)) return;
   // Portal credentials are MASKED — only enabled/email/hasPassword go to the UI.
-  res.json(clientProfiles(readDb()).map(p => ({
+  const _db = readDb();
+  res.json(clientProfiles(_db).map(p => ({
     ...p,
+    ...(p.itemMasterAccount ? (() => { let n = p.itemCount; try { n = (inventory.getAll({ clientId: p.itemMasterAccount }) || []).length; } catch (_) {} return { itemCount: n }; })() : {}),
     portal: p.portal ? { enabled: !!p.portal.enabled, email: p.portal.email || '', hasPassword: !!p.portal.passwordHash } : undefined,
   })));
 });
@@ -4807,6 +4820,17 @@ app.post('/api/master/client-profiles', express.json(), (req, res) => {
     else if (n >= 0 && n <= 720) p.slaYellowHours = n;
   }
   if (aliasesNext) p.aliases = aliasesNext;
+  // Item master home pointer: '' clears; otherwise must be an EXISTING stock
+  // account (exact id). Changes nothing but the Onboard Client view/upload target.
+  if (b.itemMasterAccount !== undefined) {
+    const want = String(b.itemMasterAccount || '').trim();
+    if (!want) delete p.itemMasterAccount;
+    else {
+      let ids = []; try { ids = (inventory.listClientIds() || []).map(String); } catch (_) {}
+      if (!ids.includes(want)) return res.status(400).json({ error: `No stock account named '${want}'` });
+      p.itemMasterAccount = want;
+    }
+  }
   // CHANNEL→HUB SOURCES: which other clients/channels fulfill into THIS hub.
   // Stored as clear names on the hub profile (e.g. Mayer2026.channel_hub_sources
   // = ["Lazada20082026Mayer","TIKTOKMayer"]). Self-references are dropped.
@@ -8019,7 +8043,7 @@ app.post('/api/master/client-profiles/:client/item-master', upload.single('file'
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
   const client = req.params.client;
-  const cid = invClientId(client);
+  const cid = itemMasterAccountFor(readDb(), client);   // pointer-aware: Betime Online edits 'betime'
   const buf = req.file.buffer, name = (req.file.originalname || '').toLowerCase();
   let rows = [];
   try {
@@ -8126,7 +8150,7 @@ app.get('/api/master/client-profiles/:client/test-resolve', (req, res) => {
   if (!checkMaster(req, res)) return;
   const code = String(req.query.code || '').trim();
   if (!code) return res.status(400).json({ error: 'code required' });
-  const cid = invClientId(req.params.client);
+  const cid = itemMasterAccountFor(readDb(), req.params.client);
   if (!inventory.available()) return res.status(400).json({ error: 'Inventory store unavailable' });
 
   const bySku     = inventory.get(code, cid);
