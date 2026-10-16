@@ -274,6 +274,17 @@
   .chip { flex:0 0 auto; padding:.4rem .75rem; border-radius:999px; border:1.5px solid var(--border);
           background:var(--surface); font-size:.79rem; font-weight:700; color:var(--muted); cursor:pointer; }
   .chip.on { background:var(--brand); border-color:var(--brand); color:#fff; }
+  .nw-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:.5rem; margin-top:.4rem; }
+  .nw-grid label, .nw-wb label { display:flex; flex-direction:column; gap:.2rem; font-size:.75rem; font-weight:700; color:var(--muted); }
+  .nw-grid input, .nw-wb input[type=text] { padding:.55rem .6rem; border:1.5px solid var(--border); border-radius:10px; font-size:.88rem; }
+  .nw-grid .nw-wide { grid-column:1/-1; }
+  .nw-bad input { border-color:#dc2626 !important; }
+  .nw-res { border:1px solid var(--border); border-radius:12px; padding:.6rem .75rem; margin-bottom:.45rem; }
+  .nw-res.ok { border-left:4px solid var(--ok, #16a34a); }
+  .nw-res.fail { border-left:4px solid #dc2626; background:#fef2f2; }
+  .nw-fail-pill { background:#fee2e2 !important; color:#991b1b !important; }
+  .nw-err { color:#991b1b; font-size:.76rem; margin-top:.2rem; }
+  .nw-wb { display:flex; flex-wrap:wrap; gap:.45rem; align-items:flex-end; margin-top:.45rem; }
 
   /* Sort bar — field plus a direction toggle. Wraps on a phone rather than
      pushing the page sideways. */
@@ -600,25 +611,60 @@
     </section>
 
     <section id="tab-orders" class="hidden">
-      <div class="ctrls"><button class="btn-sm" id="noOpen" style="font-weight:700">&#10133; New Order</button></div>
-      <form id="noForm" class="hidden" style="border:1px solid #ccc;border-radius:8px;padding:.7rem;margin:.5rem 0">
-        <b>New Order</b> <span class="muted" style="font-size:.75rem">— order number is generated for you (CLIENT-YYYYMMDD-NNN)</span>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.4rem;margin:.5rem 0">
-          <input id="noShipTo" placeholder="Ship-to name *" required>
-          <input id="noContact" placeholder="Contact person">
-          <input id="noPhone" placeholder="Phone">
-          <input id="noAddress" placeholder="Delivery address *" required style="grid-column:1/-1">
-          <input id="noPostal" placeholder="Postal code (6 digits)" pattern="\d{6}">
-          <label class="muted" style="font-size:.75rem">Delivery date <input id="noDate" type="date"></label>
-          <input id="noRemarks" placeholder="Remarks" style="grid-column:1/-1">
+      <div class="ctrls"><button class="btn-sm" id="nwOpen" style="font-weight:700">&#10133; New Order</button></div>
+      <div id="nwWizard" class="card hidden" style="margin:.5rem 0">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <b style="font-size:.95rem">&#10133; New Order</b>
+          <span class="muted" id="nwStepLabel" style="font-size:.75rem">Step 1 of 2 — create orders</span>
         </div>
-        <datalist id="noSkuList"></datalist>
-        <table style="width:100%"><thead><tr><th style="text-align:left">SKU</th><th style="text-align:left">Description</th><th>Qty</th><th></th></tr></thead><tbody id="noLines"></tbody></table>
-        <button type="button" class="btn-sm" id="noAddLine">+ Add item</button>
-        <div id="noMsg" class="muted" style="margin:.4rem 0"></div>
-        <button type="submit" class="btn-sm" style="font-weight:700">Submit order</button>
-        <button type="button" class="btn-sm" id="noCancel">Cancel</button>
-      </form>
+        <!-- STEP 1: create -->
+        <div id="nwStep1">
+          <div class="chips" style="margin-top:.5rem">
+            <button type="button" class="chip on" data-nwmode="form">&#9998; Key in</button>
+            <button type="button" class="chip" data-nwmode="file">&#8593; Upload Excel / CSV</button>
+          </div>
+          <form id="nwForm" novalidate>
+            <div class="nw-grid">
+              <label>Order no <input id="nwOrderNo" maxlength="60" placeholder="Leave blank to auto-generate"></label>
+              <label>Channel / platform <input id="nwChannel" list="nwChannels" maxlength="60" placeholder="e.g. Shopee"></label>
+              <label>Recipient name * <input id="nwName" maxlength="120"></label>
+              <label>Phone * <input id="nwPhone" maxlength="40" inputmode="tel"></label>
+              <label class="nw-wide">Address * <input id="nwAddress" maxlength="300"></label>
+              <label>Postal code * <input id="nwPostal" maxlength="6" inputmode="numeric" placeholder="6 digits"></label>
+              <label class="nw-wide">Remarks <input id="nwRemarks" maxlength="500"></label>
+            </div>
+            <datalist id="nwChannels"><option value="Shopee"><option value="Lazada"><option value="TikTok Shop"><option value="Website"><option value="B2B"></datalist>
+            <datalist id="nwSkuList"></datalist>
+            <table class="dtab" style="margin-top:.5rem"><thead><tr><th>SKU *</th><th>Product</th><th class="r">Qty *</th><th></th></tr></thead><tbody id="nwLines"></tbody></table>
+            <button type="button" class="btn-sm" id="nwAddLine" style="margin-top:.4rem">+ Add item</button>
+            <div id="nwFormMsg" class="asn-msg hidden" style="margin-top:.5rem"></div>
+            <div class="row" style="justify-content:flex-start;gap:.4rem;margin-top:.6rem">
+              <button type="submit" class="btn-sm asn-primary" id="nwFormSubmit">Create order</button>
+              <button type="button" class="btn-sm nwCancel">Cancel</button>
+            </div>
+          </form>
+          <div id="nwFile" class="hidden">
+            <div class="muted" style="margin:.5rem 0">One row per item line; rows with the same Order No make one order. Required: Order No, Recipient Name, Phone, Address, Postal Code, SKU, Qty.</div>
+            <div class="row" style="justify-content:flex-start;gap:.4rem;flex-wrap:wrap">
+              <button type="button" class="btn-sm" id="nwTplXlsx">&#8681; Sample template (.xlsx)</button>
+              <button type="button" class="btn-sm" id="nwTplCsv">&#8681; Sample template (.csv)</button>
+              <label class="btn-sm asn-primary" style="cursor:pointer">&#8593; Choose file<input type="file" id="nwFileInput" accept=".xlsx,.csv" class="hidden"></label>
+            </div>
+            <div id="nwFileMsg" class="asn-msg hidden" style="margin-top:.5rem"></div>
+            <div id="nwPreview"></div>
+          </div>
+        </div>
+        <!-- RESULTS + STEP 2 -->
+        <div id="nwStep2" class="hidden">
+          <div id="nwResultSummary" style="margin:.5rem 0"></div>
+          <div id="nwResults"></div>
+          <div class="row" style="justify-content:flex-start;gap:.4rem;margin-top:.6rem;flex-wrap:wrap">
+            <button type="button" class="btn-sm hidden" id="nwFailedCsv">&#8681; Download failed rows</button>
+            <button type="button" class="btn-sm" id="nwAnother">&#10133; Create more orders</button>
+            <button type="button" class="btn-sm nwCancel">Done — waybills later</button>
+          </div>
+        </div>
+      </div>
       <div class="ctrls">
         <input class="search" id="orSearch" placeholder="Search order no or waybill…">
         <button class="btn-sm" id="orExport" title="One dated workbook: Orders and Cancelled orders — each with SKU, description and quantity per line — plus the full stock statement">&#8681; Report</button>
