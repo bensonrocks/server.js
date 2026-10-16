@@ -12274,15 +12274,19 @@
   // ── Cancel order ───────────────────────────────────────────────────────────
   document.getElementById('cancelOrderBtn').addEventListener('click', () => {
     if (!activeOrder) return;
-    if (confirm(`Cancel order ${activeOrder.order_number}?\nIt will be marked as Unprocessed.`)) doCancel();
+    const reason = prompt(`Cancel order ${activeOrder.order_number}?\nIt will be marked as Cancelled. Give the reason:`);
+    if (reason == null) return;
+    if (reason.trim().length < 4) { alert('Give a reason for cancelling this order.'); return; }
+    doCancel(reason.trim(), false);
   });
 
-  async function doCancel() {
+  async function doCancel(reason, override) {
     try {
       const resp = await fetch('/api/scan/cancel', {
         method: 'POST', headers: hdrs(),
         body: JSON.stringify({
           orderNumber: activeOrder.order_number,
+          reason, override: !!override,
           startTime:   orderTimings[activeOrder.order_number] || null,
           endTime:     new Date().toISOString(),
           operator:    currentUser ? (currentUser.name || currentUser.id) : null,
@@ -12290,6 +12294,10 @@
         }),
       });
       const data = await resp.json();
+      if (resp.status === 409 && data.needsOverride && currentUser?.role === 'admin' && !override) {
+        if (confirm(`${data.error}\n\nAdministrator override — cancel anyway?`)) return doCancel(reason, true);
+        return;
+      }
       if (!resp.ok) { alert(data.error); return; }
       // Keep timing so re-open shows how long they already spent
       mergeOrderState(activeOrder.order_number, 'unprocessed', activeOrder.scanned || {});
