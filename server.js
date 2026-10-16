@@ -3509,6 +3509,10 @@ function globalOrdersWithState(keep) {
         // scan floor's work-only Orders fetch) — see GET /api/orders.
         reference_only: _isRef,
         client_name:  batch.client_name || '',
+        // Raw stored order + its label tracking numbers, so a caller can
+        // MATCH on identifiers (scan lookup) before paying for enrichment.
+        raw:          ord,
+        labelTracking: () => labelPagesOf(orderLabels[ord.order_number]).map(p => p.tracking),
       })) continue;
       const enrichedLines = (ord.lines || []).map(l => {
         const stored = l.description || '';
@@ -12617,7 +12621,28 @@ app.post('/api/waybill-lookup', (req, res) => {
   // "iWMS GINo" column maps it into issue_no instead (detectColumnMap) — so
   // issue_no must be checked here too, or that upload path's GI barcode
   // never resolves to an order.
-  const matches = globalOrdersWithState().filter(o => {
+  // MATCH FIRST, ENRICH AFTER. The cheap pre-filter sees the stored order
+  // (identical identifier fields — enrichment never rewrites them) and its
+  // label tracking numbers (what `waybills` is built from), so only the few
+  // matching orders get the stock/verdict enrichment. Same predicate below
+  // re-runs on the enriched rows, so the answer is unchanged.
+  const _wbMatch = o => {
+    const on = (o.order_number || '').trim().toLowerCase();
+    const pt = (o.pick_ticket  || '').trim().toLowerCase();
+    const gi = (o.issue_no     || '').trim().toLowerCase();
+    return on === q || strip0(on) === strip0(q) ||
+      (pt && (pt === q || strip0(pt) === strip0(q))) ||
+      (gi && (gi === q || strip0(gi) === strip0(q))) ||
+      (o.waybill_number && o.waybill_number.trim().toLowerCase() === q) ||
+      (Array.isArray(o.waybills) && o.waybills.some(w => String(w).trim().toLowerCase() === q)) ||
+      (o.po_number      && String(o.po_number).trim().toLowerCase() === q);
+  };
+  const _pre = k => {
+    const r = k.raw || {};
+    if (_wbMatch({ ...r, waybills: null })) return true;
+    try { return (k.labelTracking() || []).some(w => String(w || '').trim().toLowerCase() === q); } catch (_) { return true; }
+  };
+  const matches = globalOrdersWithState(_pre).filter(o => {
     const on = (o.order_number || '').trim().toLowerCase();
     const pt = (o.pick_ticket  || '').trim().toLowerCase();
     const gi = (o.issue_no     || '').trim().toLowerCase();
