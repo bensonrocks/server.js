@@ -17832,9 +17832,9 @@ app.post('/api/transport/plan/export', (req, res) => {
 
   // Sheet 2 — every stop with full details
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
-    ['Route', 'Stop #', 'PO / Order Ref', 'Client / Store', 'Address', 'Postal', 'Cartons', 'Leg (km)', 'Cumulative (km)', 'Est (mins)', 'Driver', 'Driver Phone', 'Plate'],
+    ['Route', 'Stop #', 'PO / Order Ref', 'PO Expiry', 'Client / Store', 'Address', 'Postal', 'Cartons', 'Leg (km)', 'Cumulative (km)', 'Est (mins)', 'Driver', 'Driver Phone', 'Plate'],
     ...rows.map(r => [
-      `Route ${r.route}`, r.stopSeq, r.ref || '', r.client || '', r.address || '', r.zip || '',
+      `Route ${r.route}`, r.stopSeq, r.ref || '', r.poExpiry || 'TBA', r.client || '', r.address || '', r.zip || '',
       Number(r.packages) || 1, Number(r.legKm) || 0, Number(r.cumKm) || 0, Number(r.estMin) || 0,
       r.driverName || '', r.driverPhone || '', r.driverPlate || '',
     ]),
@@ -17864,6 +17864,8 @@ function deliveryHistoryRows(db, from, to) {
       driver: r.assignedDriverName || '',
       deliveredAt: r.deliveredAt || '',
       podRemarks: r.podRemarks || '',
+      poExpiry: r.poExpiry || null,
+      poExpiryMatch: r.poExpiryMatch || '',
     }));
 }
 
@@ -17872,6 +17874,42 @@ app.get('/api/transport/history', (req, res) => {
   const from = (req.query.from || '').slice(0, 10) || today;
   const to   = (req.query.to   || '').slice(0, 10) || today;
   res.json(deliveryHistoryRows(readDb(), from, to));
+});
+
+// Delivery Status Report / Daily Delivery Outcome — one row per item line.
+// Any signed-in staff role (incl. warehouse) may download. Built in slices
+// with event-loop yields, capped at 50k item rows, one build at a time.
+const deliveryReport = require('./lib/delivery-report.js');
+let _deliveryReportBusy = false;
+app.get('/api/transport/report', async (req, res) => {
+  if (_deliveryReportBusy) return res.status(429).json({ error: 'A delivery report is already being generated. Try again in a moment.' });
+  const q = req.query || {};
+  const iso = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : '';
+  const opts = { mode: q.mode === 'daily' ? 'daily' : 'range', day: iso(q.day), from: iso(q.from), to: iso(q.to),
+    dateField: q.dateField === 'created' ? 'created' : 'delivery', client: String(q.client || '').slice(0, 60), status: String(q.status || '').slice(0, 20) };
+  if (opts.mode === 'range' && opts.from && opts.to && (Date.parse(opts.to) - Date.parse(opts.from)) > 400 * 86400000)
+    return res.status(400).json({ error: 'Date range too long (max ~13 months).' });
+  _deliveryReportBusy = true;
+  try {
+    const r = await deliveryReport.buildReport(readDb(), opts);
+    const stem = r.mode === 'daily' ? `Daily_Delivery_Outcome_${r.day}` : `Delivery_Status_Report_${r.from}_to_${r.to}`;
+    res.setHeader('X-Report-Rows', String(r.itemRows.length));
+    res.setHeader('X-Report-Jobs', String(r.jobRows.length));
+    if (r.truncated) res.setHeader('X-Report-Truncated', String(r.maxRows));
+    logAudit('delivery_report', { mode: r.mode, from: r.from, to: r.to, day: r.day, rows: r.itemRows.length, truncated: r.truncated, by: req.userId || '' });
+    if (q.format === 'csv') {
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${stem}.csv"`);
+      await deliveryReport.writeCsv(res, r);
+    } else {
+      const buf = await deliveryReport.toXlsxAsync(r);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${stem}.xlsx"`);
+      res.send(buf);
+    }
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: e.message }); else res.end();
+  } finally { _deliveryReportBusy = false; }
 });
 
 app.get('/api/transport/history/export', (req, res) => {
@@ -17884,10 +17922,10 @@ app.get('/api/transport/history/export', (req, res) => {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
     ['Delivery History', `${from} to ${to}`, `${rows.length} delivery(ies)`],
     [],
-    ['Delivered At', 'TMS ID', 'PO / Order Ref', 'Client / Store', 'Address', 'Postal', 'Cartons', 'Driver', 'Status', 'POD Remarks'],
+    ['Delivered At', 'TMS ID', 'PO / Order Ref', 'PO Expiry', 'Client / Store', 'Address', 'Postal', 'Cartons', 'Driver', 'Status', 'POD Remarks'],
     ...rows.map(r => [
       r.deliveredAt ? new Date(r.deliveredAt).toLocaleString('en-SG', { timeZone: 'Asia/Singapore' }) : '',
-      r.id, r.referenceId, r.clientName, r.address, r.zip, r.packages, r.driver,
+      r.id, r.referenceId, r.poExpiry || 'TBA', r.clientName, r.address, r.zip, r.packages, r.driver,
       r.podRemarks ? 'Delivered w/ Remarks' : 'Delivered',
       r.podRemarks,
     ]),
@@ -30441,6 +30479,7 @@ app.get('/api/driver/jobs', requireDriverAuthMiddleware, (req, res) => {
         id: t.id,
         client: t.clientName || '',
         referenceId: t.referenceId || t.clientId || '',
+        poExpiry: t.poExpiry || null,
         address: t.shipping?.addressLine1 || '',
         zip: t.shipping?.zip || '',
         phone: t.shipping?.phone || '',

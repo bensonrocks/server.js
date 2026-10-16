@@ -189,6 +189,22 @@
     }
   }
 
+  // PO expiry chip — same rules as the office app: grey TBA, red Expired
+  // (past, not delivered), amber ≤2 days, green further out, neutral once delivered.
+  function poExp(j) {
+    const v = j && j.poExpiry;
+    if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return { text: 'PO exp TBA', cls: 'tba' };
+    const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+    const days = Math.round((Date.parse(v) - Date.parse(today)) / 86400000);
+    const label = new Date(v + 'T00:00:00Z').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+    const done = j.status === 'delivered' || j.status === 'cancelled';
+    if (!done && days < 0) return { text: `PO exp ${label} · EXPIRED`, cls: 'expired' };
+    if (!done && days <= 2) return { text: `PO exp ${label} · ${days === 0 ? 'today' : days + 'd left'}`, cls: 'soon' };
+    return { text: `PO exp ${label}`, cls: done ? 'done' : 'ok' };
+  }
+  const PO_EXP_STYLE = { tba: 'background:#f1f5f9;color:#64748b', expired: 'background:#fee2e2;color:#b91c1c', soon: 'background:#fef3c7;color:#b45309', ok: 'background:#dcfce7;color:#15803d', done: 'background:#f1f5f9;color:#334155' };
+  const poExpChip = j => { const p = poExp(j); return `<span class="po-exp po-exp-${p.cls}" style="${PO_EXP_STYLE[p.cls]};padding:.05rem .45rem;border-radius:99px;font-weight:600;white-space:nowrap">${esc(p.text)}</span>`; };
+
   function renderList() {
     const active = jobs.filter(j => j.status !== 'delivered');
     const done = jobs.filter(j => j.status === 'delivered');
@@ -216,6 +232,7 @@
         <div class="job-meta">
           <span>📦 ${j.packages} carton${j.packages === 1 ? '' : 's'}</span>
           ${j.referenceId ? `<span>PO ${esc(j.referenceId)}</span>` : ''}
+          ${poExpChip(j)}
         </div>
         <div class="job-actions">
           <a class="job-act job-act-nav" href="${navUrl(j)}" target="_blank" rel="noopener" data-noopen>🧭 Navigate</a>
@@ -269,6 +286,7 @@
     $('sheetAddress').textContent = j.address || '—';
     $('sheetZip').textContent = j.zip || '—';
     $('sheetRef').textContent = j.referenceId || '—';
+    if ($('sheetPoExpiry')) $('sheetPoExpiry').innerHTML = poExpChip(j);
     $('sheetPackages').textContent = j.packages;
 
     $('sheetNavLink').href = navUrl(j);
