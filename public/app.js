@@ -5794,7 +5794,7 @@
   //   Delivered w/ Remarks  — finished but issue to follow up (red)
   // PO expiry chip — shown on every Transport job for every client.
   // Grey "TBA" when unknown, red "Expired" when past today and not delivered,
-  // amber when 2 days or less remain. Dates are compared in Singapore time.
+  // amber when 2 days or less remain, green when further out; delivered = neutral. Dates are compared in Singapore time.
   function poExpiryInfo(job) {
     const v = job && job.poExpiry;
     if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return { text: 'PO exp TBA', color: '#64748b', bg: '#f1f5f9', level: 'tba' };
@@ -5804,7 +5804,8 @@
     const done = job.status === 'delivered' || job.status === 'cancelled';
     if (!done && days < 0) return { text: `PO exp ${label}`, badge: 'Expired', color: '#b91c1c', bg: '#fee2e2', level: 'expired' };
     if (!done && days <= 2) return { text: `PO exp ${label}`, badge: days === 0 ? 'today' : `${days}d left`, color: '#b45309', bg: '#fef3c7', level: 'soon' };
-    return { text: `PO exp ${label}`, color: '#334155', bg: '#f1f5f9', level: 'ok' };
+    if (!done) return { text: `PO exp ${label}`, color: '#15803d', bg: '#dcfce7', level: 'ok' };
+    return { text: `PO exp ${label}`, color: '#334155', bg: '#f1f5f9', level: 'done' };
   }
   function poExpiryChip(job, opts = {}) {
     const i = poExpiryInfo(job);

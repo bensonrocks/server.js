@@ -77,3 +77,22 @@ describe('server: poExpiry on transport jobs', () => {
     j = await list(); assert.equal(j.poExpiry, null); assert.equal(j.poExpiryMatch, '');
   });
 });
+
+describe('UI chip colour (public/app.js poExpiryInfo)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const start = src.indexOf('  function poExpiryInfo(job)');
+  const end = src.indexOf('  function poExpiryChip(job');
+  const NOW = Date.parse('2026-10-16T04:00:00Z');                  // 12:00 SGT
+  const info = new Function('Date', src.slice(start, end) + '; return poExpiryInfo;')(
+    class extends Date { constructor(...a) { super(...(a.length ? a : [NOW])); } static now() { return NOW; } });
+  test('red / amber / green / delivered neutral / TBA grey', () => {
+    assert.equal(info({ poExpiry: '2026-10-15', status: 'preplanned' }).level, 'expired');
+    assert.equal(info({ poExpiry: '2026-10-16', status: 'preplanned' }).level, 'soon');
+    assert.equal(info({ poExpiry: '2026-10-18', status: 'preplanned' }).level, 'soon');
+    assert.equal(info({ poExpiry: '2026-10-19', status: 'preplanned' }).level, 'ok');
+    assert.equal(info({ poExpiry: '2026-10-19', status: 'preplanned' }).color, '#15803d');
+    assert.equal(info({ poExpiry: '2026-10-10', status: 'delivered' }).level, 'done');
+    assert.equal(info({ poExpiry: '2026-10-17', status: 'delivered' }).level, 'done');
+    assert.equal(info({ status: 'pending' }).text, 'PO exp TBA');
+  });
+});
