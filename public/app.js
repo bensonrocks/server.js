@@ -5620,6 +5620,17 @@
     document.getElementById('editPhone').value = record.shipping?.phone || '';
     document.getElementById('editEmail').value = record.shipping?.email || '';
     document.getElementById('editNotes').value = record.notes || '';
+    const pe = document.getElementById('editPoExpiry');
+    if (pe) {
+      const isAdmin = currentUser?.role === 'admin';
+      pe.value = record.poExpiry || '';
+      pe.disabled = !isAdmin;
+      pe.dataset.orig = record.poExpiry || '';
+      document.getElementById('editPoExpiryChip').innerHTML = poExpiryChip(record, { note: true });
+      document.getElementById('editPoExpiryHint').textContent = isAdmin
+        ? 'Admin: change or clear the PO expiry date. Saving marks it as set manually.'
+        : 'Only an Administrator can change the PO expiry.';
+    }
 
     // Populate driver dropdown
     const driverSelect = document.getElementById('editDriver');
@@ -5632,6 +5643,17 @@
     });
 
     document.getElementById('editTransportModal').classList.remove('hidden');
+  }
+
+  // Only an admin's real change is sent; untouched or non-admin → nothing.
+  function poExpiryEdit(record) {
+    const pe = document.getElementById('editPoExpiry');
+    if (!pe || pe.disabled || currentUser?.role !== 'admin') return {};
+    const v = pe.value || '';
+    if (v === (pe.dataset.orig || '')) return {};
+    record.poExpiry = v || null;
+    record.poExpiryMatch = v ? `manual (${currentUser?.id || 'admin'})` : '';
+    return v ? { poExpiry: v, poExpiryMatch: record.poExpiryMatch } : { poExpiry: null };
   }
 
   async function saveTransportChanges() {
@@ -5662,6 +5684,7 @@
         body: JSON.stringify({
           clientName: record.clientName, notes: record.notes,
           packages: record.packages, shipping: record.shipping,
+          ...poExpiryEdit(record),
         }),
       });
       if (!resp.ok) throw new Error((await resp.json()).error || 'Save failed');
@@ -5806,6 +5829,12 @@
     if (!done && days <= 2) return { text: `PO exp ${label}`, badge: days === 0 ? 'today' : `${days}d left`, color: '#b45309', bg: '#fef3c7', level: 'soon' };
     if (!done) return { text: `PO exp ${label}`, color: '#15803d', bg: '#dcfce7', level: 'ok' };
     return { text: `PO exp ${label}`, color: '#334155', bg: '#f1f5f9', level: 'done' };
+  }
+  // Plain text for print (black & white safe) — "17 Oct", "TBA", "14 Oct EXPIRED".
+  function poExpiryText(job) {
+    const i = poExpiryInfo(job);
+    const t = i.text.replace(/^PO exp /, '');
+    return i.level === 'expired' ? `${t} EXPIRED` : t;
   }
   function poExpiryChip(job, opts = {}) {
     const i = poExpiryInfo(job);
@@ -6156,7 +6185,7 @@
             <span class="route-stop-client" data-jobid="${esc(stop.delivery.id)}" style="cursor:pointer" title="Click for delivery details / fix postal">
               <strong style="color:#1d4ed8">${esc(stop.delivery.clientName || 'N/A')}</strong>
               ${(() => { const st = tmsStatusLabel(stop.delivery); return `<span style="display:inline-block;margin-left:.35rem;padding:.05rem .45rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-size:10px;font-weight:700">${st.label}</span>`; })()}<br/>
-              <span style="font-size:10px;font-family:monospace;color:#94a3b8">${esc(stop.delivery.id)}</span>${stop.delivery.referenceId ? `<span style="font-size:10px;font-family:monospace;color:#475569"> · PO: ${esc(stop.delivery.referenceId)}</span>` : ''}<br/>
+              <span style="font-size:10px;font-family:monospace;color:#94a3b8">${esc(stop.delivery.id)}</span>${stop.delivery.referenceId ? `<span style="font-size:10px;font-family:monospace;color:#475569"> · PO: ${esc(stop.delivery.referenceId)}</span>` : ''} ${poExpiryChip(stop.delivery, { note: true })}<br/>
               <span style="font-size:11px;color:#999">${esc((stop.delivery.shipping?.addressLine1 || '').slice(0, 40))}</span>
             </span>
           </td>
@@ -6417,6 +6446,7 @@
                 <tr style="border-top:1px solid #f0f0f0">
                   <td style="padding:0.4rem 0.8rem;width:90px">Route ${j.route} · #${j.stopSeq}</td>
                   <td style="padding:0.4rem 0.8rem">${esc(j.clientName || j.id)}</td>
+                  <td style="padding:0.4rem 0.8rem;width:150px">${poExpiryChip(transportRequests.find(t => t.id === j.id) || {})}</td>
                   <td style="padding:0.4rem 0.8rem;width:80px;color:#64748b">📍 ${esc(j.zip || '—')}</td>
                 </tr>`).join('')}
             </table>
@@ -6469,6 +6499,7 @@
         rows.push({
           route: route.num, stopSeq: idx + 1,
           ref: stop.delivery.referenceId || '',
+          poExpiry: poExpiryText(stop.delivery),
           client: stop.delivery.clientName || '',
           address: stop.delivery.shipping?.addressLine1 || '',
           zip: stop.delivery.shipping?.zip || '',
@@ -6546,7 +6577,7 @@
             <thead><tr>
               <th style="width:26px">#</th><th>Client</th><th>Address</th>
               <th style="width:52px">Postal</th><th style="width:80px">Phone</th>
-              <th style="width:34px">Ctns</th><th style="width:78px">Status</th><th style="width:110px">Received by / Time</th>
+              <th style="width:34px">Ctns</th><th style="width:70px">PO Expiry</th><th style="width:78px">Status</th><th style="width:110px">Received by / Time</th>
             </tr></thead>
             <tbody>
               ${list.map((j, i) => `<tr>
@@ -6556,6 +6587,7 @@
                 <td>${esc(j.shipping?.zip || '')}</td>
                 <td>${esc(j.shipping?.phone || '')}</td>
                 <td style="text-align:center">${j.packages || 1}</td>
+                <td style="white-space:nowrap${poExpiryInfo(j).level === 'expired' ? ';font-weight:800' : ''}">${esc(poExpiryText(j))}</td>
                 <td>${esc(tmsStatusLabel(j).label)}</td>
                 <td></td>
               </tr>`).join('')}
@@ -6587,6 +6619,63 @@
   }
 
   document.getElementById('transportRunSheetsBtn')?.addEventListener('click', printDriverRunSheets);
+
+  // ── Delivery Status Report / Daily Delivery Outcome download ─────────────
+  function openDeliveryReportDialog() {
+    document.getElementById('deliveryReportModal')?.remove();
+    const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+    const weekAgo = new Date(Date.now() + 8 * 3600000 - 6 * 86400000).toISOString().slice(0, 10);
+    const clients = [...new Set(transportRequests.map(r => r.clientName).filter(Boolean))].sort();
+    const inp = 'padding:.45rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px;width:100%';
+    const lab = 'display:block;font-size:11.5px;font-weight:600;margin:.55rem 0 .2rem';
+    const m = document.createElement('div');
+    m.className = 'modal-overlay'; m.id = 'deliveryReportModal';
+    m.innerHTML = `
+      <div class="modal" style="width:92%;max-width:460px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+          <h2 style="margin:0;font-size:1.05rem">📊 Delivery Report</h2><button class="btn-close" id="drClose">✕</button>
+        </div>
+        <div style="display:flex;gap:.4rem;margin:.3rem 0 .2rem">
+          <label style="flex:1;font-size:12px;padding:.45rem;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer"><input type="radio" name="drMode" value="range" checked> Delivery status (date range)</label>
+          <label style="flex:1;font-size:12px;padding:.45rem;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer"><input type="radio" name="drMode" value="daily"> Daily outcome (one day)</label>
+        </div>
+        <div id="drRange">
+          <label style="${lab}">Date by</label>
+          <select id="drDateField" style="${inp}"><option value="delivery">Delivery date (delivered, else planned)</option><option value="created">Created date</option></select>
+          <div style="display:flex;gap:.5rem"><div style="flex:1"><label style="${lab}">From</label><input type="date" id="drFrom" value="${weekAgo}" style="${inp}"></div>
+          <div style="flex:1"><label style="${lab}">To</label><input type="date" id="drTo" value="${today}" style="${inp}"></div></div>
+        </div>
+        <div id="drDaily" style="display:none"><label style="${lab}">Day (SGT)</label><input type="date" id="drDay" value="${today}" style="${inp}">
+          <div style="font-size:10.5px;color:#64748b;margin-top:.25rem">Every job planned for this day, plus jobs delivered this day that were planned for another day (flagged). Count summary: total, delivered, not delivered, pending.</div></div>
+        <label style="${lab}">Client</label>
+        <select id="drClient" style="${inp}"><option value="">All clients</option><option value="betime">Betime (all)</option>${clients.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
+        <label style="${lab}">Status</label>
+        <select id="drStatus" style="${inp}"><option value="">All statuses</option>${['pending', 'preplanned', 'confirmed', 'in-transit', 'delivered', 'cancelled'].map(s => `<option value="${s}">${s}</option>`).join('')}</select>
+        <div style="font-size:10.5px;color:#64748b;margin-top:.5rem">One row per item line (job details repeated) + a per-job Summary sheet. Capped at 50,000 rows.</div>
+        <div style="display:flex;gap:.5rem;margin-top:.8rem">
+          <button class="btn-primary" id="drXlsx" style="flex:1">⬇ Excel (.xlsx)</button>
+          <button class="btn-secondary" id="drCsv" style="flex:1">⬇ CSV</button>
+        </div>
+      </div>`;
+    document.body.appendChild(m);
+    const $ = id => m.querySelector('#' + id);
+    m.querySelectorAll('input[name=drMode]').forEach(r => r.addEventListener('change', () => {
+      const daily = m.querySelector('input[name=drMode]:checked').value === 'daily';
+      $('drRange').style.display = daily ? 'none' : ''; $('drDaily').style.display = daily ? '' : 'none';
+    }));
+    $('drClose').addEventListener('click', () => m.remove());
+    const go = fmt => {
+      const mode = m.querySelector('input[name=drMode]:checked').value;
+      const qs = new URLSearchParams({ mode, format: fmt, client: $('drClient').value, status: $('drStatus').value });
+      let name;
+      if (mode === 'daily') { qs.set('day', $('drDay').value); name = `Daily_Delivery_Outcome_${$('drDay').value}`; }
+      else { qs.set('from', $('drFrom').value); qs.set('to', $('drTo').value); qs.set('dateField', $('drDateField').value); name = `Delivery_Status_Report_${$('drFrom').value}_to_${$('drTo').value}`; }
+      authDownload('/api/transport/report?' + qs.toString(), `${name}.${fmt}`);
+    };
+    $('drXlsx').addEventListener('click', () => go('xlsx'));
+    $('drCsv').addEventListener('click', () => go('csv'));
+  }
+  document.getElementById('transportReportBtn')?.addEventListener('click', openDeliveryReportDialog);
 
   // ── Mark Delivered — office-side close-out (no driver app needed) ─────────
   document.getElementById('transportMarkDeliveredBtn')?.addEventListener('click', async () => {
@@ -7069,7 +7158,7 @@
         <tr style="border-top:1px solid #f1f5f9">
           <td style="padding:.45rem .5rem;white-space:nowrap">${r.deliveredAt ? esc(new Date(r.deliveredAt).toLocaleString('en-SG', { timeZone: 'Asia/Singapore', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })) : '—'}</td>
           <td style="padding:.45rem .5rem"><code>${esc(r.id)}</code></td>
-          <td style="padding:.45rem .5rem;font-family:monospace;font-size:11px">${esc(r.referenceId || '—')}</td>
+          <td style="padding:.45rem .5rem;font-family:monospace;font-size:11px">${esc(r.referenceId || '—')}<br>${poExpiryChip({ ...r, status: 'delivered' })}</td>
           <td style="padding:.45rem .5rem"><strong>${esc(r.clientName)}</strong></td>
           <td style="padding:.45rem .5rem">${esc(r.zip || '—')}</td>
           <td style="padding:.45rem .5rem;text-align:center">${r.packages}</td>

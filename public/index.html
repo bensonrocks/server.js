@@ -2768,6 +2768,7 @@
         <button class="btn-secondary btn-sm" id="transportToggleDriversBtn">👤 Show Drivers</button>
         <button class="btn-secondary btn-sm" id="transportFixScheduleBtn">📅 Fix Schedule</button>
         <button class="btn-secondary btn-sm" id="transportRunSheetsBtn">🖨 Run Sheets</button>
+        <button class="btn-secondary btn-sm" id="transportReportBtn">📊 Delivery Report</button>
         <button class="btn-secondary btn-sm" id="transportBatchStatusBtn">🔄 Batch Status</button>
         <button class="btn-secondary btn-sm" id="transportMarkDeliveredBtn">✓ Mark Delivered</button>
         <button class="btn-primary btn-sm" id="transportPlanRoutesBtn">🤖 AI Plan Routes</button>
@@ -2933,6 +2934,11 @@
             <div>
               <label style="display:block;font-size:12px;font-weight:600;margin-bottom:0.5rem">Number of Packages</label>
               <input type="number" id="editPackages" value="1" min="1" max="999" style="width:100%;padding:0.6rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:0.5rem">PO Expiry <span id="editPoExpiryChip"></span></label>
+              <input type="date" id="editPoExpiry" style="width:100%;padding:0.6rem;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+              <div id="editPoExpiryHint" style="font-size:10.5px;color:#64748b;margin-top:.25rem"></div>
             </div>
             <div>
               <label style="display:block;font-size:12px;font-weight:600;margin-bottom:0.5rem">Address Line 1</label>
