@@ -19972,19 +19972,55 @@ app.post('/api/orders/bulk-refile', express.json(), (req, res) => {
   });
 });
 
+// PACKING-SCREEN CANCEL (per the user, after 7 StellarK TikTok orders were
+// cancelled by mistake on 16 Oct). A reason is required; when and who are
+// recorded; an order that already carries a waybill or label, or that the
+// marketplace still expects a parcel for, is refused unless an Administrator
+// overrides it. An already-cancelled order is left exactly as it is.
+function cancelParcelExpectations(db, batch, ord, st) {
+  const why = [];
+  if (String(ord.waybill_number || '').trim()) why.push(`it has waybill ${String(ord.waybill_number).trim()}`);
+  if ((db.orderLabels || {})[ord.order_number]) why.push('a shipping label is attached');
+  const channelOrder = !!(ord.zort_id || ord.onecart_id || ord.lazada_order_id || ord.shopee_order_sn || ord.shopify_id);
+  if (channelOrder && !st.platform_cancelled && (st.pickup || st.zort_pushed_at || st.onecart_ship_requested_at || /tiktok|lazada|shopee/i.test(String(ord.platform || ''))))
+    why.push(`the marketplace (${ord.platform || 'channel'}) still expects a parcel`);
+  return why;
+}
 app.post('/api/scan/cancel', (req, res) => {
   const { orderNumber, startTime, endTime, operator, mismatches } = req.body;
   if (!orderNumber) return res.status(400).json({ error: 'orderNumber required' });
+  const reason = String(req.body.reason || '').trim();
+  if (reason.length < 4) return res.status(400).json({ error: 'Give a reason for cancelling this order.', needsReason: true });
   const db    = readDb();
   const batch = findBatchForOrder(db, orderNumber);
   if (!batch) return res.status(404).json({ error: 'Order not found' });
   if (!batch.orderStates) batch.orderStates = {};
+  const ord = (batch.orders || []).find(o => o.order_number === orderNumber) || { order_number: orderNumber };
   const prevState = batch.orderStates[orderNumber] || { scanned: {} };
+  if (prevState.status === 'unprocessed') return res.status(409).json({ error: 'This order is already cancelled.' });
+  const who = req.userId || _tokenUserId(req) || '';
+  const user = who ? readUsers().find(u => u.id === who) : null;
+  const isAdmin = !!user && (user.role || 'admin') === 'admin';
+  const blockers = cancelParcelExpectations(db, batch, ord, prevState);
+  const override = req.body.override === true;
+  if (blockers.length && !(override && isAdmin)) {
+    return res.status(409).json({
+      needsOverride: true, blockers,
+      error: `Cannot cancel ${orderNumber}: ${blockers.join('; ')}. ${isAdmin ? 'Confirm the Administrator override to cancel anyway.' : 'Only an Administrator can override.'}`,
+    });
+  }
+  const now = new Date().toISOString();
   batch.orderStates[orderNumber] = {
+    ...prevState,
     status:     'unprocessed',
     scanned:    prevState.scanned || {},
     mismatches: Array.isArray(mismatches) ? mismatches : [],
-    updated_at: new Date().toISOString(),
+    unprocessed_at:     now,
+    unprocessed_reason: `Cancelled at packing: ${reason}`,
+    cancelled_by:       who || operator || '',
+    cancelled_via:      'packing',
+    ...(blockers.length ? { cancel_override: { by: who, at: now, blockers } } : {}),
+    updated_at: now,
     ...(startTime && { startTime }),
     ...(endTime   && { endTime }),
     ...(operator  && { operator }),
@@ -19992,7 +20028,8 @@ app.post('/api/scan/cancel', (req, res) => {
   writeDb(db);
   logAudit('order_cancelled', {
     order: orderNumber, batchId: batch.id, client: batch.client_name || '',
-    operator: operator || '', mismatches: Array.isArray(mismatches) ? mismatches : [],
+    operator: operator || '', by: who, reason, override: blockers.length ? blockers : undefined,
+    mismatches: Array.isArray(mismatches) ? mismatches : [],
   });
   res.json({ ok: true });
 });
@@ -22889,6 +22926,9 @@ function lazadaFindOrder(db, orderId, tracking) {
 function lazadaVoidOrder(db, batch, ord) {
   const orderNumber = ord.order_number;
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  // Already cancelled → settled. A repeat push must not re-stamp unprocessed_at
+  // or release the units a second time (same rule as handleZortVoid).
+  if (state.status === 'unprocessed') return 'already_cancelled';
   const scannedTotal = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
   if (state.status === 'done' || state.status === 'processing' || scannedTotal > 0) {
     logAudit('lazada_order_void_conflict', { order: orderNumber, client: batch.client_name || '', status: state.status, scanned: scannedTotal });
@@ -23493,6 +23533,9 @@ function shopeeFindOrder(db, ordersn, tracking) {
 function shopeeVoidOrder(db, batch, ord) {
   const orderNumber = ord.order_number;
   const state = batch.orderStates[orderNumber] || { status: 'pending', scanned: {} };
+  // Already cancelled → settled. A repeat push must not re-stamp unprocessed_at
+  // or release the units a second time (same rule as handleZortVoid).
+  if (state.status === 'unprocessed') return 'already_cancelled';
   const scannedTotal = Object.values(state.scanned || {}).reduce((s, v) => s + v, 0);
   if (state.status === 'done' || state.status === 'processing' || scannedTotal > 0) {
     logAudit('shopee_order_void_conflict', { order: orderNumber, client: batch.client_name || '', status: state.status, scanned: scannedTotal });
