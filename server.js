@@ -17603,6 +17603,8 @@ app.get('/api/transport', (req, res) => {
     referenceId: req.referenceId || req.clientId || '',
     clientName: req.clientName,
     status: req.status || 'pending',
+    poExpiry: req.poExpiry || null,
+    poExpiryMatch: req.poExpiryMatch || '',
     createdAt: req.createdAt,
     items: req.items || [],
     shipping: req.shipping || {},
@@ -18542,6 +18544,17 @@ app.post('/api/transport/:id/update', (req, res) => {
   if (updates.packages !== undefined) request.packages = Number(updates.packages) || 1;
   if (updates.routeNum !== undefined) request.routeNum = updates.routeNum === null ? null : Number(updates.routeNum);
   if (updates.stopSeq  !== undefined) request.stopSeq  = updates.stopSeq  === null ? null : Number(updates.stopSeq);
+  // PO expiry (YYYY-MM-DD). null/'' clears it. Anything else that isn't a
+  // real date is rejected rather than stored half-parsed.
+  if (updates.poExpiry !== undefined) {
+    if (updates.poExpiry === null || updates.poExpiry === '') { request.poExpiry = null; request.poExpiryMatch = ''; }
+    else {
+      const d = tmsImporter.parsePoExpiry(updates.poExpiry);
+      if (!d) return res.status(400).json({ error: 'poExpiry must be a date (YYYY-MM-DD)' });
+      request.poExpiry = d;
+    }
+  }
+  if (updates.poExpiryMatch !== undefined && request.poExpiry) request.poExpiryMatch = String(updates.poExpiryMatch || '').slice(0, 120);
   // Assigning a driver outside the planner (bulk assign / edit modal) —
   // moves the job to preplanned unless a status was explicitly given,
   // and never regresses a confirmed/delivered job.
