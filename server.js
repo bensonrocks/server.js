@@ -4967,7 +4967,8 @@ function portalSectionForPath(p) {
     return r ? ['reports', r] : 'reports';
   }
   if (p === '/api/portal/overview') return 'overview';
-  if (p === '/api/portal/stock' || p === '/api/portal/movements') return 'stock';
+  if (p === '/api/portal/stock' || p === '/api/portal/movements'
+      || p === '/api/portal/low-stock' || p.startsWith('/api/portal/low-stock/')) return 'stock';
   if (p === '/api/portal/orders' || p.startsWith('/api/portal/orders/')
       || p.startsWith('/api/portal/order/')) return 'orders';
   if (p === '/api/portal/inbound' || p.startsWith('/api/portal/grn/')
@@ -6247,6 +6248,159 @@ app.get('/api/portal/stock', requirePortalAuthMiddleware, (req, res) => {
   res.json({ rows, agingDays, agingDaysDefault: PORTAL_AGING_DAYS_DEFAULT,
     sort: String(req.query.sort || 'sku'), dir: String(req.query.dir || 'asc') });
 });
+// ── LOW-STOCK DAILY PROMPT ──────────────────────────────────────────────────
+// Per Benson (16 Oct 2026): flag every SKU whose AVAILABLE qty (on hand minus
+// reserved — the same figure /api/portal/stock shows) is at or below a
+// threshold, 30 pcs by default. The client sets the default and optional
+// per-SKU overrides; stored on the client profile as
+//   low_stock: { threshold, overrides: { SKU: n }, email_digest }
+// Deliberately SEPARATE from the existing reorder_point "Low stock" chip, which
+// keeps its meaning. Cheap by design: one inventory.getAll() read of the item
+// master — never an order rebuild. Clients with stock tracking off (all Betime
+// profiles) are skipped: their counts are not ours to promise.
+const LOW_STOCK_DEFAULT = 30;
+const LOW_STOCK_MAX = 10000000;
+const LOW_STOCK_MAX_OVERRIDES = 5000;
+const LOW_STOCK_DIGEST_HOUR_SGT = 9;
+function _portalProfile(db, client) {
+  const n = String(client || '').trim().toLowerCase();
+  return clientProfiles(db).find(x => String(x.client).trim().toLowerCase() === n) || null;
+}
+function lowStockSettings(profile) {
+  const s = (profile && profile.low_stock) || {};
+  const t = Number.isInteger(s.threshold) && s.threshold >= 0 ? s.threshold : LOW_STOCK_DEFAULT;
+  const overrides = {};
+  for (const [k, v] of Object.entries(s.overrides || {})) if (Number.isInteger(v) && v >= 0) overrides[k] = v;
+  return { threshold: t, overrides, emailDigest: s.email_digest === true };
+}
+// Strict: a whole number >= 0, given as a number or digit-only string. "3.5",
+// "-1", "", "abc" are all refused rather than coerced.
+function parseLowStockInt(v) {
+  if (typeof v === 'number') return Number.isInteger(v) && v >= 0 && v <= LOW_STOCK_MAX ? v : null;
+  const s = String(v ?? '').trim();
+  if (!/^\d{1,8}$/.test(s)) return null;
+  const n = parseInt(s, 10);
+  return n <= LOW_STOCK_MAX ? n : null;
+}
+function lowStockTracked(profile, client) {
+  if (profile && profile.stock_tracking === false) return false;
+  return clientStockTracking(invClientId(client));
+}
+function computeLowStock(db, client) {
+  const profile = _portalProfile(db, client);
+  const cfg = lowStockSettings(profile);
+  if (!lowStockTracked(profile, client)) return { tracked: false, ...cfg, items: [], skus: 0 };
+  let rows = [];
+  try { rows = inventory.getAll({ clientId: invClientId(client) }); } catch (_) {}
+  const items = [];
+  for (const r of rows) {
+    const th = Object.prototype.hasOwnProperty.call(cfg.overrides, r.sku) ? cfg.overrides[r.sku] : cfg.threshold;
+    const avail = Number(r.available_qty) || 0;
+    if (avail <= th) items.push({ sku: r.sku, name: r.name || '', available: avail, threshold: th,
+                                  override: th !== cfg.threshold || Object.prototype.hasOwnProperty.call(cfg.overrides, r.sku) });
+  }
+  items.sort((a, b) => (a.available - b.available) || String(a.sku).localeCompare(String(b.sku)));
+  return { tracked: true, ...cfg, items, skus: rows.length };
+}
+app.get('/api/portal/low-stock', requirePortalAuthMiddleware, (req, res) => {
+  const db = readDb();
+  const out = computeLowStock(db, req.portalClient);
+  const u = portalUsers(_portalProfile(db, req.portalClient)).find(x => x.id === req.portalUserId);
+  const day = sgDateStr();
+  res.json({ ...out, day, dismissedToday: !!u && u.lowstock_dismissed_day === day,
+             emailAvailable: !!buildTransporter(), defaultThreshold: LOW_STOCK_DEFAULT });
+});
+// Dismissing the daily prompt is per LOGIN per SGT day, held server-side so a
+// second device does not prompt again. Any login may dismiss (view-only too):
+// it is a display preference, not a change to the account.
+app.post('/api/portal/low-stock/dismiss', express.json(), requirePortalAuthMiddleware, (req, res) => {
+  const db = readDb();
+  const u = portalUsers(_portalProfile(db, req.portalClient)).find(x => x.id === req.portalUserId);
+  if (!u) return res.status(404).json({ error: 'User not found' });
+  u.lowstock_dismissed_day = sgDateStr();
+  writeDb(db);
+  res.json({ ok: true, day: u.lowstock_dismissed_day });
+});
+app.post('/api/portal/low-stock/settings', express.json(), requirePortalWrite, (req, res) => {
+  const db = readDb();
+  const p = _portalProfile(db, req.portalClient);
+  if (!p) return res.status(404).json({ error: 'Profile not found' });
+  const b = req.body || {};
+  const cur = lowStockSettings(p);
+  const next = { threshold: cur.threshold, overrides: cur.overrides, email_digest: cur.emailDigest };
+  if (b.threshold !== undefined) {
+    const n = parseLowStockInt(b.threshold);
+    if (n === null) return res.status(400).json({ error: 'The default threshold must be a whole number of 0 or more.' });
+    next.threshold = n;
+  }
+  if (b.overrides !== undefined) {
+    if (!b.overrides || typeof b.overrides !== 'object' || Array.isArray(b.overrides)) {
+      return res.status(400).json({ error: 'Overrides must be a list of SKU → quantity.' });
+    }
+    const o = {};
+    for (const [rawSku, v] of Object.entries(b.overrides)) {
+      const sku = String(rawSku || '').trim().slice(0, 120);
+      if (!sku) continue;
+      if (v === null || v === '') continue;            // blank = remove the override
+      const n = parseLowStockInt(v);
+      if (n === null) return res.status(400).json({ error: `Threshold for ${sku} must be a whole number of 0 or more.` });
+      o[sku] = n;
+    }
+    if (Object.keys(o).length > LOW_STOCK_MAX_OVERRIDES) return res.status(400).json({ error: `At most ${LOW_STOCK_MAX_OVERRIDES} per-SKU thresholds.` });
+    next.overrides = o;
+  }
+  if (b.emailDigest !== undefined) next.email_digest = b.emailDigest === true;
+  p.low_stock = next;
+  writeDb(db);
+  logAudit('portal_low_stock_settings_set', { client: req.portalClient, by: req.portalUserId,
+    threshold: next.threshold, overrides: Object.keys(next.overrides).length, emailDigest: next.email_digest });
+  res.json({ ok: true, ...lowStockSettings(p) });
+});
+// Optional daily e-mail digest — OFF unless the client switches it on. Sent once
+// per SGT day after 09:00 to every enabled portal login with an e-mail address,
+// and only when something is actually at/below threshold. Uses the same mail
+// transporter as every other system mail; no transporter, no send.
+async function runLowStockDigest() {
+  if (sgHour() < LOW_STOCK_DIGEST_HOUR_SGT) return;
+  const transporter = buildTransporter();
+  if (!transporter) return;
+  const day = sgDateStr();
+  for (const t of tenantStore.listTenants()) {
+    const jobs = [];
+    tenantContext.run(t.id, () => {
+      const db = readDb();
+      let dirty = false;
+      for (const p of clientProfiles(db)) {
+        if (!p.portal?.enabled || p.low_stock?.email_digest !== true || p.low_stock_digest_day === day) continue;
+        const r = computeLowStock(db, p.client);
+        p.low_stock_digest_day = day; dirty = true;   // stamped first: never mail twice on a retry
+        if (!r.tracked || !r.items.length) continue;
+        const to = portalUsers(p).filter(u => u.enabled !== false && /@/.test(String(u.email || ''))).map(u => u.email);
+        if (to.length) jobs.push({ client: p.client, to, r });
+      }
+      if (dirty) writeDb(db);
+    });
+    for (const j of jobs) {
+      const rowsHtml = j.r.items.slice(0, 200).map(i =>
+        `<tr><td style="padding:4px 8px;font-family:monospace">${escHtmlLs(i.sku)}</td><td style="padding:4px 8px">${escHtmlLs(i.name)}</td>`
+        + `<td style="padding:4px 8px;text-align:right"><b>${i.available}</b></td><td style="padding:4px 8px;text-align:right">${i.threshold}</td></tr>`).join('');
+      try {
+        await transporter.sendMail({
+          from: getFromEmail(), to: j.to.join(', '),
+          subject: `Low stock — ${j.r.items.length} SKU${j.r.items.length === 1 ? '' : 's'} at or below threshold (${day})`,
+          html: `<p>These SKUs for <b>${escHtmlLs(j.client)}</b> are at or below your low-stock threshold (available = on hand minus reserved):</p>`
+            + `<table style="border-collapse:collapse;font-size:13px"><tr><th align="left">SKU</th><th align="left">Product</th><th>Available</th><th>Threshold</th></tr>${rowsHtml}</table>`
+            + (j.r.items.length > 200 ? `<p>…and ${j.r.items.length - 200} more. See the Stock tab in your portal.</p>` : '')
+            + `<p style="color:#888;font-size:12px">You can change thresholds or switch this e-mail off in your portal under Stock → Low-stock alert.</p>`,
+        });
+        tenantContext.run(t.id, () => logAudit('portal_low_stock_digest_sent', { client: j.client, recipients: j.to.length, skus: j.r.items.length }));
+      } catch (e) { console.error('[low-stock digest]', j.client, e.message); }
+    }
+  }
+}
+function escHtmlLs(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+setTimeout(() => runLowStockDigest().catch(e => console.error('[low-stock digest]', e.message)), 150 * 1000).unref?.();
+setInterval(() => runLowStockDigest().catch(e => console.error('[low-stock digest]', e.message)), 60 * 60 * 1000).unref?.();
 // ── Bundles — a client defines what a kit/bundle SKU on THEIR OWN listings
 // resolves to, from THEIR OWN catalogue. Read is open to any signed-in login
 // (view-only included, same as Stock); writing is requirePortalWrite, same as
