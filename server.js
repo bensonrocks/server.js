@@ -24027,6 +24027,41 @@ function closeCollectionFromHub(db, orderNumber, zortId, statusWord, store, hubO
   return '';
 }
 
+// ONE-TIME REPAIR: put back the original cancelled-at on orders whose
+// unprocessed_at was re-stamped by repeated Zort void handling (fixed above).
+// Master only. Body: { dryRun: true|false, items: [{ order, unprocessed_at, expect_current }] }.
+// Touches an order only when it is still 'unprocessed' AND its current
+// unprocessed_at equals expect_current (so nothing changed since the plan was
+// made). Only unprocessed_at (and updated_at to the same value) is written;
+// reason, auto_cancelled and everything else are left as they are.
+app.post('/api/master/repair/cancel-dates', express.json({ limit: '2mb' }), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { dryRun = true, items } = req.body || {};
+  if (!Array.isArray(items) || !items.length || items.length > 500) return res.status(400).json({ error: 'items[] (1–500) required' });
+  const db = readDb();
+  const results = [];
+  for (const it of items) {
+    const on = String(it && it.order || '');
+    const to = String(it && it.unprocessed_at || '');
+    if (!on || !/^\d{4}-\d{2}-\d{2}T/.test(to)) { results.push({ order: on, result: 'bad-input' }); continue; }
+    let b = null;
+    for (const x of db.batches || []) { if ((x.orders || []).some(o => o.order_number === on)) { b = x; break; } }
+    const st = b && b.orderStates && b.orderStates[on];
+    if (!st) { results.push({ order: on, result: 'not-found' }); continue; }
+    if (st.status !== 'unprocessed') { results.push({ order: on, result: 'skipped-not-cancelled', status: st.status }); continue; }
+    if (it.expect_current && st.unprocessed_at !== it.expect_current) { results.push({ order: on, result: 'skipped-changed', current: st.unprocessed_at }); continue; }
+    if (st.unprocessed_at === to) { results.push({ order: on, result: 'already-ok' }); continue; }
+    results.push({ order: on, result: dryRun ? 'would-restore' : 'restored', from: st.unprocessed_at, to });
+    if (!dryRun) { st.unprocessed_at = to; st.updated_at = to; journalOrderState(on, st); }
+  }
+  const n = results.filter(r => r.result === 'restored').length;
+  if (!dryRun && n) {
+    writeDb(db);
+    logAudit('cancel_dates_restored', { count: n, orders: results.filter(r => r.result === 'restored').slice(0, 200), by: req.userId || 'master' });
+  }
+  res.json({ dryRun: !!dryRun, restored: n, results });
+});
+
 function handleZortVoid(db, orderNumber, zortId, store) {
   try {
     let batch = null, ord = null;
@@ -24042,6 +24077,12 @@ function handleZortVoid(db, orderNumber, zortId, store) {
       logAudit('zort_order_void_conflict', { order: orderNumber, client: batch.client_name || '', status: state.status, scanned: scannedTotal });
       return;
     }
+
+    // ALREADY CANCELLED → nothing to do. Zort keeps reporting a voided order
+    // on every pull; re-running this re-stamped unprocessed_at (the date every
+    // screen shows as "cancelled at") every ~11 minutes and could release the
+    // same units again. The original cancel — when, why, how — stands.
+    if (state.status === 'unprocessed') return;
 
     // Pending + untouched → cancel it and give the reserved units back.
     state.status = 'unprocessed';
