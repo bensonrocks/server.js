@@ -19045,6 +19045,8 @@
                   Upload the picking list for this order; the label attaches to it on its own once an order carries
                   this waybill${page.matchedOrderNumber ? '' : ' — or use Match to Order on the picking-list order.'}
                 </div>` : ''}
+              ${page.blockedReason && page.matchStatus !== 'matched' ? `
+                <div class="lri-ref-note"><strong>${esc(page.blockedReason)}</strong></div>` : ''}
               <div class="lri-fields">${fields || `<span class="hint">${noFieldsHint}</span>`}</div>
               <div class="lri-match-action">${matchAction}</div>
             </div>

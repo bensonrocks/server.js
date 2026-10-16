@@ -8253,7 +8253,8 @@ app.post('/api/batch/:batchId/waybill-pdf', waybillPdfUpload.single('waybillPdf'
   if (!batch) return res.status(404).json({ error: 'Batch not found' });
   if (!req.file) return res.status(400).json({ error: 'No PDF file received' });
   try {
-    const matchResult = await splitWaybillPdf(req.file.buffer, batchId, batch.orders || []);
+    const _st = batch.orderStates || {};
+    const matchResult = await splitWaybillPdf(req.file.buffer, batchId, (batch.orders || []).filter(o => (_st[o.order_number] || {}).status !== 'unprocessed'));
     invalidateWaybillCache(batchId);
     const rec = {
       filename: req.file.originalname || 'waybill.pdf',
@@ -8489,6 +8490,20 @@ function safeLabelKey(orderNumber) {
   const k = typeof orderNumber === 'string' ? orderNumber.trim() : '';
   return k && !_BAD_LABEL_KEY.has(k) ? k : null;
 }
+// A CANCELLED ORDER TAKES NO LABEL AND NO WAYBILL (per the user). Cancelled =
+// orderStates status 'unprocessed', read off the batch that holds the order
+// (first match, the same rule lazadaFindOrder uses).
+const CANCELLED_LABEL_MSG = 'Order is cancelled — label not accepted';
+function isCancelledOrderNo(db, orderNumber) {
+  const on = String(orderNumber || '').trim();
+  if (!on) return false;
+  for (const b of db.batches || []) {
+    if ((b.orders || []).some(o => String(o.order_number) === on)) {
+      return ((b.orderStates || {})[on] || {}).status === 'unprocessed';
+    }
+  }
+  return false;
+}
 function attachLabelPage(db, orderNumber, entry) {
   if (!db.orderLabels) db.orderLabels = {};
   orderNumber = safeLabelKey(orderNumber);
@@ -8501,6 +8516,7 @@ function attachLabelPage(db, orderNumber, entry) {
   // a label on it never comes out — whichever path asked (import, rematch,
   // manual, CSV, a fetch for the order). Refused here, not left to callers.
   if (referenceOnlyOrder(db, orderNumber)) return 'reference';
+  if (isCancelledOrderNo(db, orderNumber)) return 'cancelled';
   const ref = Object.prototype.hasOwnProperty.call(db.orderLabels, orderNumber) ? db.orderLabels[orderNumber] : null;
   const same = p => p.importId === entry.importId && p.pageIndex === entry.pageIndex;
   if (!ref) { db.orderLabels[orderNumber] = { ...entry }; return 'primary'; }
@@ -9031,6 +9047,7 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
     let candidates         = null;
     let parcel             = false;   // an additional box of an order already labelled in this import
     let referenceHint      = null;    // the page named a channel's reference copy and nothing else
+    let blockedReason      = null;    // matched an order that refuses labels (cancelled)
 
     if (rawText) {
       try {
@@ -9082,6 +9099,11 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
       });
       // The writer is the fence: a reference copy (or an unusable key) is
       // never a label's home, whatever the matcher said.
+      if (role === 'cancelled') {
+        matchedThisImport.delete(matchedOrderNumber);
+        blockedReason = CANCELLED_LABEL_MSG;
+        matchStatus = 'unmatched'; matchedOrderNumber = null; matchMethod = null; matchConfidence = null; parcel = false;
+      }
       if (role === 'reference' || role === 'refused') {
         referenceHint = role === 'reference' ? (referenceOnlyHint(extracted, matchIndex) || { field: 'orderNumber', value: matchedOrderNumber, order: matchedOrderNumber, client: (referenceOnlyOrder(db, matchedOrderNumber) || {}).client_name || '' }) : referenceHint;
         matchedThisImport.delete(matchedOrderNumber);
@@ -9093,7 +9115,7 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
     // re-parsing the PDF from the volume
     pages.push({ pageIndex: i, pageFile, extracted, rawText: rawText.slice(0, 4000),
                  matchStatus, matchedOrderNumber, matchMethod, matchConfidence, candidates, parcel: parcel || undefined,
-                 referenceHint: referenceHint || undefined });
+                 referenceHint: referenceHint || undefined, blockedReason: blockedReason || undefined });
   }
 
   // A LABEL WE ASKED FOR BY ORDER MUST NOT BE ORPHANED BY A MISREAD.
@@ -9142,7 +9164,7 @@ async function processLabelPdf(buffer, filename, uploadedBy, { forOrder } = {}) 
       attachedAt: new Date().toISOString(), attachedBy: uploadedBy,
       attachedVia: 'fetched-for-order',
     });
-    if (role !== 'refused' && role !== 'reference') {
+    if (role !== 'refused' && role !== 'reference' && role !== 'cancelled') {
       pages[0].matchStatus       = 'matched';
       pages[0].matchedOrderNumber = forTarget;
       pages[0].matchMethod       = forTarget === forOrder ? 'fetched-for-order' : 'fetched-for-order_of_reference_copy';
@@ -9441,6 +9463,7 @@ app.post('/api/label-imports/:id/pages/:idx/match', requireAuth, (req, res) => {
     attachedAt: new Date().toISOString(), attachedBy: req.userId,
   });
   if (role === 'refused') return res.status(400).json({ error: 'That is not a usable order number' });
+  if (role === 'cancelled') return res.status(409).json({ cancelled: true, error: CANCELLED_LABEL_MSG });
   if (role === 'reference') return res.status(409).json({ referenceOnly: true, error: `${orderNumber} is a channel reference record, not a work order — a label on it would never come out at scanning.` });
   page.parcel = role === 'parcel' || undefined;
   writeDb(db);
@@ -9502,9 +9525,9 @@ app.post('/api/label-imports/:id/import-matches', requireAuth, labelImportUpload
       importId: imp.id, pageIndex: pageIdx, pageFile: page.pageFile, tracking: labelTrackingOf(page) || undefined,
       attachedAt: new Date().toISOString(), attachedBy: req.userId,
     });
-    if (role === 'refused' || role === 'reference') {   // cannot happen past the checks above; kept so the page never reads matched to nothing
+    if (role === 'refused' || role === 'reference' || role === 'cancelled') {   // cannot happen past the checks above; kept so the page never reads matched to nothing
       page.matchedOrderNumber = null; page.matchStatus = 'unmatched'; page.matchMethod = null;
-      errors.push({ row: excelRow, reason: role === 'reference' ? `Order ${orderNumber} is a channel reference record, not a work order` : `Order "${orderNumber}" is not a usable order number` }); continue;
+      errors.push({ row: excelRow, reason: role === 'cancelled' ? `Order ${orderNumber}: ${CANCELLED_LABEL_MSG}` : role === 'reference' ? `Order ${orderNumber} is a channel reference record, not a work order` : `Order "${orderNumber}" is not a usable order number` }); continue;
     }
     page.parcel = role === 'parcel' || undefined;
     usedInThisImport.add(orderNumber);
@@ -9750,6 +9773,11 @@ async function rematchLabelImport(id, rematchAll, { ocrForFields = false, matchI
           importId: id, pageIndex: page.pageIndex, pageFile: page.pageFile, tracking: tracking || undefined,
           attachedAt: new Date().toISOString(), attachedBy: 'auto-match',
         });
+        if (role === 'cancelled') {
+          page.matchedOrderNumber = null; page.matchStatus = 'unmatched'; page.matchMethod = null; page.matchConfidence = null; page.parcel = undefined;
+          page.blockedReason = CANCELLED_LABEL_MSG;
+          continue;
+        }
         if (role === 'reference' || role === 'refused') {   // the writer is the fence — never on a reference copy
           page.matchedOrderNumber = null; page.matchStatus = 'unmatched'; page.matchMethod = null; page.matchConfidence = null; page.parcel = undefined;
           page.referenceHint = role === 'reference' ? (referenceOnlyHint(page.extracted, matchIndex) || { field: 'orderNumber', value: hit, order: hit, client: (referenceOnlyOrder(db, hit) || {}).client_name || '' }) : undefined;
@@ -9814,7 +9842,7 @@ function rehomeReferenceLabels(db, trigger) {
           importId: imp.id, pageIndex: page.pageIndex, pageFile: page.pageFile, tracking: labelTrackingOf(page) || undefined,
           attachedAt: new Date().toISOString(), attachedBy: 'reference-rehome',
         });
-        if (role !== 'refused' && role !== 'reference') {
+        if (role !== 'refused' && role !== 'reference' && role !== 'cancelled') {
           page.matchedOrderNumber = found.hit; page.matchStatus = 'matched';
           page.matchMethod = found.method; page.matchConfidence = found.confidence;
           page.parcel = role === 'parcel' || undefined; page.candidates = null;
@@ -22899,7 +22927,7 @@ function handleLazadaPush(db, push) {
   if (tracking) {
     const st = f.batch.orderStates[f.ord.order_number] || {};
     if (st.status === 'done') return 'waybill_locked_done';
-    if (f.ord.waybill_number !== tracking) {
+    if (f.ord.waybill_number !== tracking && st.status !== 'unprocessed') {
       f.ord.waybill_number = tracking;
       logAudit('lazada_waybill_updated', { order: f.ord.order_number, tracking });
     }
@@ -23515,7 +23543,7 @@ function handleShopeePush(db, push) {
     // but never onto an already-printed (done) order.
     if (tracking) {
       const st = db.batches && (f.batch.orderStates[f.ord.order_number] || {});
-      if (st && st.status !== 'done' && f.ord.waybill_number !== tracking) {
+      if (st && st.status !== 'done' && st.status !== 'unprocessed' && f.ord.waybill_number !== tracking) {
         f.ord.waybill_number = tracking;
         logAudit('shopee_waybill_updated', { order: f.ord.order_number, tracking });
       }
@@ -23530,6 +23558,7 @@ function handleShopeePush(db, push) {
     if (!f || !tracking) return 'no_match';
     const st = f.batch.orderStates[f.ord.order_number] || {};
     if (st.status === 'done') return 'waybill_locked_done';
+    if (st.status === 'unprocessed') return 'waybill_refused_cancelled';
     if (f.ord.waybill_number !== tracking) {
       f.ord.waybill_number = tracking;
       logAudit('shopee_waybill_updated', { order: f.ord.order_number, tracking });
@@ -24027,6 +24056,41 @@ function closeCollectionFromHub(db, orderNumber, zortId, statusWord, store, hubO
   return '';
 }
 
+// ONE-TIME REPAIR: put back the original cancelled-at on orders whose
+// unprocessed_at was re-stamped by repeated Zort void handling (fixed above).
+// Master only. Body: { dryRun: true|false, items: [{ order, unprocessed_at, expect_current }] }.
+// Touches an order only when it is still 'unprocessed' AND its current
+// unprocessed_at equals expect_current (so nothing changed since the plan was
+// made). Only unprocessed_at (and updated_at to the same value) is written;
+// reason, auto_cancelled and everything else are left as they are.
+app.post('/api/master/repair/cancel-dates', express.json({ limit: '2mb' }), (req, res) => {
+  if (!checkMaster(req, res)) return;
+  const { dryRun = true, items } = req.body || {};
+  if (!Array.isArray(items) || !items.length || items.length > 500) return res.status(400).json({ error: 'items[] (1–500) required' });
+  const db = readDb();
+  const results = [];
+  for (const it of items) {
+    const on = String(it && it.order || '');
+    const to = String(it && it.unprocessed_at || '');
+    if (!on || !/^\d{4}-\d{2}-\d{2}T/.test(to)) { results.push({ order: on, result: 'bad-input' }); continue; }
+    let b = null;
+    for (const x of db.batches || []) { if ((x.orders || []).some(o => o.order_number === on)) { b = x; break; } }
+    const st = b && b.orderStates && b.orderStates[on];
+    if (!st) { results.push({ order: on, result: 'not-found' }); continue; }
+    if (st.status !== 'unprocessed') { results.push({ order: on, result: 'skipped-not-cancelled', status: st.status }); continue; }
+    if (it.expect_current && st.unprocessed_at !== it.expect_current) { results.push({ order: on, result: 'skipped-changed', current: st.unprocessed_at }); continue; }
+    if (st.unprocessed_at === to) { results.push({ order: on, result: 'already-ok' }); continue; }
+    results.push({ order: on, result: dryRun ? 'would-restore' : 'restored', from: st.unprocessed_at, to });
+    if (!dryRun) { st.unprocessed_at = to; st.updated_at = to; journalOrderState(on, st); }
+  }
+  const n = results.filter(r => r.result === 'restored').length;
+  if (!dryRun && n) {
+    writeDb(db);
+    logAudit('cancel_dates_restored', { count: n, orders: results.filter(r => r.result === 'restored').slice(0, 200), by: req.userId || 'master' });
+  }
+  res.json({ dryRun: !!dryRun, restored: n, results });
+});
+
 function handleZortVoid(db, orderNumber, zortId, store) {
   try {
     let batch = null, ord = null;
@@ -24042,6 +24106,12 @@ function handleZortVoid(db, orderNumber, zortId, store) {
       logAudit('zort_order_void_conflict', { order: orderNumber, client: batch.client_name || '', status: state.status, scanned: scannedTotal });
       return;
     }
+
+    // ALREADY CANCELLED → nothing to do. Zort keeps reporting a voided order
+    // on every pull; re-running this re-stamped unprocessed_at (the date every
+    // screen shows as "cancelled at") every ~11 minutes and could release the
+    // same units again. The original cancel — when, why, how — stands.
+    if (state.status === 'unprocessed') return;
 
     // Pending + untouched → cancel it and give the reserved units back.
     state.status = 'unprocessed';
@@ -24289,7 +24359,7 @@ async function pullZortStore(db, store, opts = {}) {
         const lateTracking = zortTracking(o);
         if (lateTracking) {
           const f = lazadaFindOrder(db, number, '');
-          if (f && !String(f.ord.waybill_number || '').trim()) {
+          if (f && !String(f.ord.waybill_number || '').trim() && !isCancelledOrderNo(db, number)) {
             f.ord.waybill_number = lateTracking;
             updatedTracking++;
             const stDone = (f.batch.orderStates?.[f.ord.order_number] || {}).status === 'done';
@@ -24639,6 +24709,7 @@ async function pullZortStore(db, store, opts = {}) {
         const fill = (num, t, via) => {
           const f = lazadaFindOrder(db, num, '');
           if (!f || String(f.ord.waybill_number || '').trim()) return false;   // never overwrite
+          if (isCancelledOrderNo(db, num)) return false;                      // cancelled — takes no waybill
           f.ord.waybill_number = t;
           updatedTracking++;
           logAudit('sync_waybill_backfilled', { order: num, tracking: t, storeId: store.id, via });
@@ -25274,6 +25345,7 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
   const db = readDb();
   const f = lazadaFindOrder(db, orderNumber, '');
   if (!f) return res.status(404).json({ error: 'Order not found' });
+  if (((f.batch.orderStates || {})[orderNumber] || {}).status === 'unprocessed') return res.status(409).json({ cancelled: true, error: CANCELLED_LABEL_MSG });
   const ord = f.ord;
   const steps = [];
   const done = (extra = {}) => {
@@ -25298,7 +25370,7 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
       const t = String(rec.tracking_no || '').trim();
       if (!t) { steps.push(`OneCart has no tracking number yet (status ${rec.status || '?'})`); return done(); }
       const db2 = readDb(); const f2 = lazadaFindOrder(db2, orderNumber, '');
-      if (f2 && !String(f2.ord.waybill_number || '').trim()) {
+      if (f2 && !String(f2.ord.waybill_number || '').trim() && !isCancelledOrderNo(db2, orderNumber)) {
         f2.ord.waybill_number = t; writeDb(db2);
         logAudit('sync_waybill_backfilled', { order: orderNumber, tracking: t, storeId: ocs.id, via: 'waybill-now-onecart' });
         scheduleLabelAutoRematch('waybill-now');
@@ -25376,7 +25448,7 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
         if (t) {
           const db2 = readDb();
           const f3 = lazadaFindOrder(db2, orderNumber, '');
-          if (f3 && !String(f3.ord.waybill_number || '').trim()) {
+          if (f3 && !String(f3.ord.waybill_number || '').trim() && !isCancelledOrderNo(db2, orderNumber)) {
             f3.ord.waybill_number = t;
             writeDb(db2);
             logAudit('sync_waybill_backfilled', { order: orderNumber, tracking: t, storeId: store.id, via: 'waybill-now' });
@@ -25730,6 +25802,7 @@ app.post('/api/master/orders/:orderNumber/reopen', express.json(), (req, res) =>
 // not — is revived with it and retried immediately: the hub just told us the
 // label exists and where it is, so any earlier failure history is obsolete.
 function enqueueZortLabel(db, storeId, { orderNumber, zortId, tracking, labelUrl }) {
+  if (isCancelledOrderNo(db, orderNumber)) return false;   // a cancelled order takes no label — skipped silently
   const ob = zortOutbox(db);
   const existing = ob.find(e => e.kind === 'label' && e.storeId === storeId && e.orderNumber === orderNumber);
   if (existing) {
@@ -26096,6 +26169,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
     logAudit('zort_stock_push_cancelled', { storeId: store.id, sku: entry.sku, why: 'stock sync switched off after this was queued' });
     return true;
   }
+  if (entry.kind === 'label' && isCancelledOrderNo(db, entry.orderNumber)) return true;   // cancelled since queued — drop silently
   if (entry.kind === 'label' && !store.labelSync) {
     logAudit('sync_label_fetch_cancelled', { storeId: store.id, order: entry.orderNumber, why: 'label pull switched off after this was queued' });
     return true;
@@ -26374,7 +26448,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
         // polling for what we have just been handed.
         if (tracking) {
           const f = lazadaFindOrder(db, entry.orderNumber, '');
-          if (f && !String(f.ord.waybill_number || '').trim()) {
+          if (f && !String(f.ord.waybill_number || '').trim() && !isCancelledOrderNo(db, entry.orderNumber)) {
             f.ord.waybill_number = tracking;
             logAudit('sync_waybill_backfilled', { order: entry.orderNumber, tracking, storeId: store.id, via: 'rts-at-intake' });
             scheduleLabelAutoRematch('rts-at-intake');
@@ -26439,7 +26513,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
     const f = lazadaFindOrder(db, entry.orderNumber, '');
     if (f && !String(f.ord.waybill_number || '').trim()) {
       const st = f.batch.orderStates?.[f.ord.order_number] || {};
-      if (st.status !== 'done') {
+      if (st.status !== 'done' && st.status !== 'unprocessed') {
         f.ord.waybill_number = t;
         logAudit('sync_waybill_backfilled', { order: entry.orderNumber, tracking: t, storeId: store.id, via: 'intake-arrange' });
         // The tracking number is a fresh match key — a label page uploaded
@@ -26736,7 +26810,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
         if (st) { st.zort_pushed_at = new Date().toISOString(); st.zort_push_action = entry.action; }
         // Backfill the tracking number off the RTS response if we never had it.
         const rtsTracking = zortTracking(rtsDetail);
-        if (rtsTracking && !String(f.ord.waybill_number || '').trim()) {
+        if (rtsTracking && !String(f.ord.waybill_number || '').trim() && !(st && st.status === 'unprocessed')) {
           f.ord.waybill_number = rtsTracking;
           logAudit('sync_waybill_backfilled', { order: entry.orderNumber, tracking: rtsTracking, storeId: store.id, via: 'rts-response' });
         }
@@ -28455,7 +28529,7 @@ async function pullShopifyStore(db, store) {
       const st = (held.batch.orderStates = held.batch.orderStates || {})[m.order_number]
         || (held.batch.orderStates[m.order_number] = { status: 'pending', scanned: {}, updated_at: new Date().toISOString() });
       // Fill a BLANK waybill whatever the status — never overwrite one.
-      if (m.meta.tracking && !String(held.order.waybill_number || '').trim()) {
+      if (m.meta.tracking && !String(held.order.waybill_number || '').trim() && st.status !== 'unprocessed') {
         held.order.waybill_number = m.meta.tracking;
         trackingFilled++;
         logAudit('sync_waybill_backfilled', { order: m.order_number, via: 'shopify', tracking: m.meta.tracking });
@@ -28830,6 +28904,7 @@ async function pullOnecartStore(db, store) {
     || (held.batch.orderStates[held.order.order_number] = { status: 'pending', scanned: {}, updated_at: now });
   const fillTracking = (held, tracking, via) => {
     if (!tracking || String(held.order.waybill_number || '').trim() || filled.has(held.order.order_number)) return;
+    if (((held.batch.orderStates || {})[held.order.order_number] || {}).status === 'unprocessed') return;   // cancelled — takes no waybill
     held.order.waybill_number = tracking; filled.add(held.order.order_number); trackingFilled++;
     logAudit('sync_waybill_backfilled', { order: held.order.order_number, via, tracking });
   };
@@ -29248,7 +29323,7 @@ function pushOnecartCompletion(db, ord, state) {
           st2.onecart_ship_status = word;
           if (moved) st2.onecart_shipped_at = st2.onecart_ship_requested_at;
         }
-        if (o2 && tracking && !String(o2.waybill_number || '').trim()) {
+        if (o2 && tracking && !String(o2.waybill_number || '').trim() && !(st2 && st2.status === 'unprocessed')) {
           o2.waybill_number = tracking;
           logAudit('sync_waybill_backfilled', { order: ord.order_number, via: 'onecart-ship', tracking });
         }
