@@ -4720,6 +4720,7 @@
               <th style="padding:0.5rem;text-align:left">Job ID</th>
               <th style="padding:0.5rem;text-align:left">Client</th>
               <th style="padding:0.5rem;text-align:left">Status</th>
+              <th style="padding:0.5rem;text-align:left">PO expiry</th>
               <th style="padding:0.5rem;text-align:center">Packages</th>
               <th style="padding:0.5rem;text-align:left">Driver</th>
               <th style="padding:0.5rem;text-align:center">Actions</th>
@@ -4737,6 +4738,7 @@
                   <span class="status-badge" style="font-size:11px">${req.status || 'pending'}</span>
                   ${req.pendingDeletion ? '<span style="display:inline-block;margin-left:0.3rem;padding:0.2rem 0.4rem;background:#ffcdd2;border-radius:2px;font-size:10px">⏳ Delete Pending</span>' : ''}
                 </td>
+                <td style="padding:0.5rem">${poExpiryChip(req, { note: true })}</td>
                 <td style="padding:0.5rem;text-align:center"><strong>${req.packages || 1}</strong></td>
                 <td style="padding:0.5rem">${esc(req.assignedDriverName || ((window.drivers || []).find(d => d.id === req.assignedDriver)?.name) || (req.assignedDriver ? req.assignedDriver : '—'))}</td>
                 <td style="padding:0.5rem;text-align:center">
@@ -4898,7 +4900,7 @@
     box.innerHTML = transportRequests.length ? transportRequests.map(r => `
       <div class="tr-job"><div><b>${esc(r.shipping?.name || r.clientName || r.referenceId)}</b><br>
         <small>${esc(r.referenceId)} · ${esc(r.shipping?.zip || 'no postal code')}${r.assignedDriverName ? ' · ' + esc(r.assignedDriverName) : ''}</small></div>
-        <div><small>${esc(r.status)}</small></div></div>`).join('') : '<p class="hint">No jobs.</p>';
+        <div style="text-align:right"><small>${esc(r.status)}</small><br>${poExpiryChip(r)}</div></div>`).join('') : '<p class="hint">No jobs.</p>';
   }
 
   function initTransportMainMap() {
@@ -4981,6 +4983,7 @@
           : `<span style="color:#ef4444;font-weight:600">⚠ No driver assigned</span><br/>`}
         📦 ${req.packages || 1} carton(s) &nbsp;|&nbsp; 📍 ${esc(req.shipping?.zip || '—')}<br/>
         ${esc(req.shipping?.addressLine1 || '')}<br/>
+        <span style="display:inline-block;margin-top:0.3rem">${poExpiryChip(req, { note: true })}</span>
         ${(() => { const st = tmsStatusLabel(req); return `<span style="display:inline-block;margin-top:0.3rem;padding:.1rem .5rem;border-radius:99px;background:${st.color}1a;color:${st.color};font-size:11px;font-weight:700">${st.label}</span>`; })()}
       </div>`;
 
@@ -5789,6 +5792,28 @@
   //   On the road           — picked up and moving (yellow)
   //   Delivered             — finished with POD (green)
   //   Delivered w/ Remarks  — finished but issue to follow up (red)
+  // PO expiry chip — shown on every Transport job for every client.
+  // Grey "TBA" when unknown, red "Expired" when past today and not delivered,
+  // amber when 2 days or less remain, green when further out; delivered = neutral. Dates are compared in Singapore time.
+  function poExpiryInfo(job) {
+    const v = job && job.poExpiry;
+    if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return { text: 'PO exp TBA', color: '#64748b', bg: '#f1f5f9', level: 'tba' };
+    const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+    const days = Math.round((Date.parse(v) - Date.parse(today)) / 86400000);
+    const label = new Date(v + 'T00:00:00Z').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+    const done = job.status === 'delivered' || job.status === 'cancelled';
+    if (!done && days < 0) return { text: `PO exp ${label}`, badge: 'Expired', color: '#b91c1c', bg: '#fee2e2', level: 'expired' };
+    if (!done && days <= 2) return { text: `PO exp ${label}`, badge: days === 0 ? 'today' : `${days}d left`, color: '#b45309', bg: '#fef3c7', level: 'soon' };
+    if (!done) return { text: `PO exp ${label}`, color: '#15803d', bg: '#dcfce7', level: 'ok' };
+    return { text: `PO exp ${label}`, color: '#334155', bg: '#f1f5f9', level: 'done' };
+  }
+  function poExpiryChip(job, opts = {}) {
+    const i = poExpiryInfo(job);
+    const e = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const note = job && job.poExpiry && job.poExpiryMatch && job.poExpiryMatch !== 'import' ? job.poExpiryMatch : '';
+    return `<span class="po-exp po-exp-${i.level}" title="${e(note ? 'PO expiry: ' + note : 'PO expiry')}" style="display:inline-block;padding:.05rem .45rem;border-radius:99px;background:${i.bg};color:${i.color};font-size:11px;font-weight:600;white-space:nowrap">${e(i.text)}${i.badge ? ` <b style="background:${i.color};color:#fff;border-radius:99px;padding:0 .35rem;margin-left:.15rem;font-size:10px">${e(i.badge)}</b>` : ''}</span>${note && opts.note ? ` <span style="font-size:10.5px;color:#7c3aed;font-style:italic">(${e(note)})</span>` : ''}`;
+  }
+
   function tmsStatusLabel(job) {
     const s = typeof job === 'string' ? job : job?.status;
     const remarks = typeof job === 'object' ? String(job?.podRemarks || '').trim() : '';
@@ -7149,6 +7174,7 @@
         </div>
         ${row('Job ID', `<code>${esc(job.id)}</code>`)}
         ${row('Order ref', esc(job.referenceId || ''))}
+        ${row('PO expiry', poExpiryChip(job, { note: true }))}
         ${row('Matched store', '<span id="ddMatchedStore" style="color:#64748b;font-weight:500">Loading Address Book…</span>')}
         ${row('Address', esc(job.shipping?.addressLine1 || entry?.address || ''))}
         ${row('Phone', esc(job.shipping?.phone || ''))}
