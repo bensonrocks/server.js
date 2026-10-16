@@ -8,6 +8,11 @@ export const SITE_NAME = "NimbusTrade Solutions";
 export const HOME_TITLE =
   "NimbusTrade — Logistics, fulfillment, and internationalization solutions for brands";
 
+// Public marketing site only. The client portal under /client-access is a
+// separate app and must not load this tag.
+export const GA_MEASUREMENT_ID = "G-TEG08RTXNW";
+export const GOOGLE_SITE_VERIFICATION = "WITl4NsuKxFqDHxi1DGuXOTdp0IvdvrEspeJVRe88QU";
+
 export const SITE_DESCRIPTION =
   "Brands looking to expand enquire with NimbusTrade for fulfillment solutions, logistics solutions, and internationalization solutions for brands. Retail enablement in Singapore and Malaysia, ecommerce fulfillment worldwide including the USA, and compliance such as FDA. We are merchants ourselves.";
 

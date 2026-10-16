@@ -15,6 +15,17 @@ test.describe("Public copy", () => {
     });
   }
 
+  test("public pages include analytics and search console verification", async ({ page }) => {
+    for (const path of PAGES) {
+      await page.goto(path);
+      const html = await page.content();
+      expect(html).toContain("https://www.googletagmanager.com/gtag/js?id=G-TEG08RTXNW");
+      expect(html).toContain("gtag('config', 'G-TEG08RTXNW')");
+      expect(html).toContain('name="google-site-verification"');
+      expect(html).toContain('content="WITl4NsuKxFqDHxi1DGuXOTdp0IvdvrEspeJVRe88QU"');
+    }
+  });
+
   test("homepage keeps the merchant line and the explainer", async ({ page }) => {
     await page.goto("/");
     await expect(
