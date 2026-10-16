@@ -38,6 +38,8 @@
     }
   }
   let overview = null, stock = [], orders = [], inbound = [];
+  let lowStock = { tracked: false, items: [], map: new Map(), threshold: 30, overrides: {} };
+  let lowStockShownThisLoad = false;
   let stFilter = 'all', orFilter = 'all', ibFilter = 'all', orDay = '';
   let agingDays = 15, screenDays = 90, exportMaxDays = 365, slaWorkingDays = 2;
   const openOrder = new Set();      // order numbers expanded on screen
@@ -301,6 +303,7 @@
       $('asnSlaText').textContent = `${slaWorkingDays} working day${slaWorkingDays === 1 ? '' : 's'}`;
       renderOverview(); renderStock(); renderOrders(); renderInbound();
       loadNotices();
+      if (visible('stock')) loadLowStock();
     } catch (e) {
       if (!overview) {
         $('ovHero').innerHTML = '';
@@ -674,6 +677,7 @@
       // a no-op so a stale saved filter cannot empty somebody's stock list.
       else if (stFilter === 'aging') { /* no longer offered */ }
       else if (stFilter === 'res') { if (!(r.reserved > 0)) return false; }
+      else if (stFilter === 'thr') { if (!lowStock.map.has(r.sku)) return false; }
       if (!q) return true;
       return String(r.sku).toLowerCase().includes(q)
         || String(r.name || '').toLowerCase().includes(q)
@@ -2354,6 +2358,81 @@
   $('asnUploadBtn').addEventListener('click', () => { $('asnMsg').classList.add('hidden'); toggleAsnFields(true); });
   $('asnCancelBtn').addEventListener('click', () => { toggleAsnFields(false); $('asnMsg').classList.add('hidden'); });
   $('asnSubmitBtn').addEventListener('click', submitAsn);
+
+  // ── Low-stock alert (daily prompt + settings) ─────────────────────────────
+  async function loadLowStock() {
+    try {
+      const r = await api('/api/portal/low-stock');
+      if (!r.ok) return;
+      const d = await r.json();
+      lowStock = { ...d, map: new Map((d.items || []).map(i => [i.sku, i])) };
+      $('lsCard').classList.toggle('hidden', !d.tracked);
+      $('stChipThr').classList.toggle('hidden', !d.tracked);
+      $('stChipThr').textContent = `At/below alert (${num((d.items || []).length)})`;
+      if (!d.tracked) return;
+      if (document.activeElement?.closest?.('#lsCard') == null) {
+        $('lsThreshold').value = d.threshold;
+        $('lsOverrides').value = Object.entries(d.overrides || {}).map(([k, v]) => `${k} = ${v}`).join('\n');
+        $('lsEmail').checked = !!d.emailDigest;
+      }
+      $('lsEmailRow').classList.toggle('hidden', !d.emailAvailable);
+      const write = canWrite();
+      ['lsThreshold', 'lsOverrides', 'lsEmail'].forEach(id => { $(id).disabled = !write; });
+      $('lsSave').classList.toggle('hidden', !write);
+      $('lsSummary').textContent = `${num(d.items.length)} SKU${d.items.length === 1 ? '' : 's'} at or below threshold now. Prompt me when available stock is at or below`;
+      if (stFilter === 'thr') renderStock();
+      if (d.items.length && !d.dismissedToday && !lowStockShownThisLoad) { lowStockShownThisLoad = true; showLowStockModal(); }
+    } catch (_) { /* the prompt is a courtesy; never break the page */ }
+  }
+  function showLowStockModal() {
+    const it = lowStock.items;
+    $('lsModalHint').textContent = `${num(it.length)} SKU${it.length === 1 ? ' is' : 's are'} at or below your alert level (available = on hand minus reserved).`;
+    $('lsModalList').innerHTML = `<table style="width:100%;font-size:.8rem;border-collapse:collapse">
+      <tr class="muted"><th align="left">SKU</th><th align="left">Product</th><th align="right">Avail.</th><th align="right">Alert at</th></tr>`
+      + it.map(i => `<tr><td class="mono" style="padding:.2rem .3rem">${esc(i.sku)}</td>
+        <td style="padding:.2rem .3rem;max-width:11rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.name || '—')}</td>
+        <td align="right" style="padding:.2rem .3rem;font-weight:800;color:${i.available <= 0 ? 'var(--bad)' : 'var(--warn)'}">${num(i.available)}</td>
+        <td align="right" style="padding:.2rem .3rem">${num(i.threshold)}</td></tr>`).join('') + '</table>';
+    $('lsModal').classList.remove('hidden');
+  }
+  function dismissLowStock() {
+    $('lsModal').classList.add('hidden');
+    lowStock.dismissedToday = true;
+    api('/api/portal/low-stock/dismiss', { method: 'POST' }).catch(() => {});
+  }
+  $('lsModalOk').addEventListener('click', dismissLowStock);
+  $('lsModalView').addEventListener('click', () => {
+    dismissLowStock();
+    document.querySelector('nav button[data-tab="stock"]')?.click();
+    stFilter = 'thr';
+    document.querySelectorAll('#stChips .chip').forEach(c => c.classList.toggle('on', c.dataset.f === 'thr'));
+    renderStock();
+  });
+  $('lsSave').addEventListener('click', async e => {
+    const btn = e.currentTarget, orig = btn.textContent;
+    const msg = (k, t) => { const el = $('lsMsg'); el.className = 'asn-msg' + (k ? ' ' + k : ''); el.textContent = t; el.classList.remove('hidden'); };
+    const tRaw = String($('lsThreshold').value).trim();
+    if (!/^\d+$/.test(tRaw)) { msg('err', 'The default threshold must be a whole number of 0 or more.'); return; }
+    const overrides = {};
+    const lines = $('lsOverrides').value.split('\n').map(l => l.trim()).filter(Boolean);
+    for (const l of lines) {
+      const m = l.match(/^(.+?)\s*[=,:\t]\s*(\S+)$/);
+      if (!m || !/^\d+$/.test(m[2])) { msg('err', `Could not read “${l}” — use SKU = whole number (0 or more).`); return; }
+      overrides[m[1].trim()] = parseInt(m[2], 10);
+    }
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const r = await api('/api/portal/low-stock/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-auth-token': token },
+        body: JSON.stringify({ threshold: parseInt(tRaw, 10), overrides, emailDigest: $('lsEmail').checked }),
+      });
+      const d = await r.json();
+      if (!r.ok) { msg('err', d.error || 'Could not save.'); return; }
+      msg('', `✓ Saved. Default ${d.threshold} pcs, ${Object.keys(d.overrides).length} per-SKU threshold(s).`);
+      btn.blur(); await loadLowStock();
+    } catch (err) { msg('err', 'Could not reach the server.'); }
+    finally { btn.disabled = false; btn.textContent = orig; }
+  });
 
   $('agingSave').addEventListener('click', async e => {
     const btn = e.currentTarget, orig = btn.textContent;

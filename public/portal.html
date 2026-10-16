@@ -554,6 +554,31 @@
         <button class="chip" data-f="out">Out of stock</button>
 
         <button class="chip" data-f="res">Reserved</button>
+        <button class="chip hidden" data-f="thr" id="stChipThr">At/below alert</button>
+      </div>
+      <!-- Low-stock alert: default threshold + per-SKU overrides (see /api/portal/low-stock) -->
+      <div class="card hidden" id="lsCard" style="margin-bottom:.6rem;padding:.7rem .85rem">
+        <div class="row" style="gap:.6rem;flex-wrap:wrap">
+          <div style="min-width:0;flex:1">
+            <b style="font-size:.83rem">&#128276; Low-stock alert</b>
+            <div class="muted" style="font-size:.75rem" id="lsSummary">Prompt me when available stock is at or below</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:.35rem">
+            <input id="lsThreshold" type="number" min="0" step="1" inputmode="numeric"
+                   style="width:5rem;padding:.5rem .55rem;text-align:center;font-weight:800">
+            <span class="muted" style="font-size:.78rem">pcs</span>
+          </div>
+        </div>
+        <details id="lsMore" style="margin-top:.5rem">
+          <summary class="muted" style="font-size:.78rem;cursor:pointer">Per-SKU thresholds &amp; e-mail</summary>
+          <label for="lsOverrides" style="margin-top:.45rem;display:block;font-size:.75rem">One per line: <span class="mono">SKU = qty</span> (overrides the default for that SKU)</label>
+          <textarea id="lsOverrides" rows="4" style="width:100%;font-family:monospace;font-size:.8rem" placeholder="ABC-123 = 50&#10;XYZ-9 = 0"></textarea>
+          <label id="lsEmailRow" class="hidden" style="display:flex;gap:.4rem;align-items:center;margin-top:.45rem;font-size:.8rem;text-transform:none;letter-spacing:0">
+            <input type="checkbox" id="lsEmail"> Also e-mail a daily digest to logins with an e-mail address
+          </label>
+        </details>
+        <div class="asn-actions" style="margin-top:.5rem"><button class="btn-sm asn-primary" id="lsSave">Save</button></div>
+        <div id="lsMsg" class="asn-msg hidden" style="margin-top:.55rem"></div>
       </div>
       <div class="card" id="agingCard" style="margin-bottom:.6rem;padding:.7rem .85rem">
         <div class="row" style="gap:.6rem;flex-wrap:wrap">
@@ -885,6 +910,19 @@
         <div class="asn-actions" style="margin-top:.8rem">
           <button class="btn-sm" id="bnCancel">Cancel</button>
           <button class="btn-sm asn-primary" id="bnSave">Save bundle</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Daily low-stock prompt — first portal visit of the SGT day, per login -->
+    <div class="modal-bg hidden" id="lsModal">
+      <div class="modal-box">
+        <b style="font-size:.95rem">&#128276; Low stock today</b>
+        <div class="muted" style="font-size:.78rem;margin-top:.25rem" id="lsModalHint"></div>
+        <div id="lsModalList" class="cfm-prev" style="max-height:50vh;overflow:auto;margin-top:.5rem"></div>
+        <div class="asn-actions" style="margin-top:.8rem">
+          <button class="btn-sm" id="lsModalView">View in Stock</button>
+          <button class="btn-sm asn-primary" id="lsModalOk">Got it</button>
         </div>
       </div>
     </div>
