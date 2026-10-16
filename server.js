@@ -926,6 +926,31 @@ app.use((req, res, next) => {
 // Every multer-based route therefore re-applies tenantMiddleware immediately
 // after its multer middleware, to re-enter the correct context before doing
 // any tenant-scoped work.
+// ── PWA (installable app + Web Push) — FLAG: PWA_ENABLED=1 ─────────────────
+// Off by default. With the flag off /sw.js is the original pass-through worker
+// (public/sw.js) and /pwa-config.json reports everything off, so the portal's
+// install/push script does nothing. Push additionally needs VAPID_PUBLIC_KEY +
+// VAPID_PRIVATE_KEY. Registered BEFORE express.static so /sw.js is ours.
+const pushLib = require('./lib/push');           // tiny; web-push itself is lazy
+const PWA_ENABLED = /^(1|true|on|yes)$/i.test(String(process.env.PWA_ENABLED || ''));
+const PWA_BUILD = String(process.env.RAILWAY_DEPLOYMENT_ID || process.env.RAILWAY_GIT_COMMIT_SHA || Date.now()).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
+let _pwaSwSrc = null;
+app.get('/sw.js', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.type('application/javascript');
+  if (!PWA_ENABLED) return res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+  if (_pwaSwSrc === null) {
+    try { _pwaSwSrc = fs.readFileSync(path.join(__dirname, 'public', 'pwa', 'sw-shell.js'), 'utf8').replace('__BUILD__', PWA_BUILD); }
+    catch (_) { return res.sendFile(path.join(__dirname, 'public', 'sw.js')); }
+  }
+  res.send(_pwaSwSrc);
+});
+app.get('/pwa-config.json', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  const push = PWA_ENABLED && pushLib.enabled();
+  res.json({ pwa: PWA_ENABLED, push, vapidPublicKey: push ? pushLib.publicKey() : null });
+});
 // no-cache (= revalidate every load) on HTML/JS/CSS so every deploy reaches
 // browsers on the next reload — stale cached app.js caused phantom bugs.
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -6401,6 +6426,103 @@ async function runLowStockDigest() {
 function escHtmlLs(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 setTimeout(() => runLowStockDigest().catch(e => console.error('[low-stock digest]', e.message)), 150 * 1000).unref?.();
 setInterval(() => runLowStockDigest().catch(e => console.error('[low-stock digest]', e.message)), 60 * 60 * 1000).unref?.();
+// ── WEB PUSH: subscribe endpoints + daily low-stock push ───────────────────
+// Behind PWA_ENABLED + VAPID keys (pushEnabled()). Subscriptions are stored per
+// browser endpoint in the tenant db (lib/push.js), tagged with the portal
+// client + login (portal) or the staff user id (main). Alert types come from
+// the registry in lib/push.js, so goods-received / order-collected can be
+// added later without new endpoints.
+function pushEnabled() { return PWA_ENABLED && pushLib.enabled(); }
+function pushOff(res) { return res.status(404).json({ error: 'Push notifications are not switched on.' }); }
+app.get('/api/portal/push/status', requirePortalAuthMiddleware, (req, res) => {
+  if (!pushEnabled()) return res.json({ enabled: false });
+  const rows = pushLib.forUser(readDb(), 'portal', req.portalUserId, req.portalClient);
+  res.json({ enabled: true, publicKey: pushLib.publicKey(), devices: rows.length,
+             endpoints: rows.map(r => r.endpoint), alerts: [...pushLib.ALERTS.values()].filter(a => a.surface === 'portal') });
+});
+app.post('/api/portal/push/subscribe', express.json(), requirePortalAuthMiddleware, (req, res) => {
+  if (!pushEnabled()) return pushOff(res);
+  const db = readDb();
+  const row = pushLib.upsert(db, { surface: 'portal', client: req.portalClient, userId: req.portalUserId,
+                                   subscription: req.body && req.body.subscription, alerts: req.body && req.body.alerts });
+  if (!row) return res.status(400).json({ error: 'Invalid push subscription.' });
+  writeDb(db);
+  logAudit('portal_push_subscribed', { client: req.portalClient, by: req.portalUserId });
+  res.json({ ok: true, alerts: row.alerts });
+});
+app.post('/api/portal/push/unsubscribe', express.json(), requirePortalAuthMiddleware, (req, res) => {
+  if (!pushEnabled()) return pushOff(res);
+  const db = readDb();
+  const ok = pushLib.remove(db, String((req.body && req.body.endpoint) || ''), req.portalUserId);
+  if (ok) writeDb(db);
+  res.json({ ok: true, removed: ok });
+});
+// Staff (main app) — same store, surface 'main'. No staff alert is sent yet;
+// the endpoint exists so future ops alerts only need registerAlert + a sender.
+app.post('/api/push/subscribe', express.json(), requireAuth, (req, res) => {
+  if (!pushEnabled()) return pushOff(res);
+  if (!req.userId) return res.status(401).json({ error: 'Unauthorised' });
+  const db = readDb();
+  const row = pushLib.upsert(db, { surface: 'main', userId: req.userId, subscription: req.body && req.body.subscription, alerts: req.body && req.body.alerts });
+  if (!row) return res.status(400).json({ error: 'Invalid push subscription.' });
+  writeDb(db);
+  res.json({ ok: true, alerts: row.alerts });
+});
+app.post('/api/push/unsubscribe', express.json(), requireAuth, (req, res) => {
+  if (!pushEnabled()) return pushOff(res);
+  if (!req.userId) return res.status(401).json({ error: 'Unauthorised' });
+  const db = readDb();
+  const ok = pushLib.remove(db, String((req.body && req.body.endpoint) || ''), req.userId);
+  if (ok) writeDb(db);
+  res.json({ ok: true, removed: ok });
+});
+// Daily low-stock PUSH — once per SGT day after 09:00, per client, reusing
+// computeLowStock() (#89: available <= threshold, default 30, per-client and
+// per-SKU overrides). Independent of the e-mail digest switch: a client gets a
+// push only if one of their logins subscribed on a device. Stamped before the
+// send so a retry never double-notifies. Cheap: one item-master read per
+// client that HAS subscribers; nothing at all runs while push is off.
+async function runLowStockPush() {
+  if (!pushEnabled() || sgHour() < LOW_STOCK_DIGEST_HOUR_SGT) return;
+  const day = sgDateStr();
+  for (const t of tenantStore.listTenants()) {
+    const jobs = [];
+    tenantContext.run(t.id, () => {
+      const db = readDb();
+      const subs = pushLib.list(db).filter(r => r.surface === 'portal' && r.alerts && r.alerts.low_stock === true);
+      if (!subs.length) return;
+      let dirty = false;
+      for (const p of clientProfiles(db)) {
+        if (!p.portal?.enabled || p.low_stock_push_day === day) continue;
+        const cn = String(p.client).trim().toLowerCase();
+        const enabledUsers = new Set(portalUsers(p).filter(u => u.enabled !== false && portalUserVisibility(p, u).stock !== false).map(u => String(u.id)));
+        const mine = subs.filter(r => String(r.client || '').trim().toLowerCase() === cn && enabledUsers.has(r.userId));
+        if (!mine.length) continue;
+        p.low_stock_push_day = day; dirty = true;
+        const r = computeLowStock(db, p.client);
+        if (!r.tracked || !r.items.length) continue;
+        jobs.push({ client: p.client, rows: mine, n: r.items.length, top: r.items.slice(0, 3) });
+      }
+      if (dirty) writeDb(db);
+    });
+    for (const j of jobs) {
+      const body = j.top.map(i => `${i.sku}: ${i.available}`).join(', ') + (j.n > 3 ? ` +${j.n - 3} more` : '');
+      try {
+        const out = await pushLib.sendToSubscribers(j.rows, 'low_stock', {
+          title: `Low stock — ${j.n} SKU${j.n === 1 ? '' : 's'} at or below threshold`, body,
+          tag: 'low_stock-' + day, url: '/portal', icon: '/icons/portal-icon-192.png' });
+        tenantContext.run(t.id, () => {
+          if (out.gone.length) { const db = readDb(); for (const ep of out.gone) pushLib.remove(db, ep); writeDb(db); }
+          logAudit('portal_low_stock_push_sent', { client: j.client, sent: out.sent, failed: out.failed, removed: out.gone.length, skus: j.n });
+        });
+      } catch (e) { console.error('[low-stock push]', j.client, e.message); }
+    }
+  }
+}
+if (PWA_ENABLED) {
+  setTimeout(() => runLowStockPush().catch(e => console.error('[low-stock push]', e.message)), 180 * 1000).unref?.();
+  setInterval(() => runLowStockPush().catch(e => console.error('[low-stock push]', e.message)), 60 * 60 * 1000).unref?.();
+}
 // ── Bundles — a client defines what a kit/bundle SKU on THEIR OWN listings
 // resolves to, from THEIR OWN catalogue. Read is open to any signed-in login
 // (view-only included, same as Stock); writing is requirePortalWrite, same as
