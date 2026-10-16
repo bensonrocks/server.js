@@ -3117,16 +3117,6 @@ function _makeSkuLookup() {
     if (cache.has(key)) return cache.get(key);
     let hit = null;
     if (own) { try { const r = inventory.get(sku, own); if (r) hit = shape(r, own); } catch (_) {} }
-    // Betime family: the shared item master — best-stocked Betime account answers.
-    if (own && isBetimeClient(own) && (!hit || hit.stock <= 0)) {
-      for (const fid of betimeFamilyIds()) {
-        if (fid === own) continue;
-        let r = null; try { r = inventory.get(sku, fid); } catch (_) {}
-        if (!r) continue;
-        const cand = shape(r, fid);
-        if (!hit || cand.stock > hit.stock) hit = { ...cand, name: cand.name || (hit ? hit.name : ''), barcode: cand.barcode || (hit ? hit.barcode : '') };
-      }
-    }
     // THE OWN-CLIENT ROW IS NOT THE LAST WORD WHEN IT HOLDS NO STOCK. Two
     // everyday situations register a SKU at ZERO under an account that does
     // not hold the goods: the catalogue learned from passing orders
@@ -3196,10 +3186,6 @@ function batchStockTracked(batch, cache) {
   if (cache && cache.has(cid)) return cache.get(cid);
   let v = false;
   try { v = clientStockTracked(cid); } catch (_) { v = false; }
-  // A Betime profile is tracked when ANY Betime account holds the shared master.
-  if (!v && isBetimeClient(cid)) {
-    for (const fid of betimeFamilyIds()) { try { if (clientStockTracked(fid)) { v = true; break; } } catch (_) {} }
-  }
   if (cache) cache.set(cid, v);
   return v;
 }
