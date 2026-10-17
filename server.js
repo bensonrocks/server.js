@@ -8658,7 +8658,51 @@ function isCancelledOrderNo(db, orderNumber) {
   }
   return false;
 }
+// FILL-IF-BLANK WAYBILL (same rule as the OneCart sync's fillTracking): the
+// order's main waybill_number is written ONLY when it is blank and no other
+// order already holds that tracking number. Never overwrites. Returns
+// { ok:true } or { ok:false, reason }. Audit goes on the db in hand (the
+// caller persists it) — logAudit would re-read and be clobbered.
+function waybillFillBlocker(db, orderNumber, tracking) {
+  const on = String(orderNumber || '').trim();
+  const tr = String(tracking || '').trim().toUpperCase();
+  if (!on) return { code: 'no_order', reason: 'No order number' };
+  if (!tr) return { code: 'no_tracking', reason: 'No waybill given' };
+  const batch = findBatchForOrder(db, on);
+  const order = batch && (batch.orders || []).find(o => String(o.order_number) === on);
+  if (!order) return { code: 'not_found', reason: 'Order not found' };
+  if (isReferenceBatch(batch)) return { code: 'reference', reason: 'Order is a channel reference record, not a work order' };
+  if (((batch.orderStates || {})[on] || {}).status === 'unprocessed') return { code: 'cancelled', reason: 'Order is cancelled — takes no waybill' };
+  const cur = String(order.waybill_number || '').trim();
+  if (cur) return { code: 'not_blank', reason: `Order already has waybill ${cur}`, current: cur };
+  for (const b of db.batches || []) for (const o of b.orders || []) {
+    if (String(o.order_number) !== on && String(o.waybill_number || '').trim().toUpperCase() === tr) {
+      return { code: 'duplicate', reason: `Waybill ${tr} is already held by order ${o.order_number}`, heldBy: String(o.order_number) };
+    }
+  }
+  return null;
+}
+function fillWaybillIfBlank(db, orderNumber, tracking, auditType, extra) {
+  const blocker = waybillFillBlocker(db, orderNumber, tracking);
+  if (blocker) return { ok: false, ...blocker };
+  const on = String(orderNumber).trim();
+  const tr = String(tracking).trim();
+  const order = findBatchForOrder(db, on).orders.find(o => String(o.order_number) === on);
+  order.waybill_number = tr;
+  if (!db.auditLog) db.auditLog = [];
+  db.auditLog.push({ type: auditType, at: new Date().toISOString(), order: on, tracking: tr, ...(extra || {}) });
+  return { ok: true, order: on, waybill: tr };
+}
 function attachLabelPage(db, orderNumber, entry) {
+  const role = attachLabelPageInner(db, orderNumber, entry);
+  // A primary/same page with a tracking number fills a BLANK waybill only.
+  // Extra parcels, reference copies, replacements: never.
+  if ((role === 'primary' || role === 'same') && String((entry && entry.tracking) || '').trim()) {
+    fillWaybillIfBlank(db, safeLabelKey(orderNumber), entry.tracking, 'label_waybill_filled', { importId: entry.importId, pageIndex: entry.pageIndex });
+  }
+  return role;
+}
+function attachLabelPageInner(db, orderNumber, entry) {
   if (!db.orderLabels) db.orderLabels = {};
   orderNumber = safeLabelKey(orderNumber);
   // The literal comparisons are repeated HERE, at the assignment site, on
@@ -19737,6 +19781,20 @@ app.post('/api/orders/print-labels', express.json(), async (req, res) => {
 // Marking it CANCELLED keeps the record (so the dedup still sees it), takes it
 // off the packers' list, and releases anything it had reserved. That is the
 // primitive this needs, in bulk, with the reason on the trail.
+app.post('/api/orders/:orderNumber/set-waybill', express.json(), (req, res) => {
+  if (req.headers['x-master-key'] !== MASTER_PASS) {
+    const role = readUsers().find(u => u.id === req.userId)?.role || 'warehouse';
+    if (role !== 'admin') return res.status(403).json({ error: 'Administrator role required' });
+  }
+  const orderNumber = String(req.params.orderNumber || '').trim();
+  const waybill = String((req.body && req.body.waybill) || '').trim();
+  if (!waybill) return res.status(400).json({ error: 'Body must carry {waybill}' });
+  const db = readDb();
+  const r = fillWaybillIfBlank(db, orderNumber, waybill, 'manual_waybill_set', { by: req.userId || _tokenUserId(req) || '' });
+  if (!r.ok) return res.status(r.code === 'not_found' ? 404 : 409).json({ error: r.reason, code: r.code, ...(r.current ? { current: r.current } : {}), ...(r.heldBy ? { heldBy: r.heldBy } : {}) });
+  writeDb(db);
+  res.json(r);
+});
 app.post('/api/orders/bulk-cancel', express.json(), (req, res) => {
   const wanted = [...new Set((req.body?.orders || []).map(String))];
   const reason = String(req.body?.reason || '').trim();

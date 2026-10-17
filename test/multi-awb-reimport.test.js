@@ -10,6 +10,7 @@ const grab = (a, b) => src.slice(src.indexOf(a), src.indexOf(b, src.indexOf(a)))
 eval(grab('function labelPagesOf(ref)', '// Attach one page to an order.'));
 eval(grab('const _BAD_LABEL_KEY', '// Remove one page from an order'));
 const referenceOnlyOrder = () => null;
+const findBatchForOrder = () => null;   // no batches here: the waybill fill-if-blank finds no order and writes nothing
 
 const db = { orderLabels: {} };
 const N = '174179133225806';
