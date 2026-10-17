@@ -3840,6 +3840,29 @@ business, so it was rebuilt as a proper dashboard.
   horizontal overflow, and NO third-party/other-branch names anywhere in the
   rendered DOM.
 
+### Orders drill-down — tap a number, see the orders behind it
+
+Per the user: every non-zero count in the Orders tab's day table (DAY | IN
+PROGRESS | COMPLETED | CANCELLED) and the In progress / Completed / Cancelled
+tiles are buttons (`.dd-n`, `.dd-tile`) that open a bottom sheet (`#ddModal`)
+listing those orders: order no, channel, date, status, waybill, item lines
+(SKU / name / qty), and for a cancellation its reason, time and automatic
+(no stock / not enough stock) flag. Each card expands to the SAME
+`orderDetailHtml` the list uses (same endpoint, same cache).
+
+- **`GET /api/portal/orders/drilldown?bucket=open|done|cancelled[&day=YYYY-MM-DD]`**
+  — no day = the tile (all recent). Scoped to `req.portalClient` on the server;
+  there is no client parameter. Sits under the `orders` visibility gate.
+- **THE SAME ORDERS THE NUMBER COUNTED.** Same population as `/api/portal/orders`
+  (client-withdrawn excluded, newest `PORTAL_ORDERS_MAX`), same day rule
+  (`portalOrderDay` mirrors `orderDay()` in portal.js). Change one, change both —
+  `test/portal-order-drilldown.test.js` rebuilds every cell from the list and
+  asserts the drill-down returns exactly those orders.
+- Tapping the number does NOT also filter by day; the rest of the row still does.
+- The Overview's "Last three days" table was left as-is (whole row opens Orders).
+- `portalLineName` is shared with `/api/portal/order/:n` so a line is named the
+  same in both.
+
 ### EVERYTHING a client sends waits for us — inbound as well as outbound
 
 Per the user: *"whatever the client uploads at its end — inbound/outbound. office
