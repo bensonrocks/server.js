@@ -822,16 +822,22 @@
     const today = sgToday();
     // A ZERO IS A DASH, not a 0 — the eye should land on the days something
     // actually happened, especially the cancellations.
-    const cell = (v, colour) => v ? `<b style="color:${colour}">${num(v)}</b>` : '<span class="muted">—</span>';
+    // A NON-ZERO COUNT IS A BUTTON that opens the orders behind it (the
+    // drill-down sheet). The rest of the row still filters the list to that
+    // day, as it always has. A dash has nothing behind it, so it stays text.
+    const cell = (v, colour, bucket, day) => v
+      ? `<button type="button" class="dd-n" data-dd="${bucket}" data-day="${esc(day)}" style="color:${colour}"
+           title="Show these ${num(v)} order${v === 1 ? '' : 's'}" aria-label="Show ${num(v)} ${DD_WORD[bucket]} order${v === 1 ? '' : 's'} for ${day === today ? 'today' : fmtDay(day)}">${num(v)}</button>`
+      : '<span class="muted">—</span>';
     return `<div class="dbd-wrap">
       <table class="dbd">
         <thead><tr><th>Day</th><th>In progress</th><th>Completed</th><th>Cancelled</th></tr></thead>
         <tbody>${shown.map(([day, b]) => `
           <tr class="dbd-row${orDay === day ? ' on' : ''}" data-day="${esc(day)}" title="Show only this day">
             <td>${day === today ? '<b>Today</b>' : fmtDay(day)}</td>
-            <td>${cell(b.open, 'inherit')}</td>
-            <td>${cell(b.done, 'var(--ok)')}</td>
-            <td>${cell(b.cancelled, 'var(--bad)')}</td>
+            <td>${cell(b.open, 'inherit', 'open', day)}</td>
+            <td>${cell(b.done, 'var(--ok)', 'done', day)}</td>
+            <td>${cell(b.cancelled, 'var(--bad)', 'cancelled', day)}</td>
           </tr>`).join('')}</tbody>
       </table>
       ${rows.length > DAY_ROWS
@@ -866,6 +872,115 @@
     </div>`;
   }
 
+  // ── DRILL-DOWN: the orders behind a number ──────────────────────────────
+  // Per the user: tapping a count in the day table, or one of the three
+  // status tiles, opens the orders it was counted from — order no, channel,
+  // date, status, waybill, item lines, and for a cancellation its reason and
+  // time. The list comes from the SERVER (/api/portal/orders/drilldown), which
+  // scopes it to the signed-in client and applies the same day rule as
+  // orderDay() above, so the sheet always agrees with the number tapped.
+  // Each order expands to the SAME detail view the Orders list uses
+  // (orderDetailHtml, same endpoint, same cache).
+  const DD_WORD = { open: 'in-progress', done: 'completed', cancelled: 'cancelled' };
+  const DD_TITLE = { open: 'In progress', done: 'Completed', cancelled: 'Cancelled' };
+  const ddOpen = new Set();
+  let dd = null;   // { bucket, day, state: 'busy'|'done'|'error', rows, seq }
+  let ddSeq = 0;
+
+  function ddTile(n, bucket, label, colour) {
+    const inner = `<div class="v n" style="color:${colour}">${num(n)}</div><div class="l">${label}</div>`;
+    if (!n) return `<div>${inner}</div>`;
+    return `<button type="button" class="dd-tile" data-dd="${bucket}" data-day=""
+      title="Show these ${num(n)} order${n === 1 ? '' : 's'}" aria-label="Show ${num(n)} ${DD_WORD[bucket]} order${n === 1 ? '' : 's'}">${inner}<div class="dd-hint">view &#8250;</div></button>`;
+  }
+
+  const AUTO_WHY = { no_stock: 'no stock', short_stock: 'not enough stock' };
+  function ddCardHtml(o) {
+    const s = statusOf(o.status);
+    const isOpen = ddOpen.has(o.order_number);
+    const det = orderDetail.get(o.order_number);
+    const when = o.status === 'done' && o.completed_at
+      ? `Completed ${fmtDateTime(o.completed_at)}` : `Ordered ${fmtDate(o.date)}`;
+    const cx = o.cancelled;
+    return `<div class="card dd-card" data-dd-order="${esc(o.order_number)}" role="button" tabindex="0" aria-expanded="${isOpen}">
+      <div class="row" style="align-items:flex-start;gap:.5rem">
+        <div style="min-width:0;flex:1">
+          <div class="mono" style="font-weight:800;font-size:.9rem;word-break:break-all">${esc(o.order_number)}</div>
+          <div class="muted" style="font-size:.74rem">${esc(o.channel || '—')} · ${when}</div>
+        </div>
+        <span class="pill ${s.pill}">${s.label}</span>
+      </div>
+      <div class="dd-meta">
+        <span>${o.waybill ? `Waybill <b class="mono">${esc(o.waybill)}</b>` : '<span class="muted">No waybill yet</span>'}</span>
+        <span class="muted">${num(o.lines.length)} line${o.lines.length === 1 ? '' : 's'} · ${num(o.total_qty)} pcs</span>
+      </div>
+      ${cx ? `<div class="dd-cx">
+        <b>Cancelled${cx.at ? ` ${fmtDateTime(cx.at)}` : ''}${cx.automatic ? ` · automatic${AUTO_WHY[cx.why] ? ` (${AUTO_WHY[cx.why]})` : ''}` : ''}</b>
+        ${cx.reason ? `<div>${esc(cx.reason)}</div>` : '<div class="muted">No reason was recorded.</div>'}
+      </div>` : ''}
+      <table class="dtab dd-lines"><thead><tr><th>SKU</th><th>Product</th><th class="r">Qty</th></tr></thead><tbody>
+        ${o.lines.map(l => `<tr><td class="mono">${esc(l.sku)}</td><td>${esc(l.name || '—')}${l.from_bundle ? ` <span class="pill p-bundle" style="font-size:.6rem">&#127873; ${esc(l.from_bundle)}</span>` : ''}</td><td class="r n">${num(l.qty)}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="dd-more">${isOpen ? '▲ hide details' : '▼ full order details'}</div>
+      ${isOpen ? `<div class="detail">${det ? orderDetailHtml(det) : '<div class="skel" style="height:58px"></div>'}</div>` : ''}
+    </div>`;
+  }
+
+  function renderDrill() {
+    if (!dd) return;
+    const n = dd.rows ? dd.rows.length : 0;
+    const scope = dd.day ? (dd.day === sgToday() ? 'today' : fmtDay(dd.day)) : 'your recent orders';
+    $('ddTitle').textContent = `${DD_TITLE[dd.bucket]} · ${dd.day ? (dd.day === sgToday() ? 'Today' : fmtDay(dd.day)) : 'All recent'}`;
+    $('ddSub').textContent = dd.state === 'done'
+      ? `${num(n)} order${n === 1 ? '' : 's'} — ${scope}. Tap one for its full details.`
+      : '';
+    if (dd.state === 'busy') { $('ddBody').innerHTML = '<div class="skel" style="height:90px"></div><div class="skel" style="height:90px;margin-top:.5rem"></div>'; return; }
+    if (dd.state === 'error') { $('ddBody').innerHTML = emptyState('&#9888;', 'Could not load these orders', 'Check your connection and try again.'); return; }
+    if (!n) { $('ddBody').innerHTML = emptyState('&#128269;', 'No orders here any more', 'The numbers have moved on since this screen was drawn — refresh to see the latest.'); return; }
+    $('ddBody').innerHTML = dd.rows.map(ddCardHtml).join('');
+  }
+
+  async function openDrill(bucket, day) {
+    if (!DD_TITLE[bucket]) return;
+    const seq = ++ddSeq;
+    dd = { bucket, day: day || '', state: 'busy', rows: null };
+    ddOpen.clear();
+    $('ddModal').classList.remove('hidden');
+    document.body.classList.add('dd-lock');
+    renderDrill();
+    $('ddClose').focus();
+    try {
+      const r = await api(`/api/portal/orders/drilldown?bucket=${encodeURIComponent(bucket)}${day ? `&day=${encodeURIComponent(day)}` : ''}`);
+      const d = await r.json().catch(() => ({}));
+      if (seq !== ddSeq) return;                 // a newer tap superseded this one
+      if (!r.ok) throw new Error(d.error || 'failed');
+      dd.rows = d.orders || []; dd.state = 'done';
+    } catch (_) {
+      if (seq !== ddSeq) return;
+      dd.state = 'error';
+    }
+    renderDrill();
+  }
+  function closeDrill() {
+    ddSeq++; dd = null;
+    $('ddModal').classList.add('hidden');
+    document.body.classList.remove('dd-lock');
+  }
+  async function toggleDrillOrder(orderNumber) {
+    if (ddOpen.has(orderNumber)) { ddOpen.delete(orderNumber); renderDrill(); return; }
+    ddOpen.add(orderNumber);
+    renderDrill();
+    if (orderDetail.has(orderNumber)) return;
+    try {
+      const r = await api('/api/portal/order/' + encodeURIComponent(orderNumber));
+      const d = await r.json();
+      orderDetail.set(orderNumber, r.ok ? d : { error: d.error || 'Could not load the order detail.' });
+    } catch (e) {
+      orderDetail.set(orderNumber, { error: 'Could not load the order detail — check your connection.' });
+    }
+    if (ddOpen.has(orderNumber)) renderDrill();
+  }
+
   function renderOrders() {
     const q = ($('orSearch').value || '').trim().toLowerCase();
     const rows = orders.filter(o => {
@@ -897,9 +1012,9 @@
     const dayRows = ordersByDay();
     $('orSummary').innerHTML = `<div class="card" style="margin-bottom:.6rem">
       <div class="strip s4">
-        <div><div class="v n">${num(open)}</div><div class="l">In progress</div></div>
-        <div><div class="v n" style="color:var(--ok)">${num(done)}</div><div class="l">Completed</div></div>
-        <div><div class="v n" style="color:${cancelled ? 'var(--bad)' : 'var(--muted)'}">${num(cancelled)}</div><div class="l">Cancelled</div></div>
+        ${ddTile(open, 'open', 'In progress', 'inherit')}
+        ${ddTile(done, 'done', 'Completed', 'var(--ok)')}
+        ${ddTile(cancelled, 'cancelled', 'Cancelled', cancelled ? 'var(--bad)' : 'var(--muted)')}
         <div><div class="v n">${num(pcs)}</div><div class="l">Pieces total</div></div>
       </div>
       <div class="muted" style="text-align:center;font-size:.66rem;margin-top:.3rem">
@@ -2444,6 +2559,10 @@
     // A tile, an alert or a bar on the chart — go to its tab with its filter on.
     const go = e.target.closest('.ov-go');
     if (go) { openFrom(go.dataset.go, go.dataset.f, go.dataset.day || ''); return; }
+    // A count or a status tile opens its orders — checked BEFORE the row, so
+    // tapping a number does not also filter the list to that day.
+    const ddBtn = e.target.closest('.dd-n, .dd-tile');
+    if (ddBtn) { e.stopPropagation(); openDrill(ddBtn.dataset.dd, ddBtn.dataset.day || ''); return; }
     const row = e.target.closest('.dbd-row');
     if (!row) return;
     orDay = (orDay === row.dataset.day) ? '' : row.dataset.day;   // tap again to clear
@@ -2611,22 +2730,42 @@
     const aw = e.target.closest('.nwAttachWb');
     if (aw) { e.preventDefault(); e.stopPropagation(); window.portalAttachWaybill && window.portalAttachWaybill(aw.dataset.o); return; }
     const wb = e.target.closest('.wbpill[data-o]');
-    if (wb) {
-      e.stopPropagation();
-      const orig = wb.textContent;
-      wb.textContent = 'opening…';
-      try {
-        const r = await api('/api/portal/order/' + encodeURIComponent(wb.dataset.o) + '/label');
-        if (!r.ok) { alert('That waybill is not available.'); return; }
-        const url = URL.createObjectURL(await r.blob());
-        window.open(url, '_blank');
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
-      } catch (_) { alert('Could not open the waybill.'); }
-      finally { wb.textContent = orig; }
-      return;
-    }
+    if (wb) { e.stopPropagation(); openWaybillPill(wb); return; }
     const card = e.target.closest('.card[data-order]');
     if (card) toggleOrder(card.dataset.order);
+  });
+  async function openWaybillPill(wb) {
+    const orig = wb.textContent;
+    wb.textContent = 'opening…';
+    try {
+      const r = await api('/api/portal/order/' + encodeURIComponent(wb.dataset.o) + '/label');
+      if (!r.ok) { alert('That waybill is not available.'); return; }
+      const url = URL.createObjectURL(await r.blob());
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (_) { alert('Could not open the waybill.'); }
+    finally { wb.textContent = orig; }
+  }
+
+  // The drill-down sheet: close button, backdrop, Escape; a card expands to
+  // the full order detail; the waybill pill inside it opens the label.
+  $('ddClose').addEventListener('click', closeDrill);
+  $('ddModal').addEventListener('click', e => {
+    if (e.target === $('ddModal')) { closeDrill(); return; }
+    const wb = e.target.closest('.wbpill[data-o]');
+    if (wb) { e.stopPropagation(); openWaybillPill(wb); return; }
+    if (e.target.closest('.detail')) return;   // reading the detail must not collapse it
+    const card = e.target.closest('.dd-card[data-dd-order]');
+    if (card) toggleDrillOrder(card.dataset.ddOrder);
+  });
+  $('ddModal').addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeDrill(); return; }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('.dd-card[data-dd-order]')) {
+      e.preventDefault(); toggleDrillOrder(e.target.dataset.ddOrder);
+    }
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && dd) closeDrill();
   });
 
   // Coming back to the tab after a while should show current numbers, not a

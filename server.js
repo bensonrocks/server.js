@@ -6546,12 +6546,11 @@ app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res
         // called.
         const lookup = _makeSkuLookup();
         return (o.lines || []).map(l => {
-          const stored = l.description || '';
-          const realDesc = (stored && stored !== l.sku) ? stored : '';
-          const hit = lookup(b, l.sku);
           return {
             sku: l.sku,
-            description: realDesc || hit.name || String(l.source_description || '').trim() || '',
+            // Shared with the Orders drill-down (portalLineName) so the two
+            // can never name the same line differently.
+            description: portalLineName(b, l, lookup),
             qty: l.qty || 0, packed: scanned[l.sku] || 0,
             batch_number: l.batch_number || '', expiry_date: l.expiry_date || '',
             // Which kit SKU this line was substituted for (explodeBundleRows) —
@@ -6810,6 +6809,116 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
     return res.json(out.slice(0, PORTAL_SEARCH_MAX));
   }
   res.json(out.slice(0, PORTAL_ORDERS_MAX));
+});
+// ── DRILL-DOWN: the orders behind one number on the Orders tab ───────────────
+// Per the user: a client taps a count in the per-day table (or one of the
+// In progress / Completed / Cancelled tiles above it) and sees exactly the
+// orders that make up that number — order no, channel, date, status, waybill
+// and item lines, plus the reason and time for a cancellation.
+//
+// THE SAME ORDERS THE NUMBER WAS COUNTED FROM. The screen counts the rows of
+// `/api/portal/orders` (the newest PORTAL_ORDERS_MAX, client-withdrawn ones
+// excluded) and files each under a day by `orderDay()` in portal.js. This
+// route walks the same batches in the same order, applies the same exclusion,
+// sort and cap, and the same day rule (`portalOrderDay`) — so "Today 2" opens
+// two orders, never three. A test asserts the counts agree.
+//
+// CLIENT ISOLATION IS ENFORCED HERE, NOT IN THE BROWSER: only batches whose
+// client_name is the signed-in portal client are ever read, whatever the
+// query string says. There is no client parameter to tamper with.
+const PORTAL_DRILL_BUCKETS = new Set(['open', 'done', 'cancelled']);
+function portalBucketOf(status) {
+  if (status === 'unprocessed') return 'cancelled';
+  if (status === 'done') return 'done';
+  return 'open';
+}
+function sgDayOfSrv(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  return isNaN(d) ? '' : d.toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+}
+// MIRRORS orderDay() in public/portal.js — cancelled on the day it was
+// cancelled, completed on the day it was finished, open on the day it arrived.
+function portalOrderDay(row) {
+  if (row.status === 'unprocessed') return sgDayOfSrv(row.cancelled_at || row.date);
+  if (row.status === 'done') return sgDayOfSrv(row.completed_at || row.date);
+  return sgDayOfSrv(row.date);
+}
+// Where the order came from, in words a client recognises. The marketplace
+// name when we have one; otherwise how it reached us. Never invented.
+function portalChannelOf(o, b) {
+  const p = String(o.platform || '').trim();
+  const shop = String(o.shop_name || '').trim();
+  if (p && shop && shop.toLowerCase() !== p.toLowerCase()) return `${p} · ${shop}`;
+  if (p || shop) return p || shop;
+  if (o.shopify_id) return 'Shopify';
+  if (o.lazada_order_id) return 'Lazada';
+  if (o.shopee_order_sn) return 'Shopee';
+  if (o.keyed_in_portal || o.order_source === 'portal' || b.source === 'portal') return 'Client portal';
+  if (o.zort_id || b.uploaded_by === 'zort-sync') return 'ZORT';
+  if (o.onecart_id || b.uploaded_by === 'onecart-sync') return 'OneCart';
+  return 'Order upload';
+}
+// A line's product name — same "description equal to the SKU is a
+// placeholder, not a name" rule as /api/portal/order/:orderNumber.
+function portalLineName(b, l, lookup) {
+  const stored = l.description || '';
+  const realDesc = (stored && stored !== l.sku) ? stored : '';
+  return realDesc || lookup(b, l.sku).name || String(l.source_description || '').trim() || '';
+}
+app.get('/api/portal/orders/drilldown', requirePortalAuthMiddleware, (req, res) => {
+  const bucket = String(req.query.bucket || '').trim().toLowerCase();
+  const day = String(req.query.day || '').trim();
+  if (!PORTAL_DRILL_BUCKETS.has(bucket)) return res.status(400).json({ error: 'bucket must be open, done or cancelled' });
+  if (day && !/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
+  const client = req.portalClient.trim().toLowerCase();
+  const db = readDb();
+  const lookup = _makeSkuLookup();
+  // Pass 1 — exactly the population the list (and so the count) is built from.
+  const all = [];
+  for (const b of db.batches || []) {
+    if (String(b.client_name || '').trim().toLowerCase() !== client) continue;
+    for (const o of b.orders || []) {
+      const st = b.orderStates?.[o.order_number] || {};
+      if (isClientCancelled(st)) continue;
+      all.push({ b, o, st, date: o.date || b.uploaded_at });
+    }
+  }
+  all.sort((x, y) => String(y.date || '').localeCompare(String(x.date || '')));
+  const out = [];
+  for (const { b, o, st, date } of all.slice(0, PORTAL_ORDERS_MAX)) {
+    const status = st.status || 'pending';
+    if (portalBucketOf(status) !== bucket) continue;
+    const cancelledAt = status === 'unprocessed' ? cancelledAtOf(st) : null;
+    const completedAt = st.endTime || null;
+    if (day && portalOrderDay({ status, date, completed_at: completedAt, cancelled_at: cancelledAt }) !== day) continue;
+    const lines = (o.lines || []).map(l => ({
+      sku: l.sku, name: portalLineName(b, l, lookup), qty: l.qty || 0,
+      from_bundle: l.from_bundle || '',
+    }));
+    out.push({
+      order_number: o.order_number,
+      channel: portalChannelOf(o, b),
+      date,
+      status,
+      waybill: o.waybill_number || '',
+      completed_at: completedAt,
+      total_qty: o.total_qty || lines.reduce((s, l) => s + (l.qty || 0), 0),
+      lines,
+      cancelled: status === 'unprocessed' ? {
+        at: cancelledAt,
+        reason: st.unprocessed_reason || '',
+        automatic: !!st.auto_cancelled,
+        // Auto-cancel records WHY in a word the client can read — no stock at
+        // all vs. not enough of it (applyAutoCancel stamps it).
+        why: (st.auto_cancelled && typeof st.auto_cancelled === 'object') ? (st.auto_cancelled.why || '') : '',
+      } : null,
+    });
+  }
+  // Newest activity first inside the list — the day it counts on.
+  out.sort((x, y) => String(y.cancelled?.at || y.completed_at || y.date || '')
+    .localeCompare(String(x.cancelled?.at || x.completed_at || x.date || '')));
+  res.json({ bucket, day: day || null, total: out.length, orders: out });
 });
 // Inbound — the client's receipts, incl. discrepancy/damage counts, SLA state
 // and GRN link. On-screen history is capped at PORTAL_SCREEN_DAYS; anything
