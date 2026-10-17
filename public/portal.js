@@ -1022,7 +1022,7 @@
               ${fmtDate(o.date)} · ${num(o.lines)} line${o.lines === 1 ? '' : 's'} · ${num(o.total_qty)} pcs
             </div>
             ${o.waybill ? `<div class="muted mono" style="font-size:.7rem;margin-top:.1rem">Waybill ${esc(o.waybill)}</div>` : ''}
-            <div style="margin-top:.2rem"><a href="/api/portal/order/${encodeURIComponent(o.order_number)}/do?token=${encodeURIComponent(token)}" target="_blank" rel="noopener" style="font-size:.72rem">&#128196; Delivery Order (PDF)</a></div>
+            <div style="margin-top:.2rem"><a href="/api/portal/order/${encodeURIComponent(o.order_number)}/do?token=${encodeURIComponent(token)}" target="_blank" rel="noopener" style="font-size:.72rem">&#128196; Delivery Order (PDF)</a>${!o.waybill && canWrite() && !['done', 'unprocessed'].includes(o.status) ? ` · <a href="#" class="nwAttachWb" data-o="${esc(o.order_number)}" style="font-size:.72rem">&#127991; Attach waybill</a>` : ''}</div>
           </div>
           <div style="text-align:right">
             <span class="pill ${s.pill}">${s.label}</span>
@@ -2046,48 +2046,196 @@
     rejected: ['p-sla-miss', 'Not accepted'],
   };
 
-  // ── NEW ORDER (keyed in) ─────────────────────────────────────────────────
+  // ── NEW ORDER — key-in form or Excel/CSV, then waybills ──────────────────
+  // Step 1 posts to /api/portal/orders/new/submit, which runs the same intake
+  // pipeline as POST /api/orders/intake. Step 2 attaches a label file or a
+  // tracking number per created order; it can be skipped and done later from
+  // the order card ("Attach waybill").
   (function setupNewOrder() {
     const $ = id => document.getElementById(id);
-    if (!$('noOpen')) return;
-    let items = [];
-    const addLine = () => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = '<td><input class="noSku" list="noSkuList" placeholder="Search SKU or name" style="width:100%"></td><td class="noDesc muted" style="font-size:.8rem"></td><td><input class="noQty" type="number" min="1" value="1" style="width:5rem"></td><td><button type="button" class="btn-sm noDel">&#10005;</button></td>';
-      const sku = tr.querySelector('.noSku');
-      sku.addEventListener('change', () => {
-        const v = sku.value.split(' — ')[0].trim(); sku.value = v;
-        const it = items.find(x => x.sku === v);
-        tr.querySelector('.noDesc').textContent = it ? (it.name || '') + (it.available != null ? ` · available ${it.available}` : '') : (v ? 'Not in your item master' : '');
-      });
-      tr.querySelector('.noDel').onclick = () => tr.remove();
-      $('noLines').appendChild(tr);
+    if (!$('nwOpen')) return;
+    let items = [], mode = 'form', preview = null, lastResults = [];
+    const msg = (id, kind, html) => { const el = $(id); el.className = 'asn-msg' + (kind ? ' ' + kind : ''); el.innerHTML = html; el.classList.toggle('hidden', !html); };
+    const download = async (url, name, opts) => {
+      const r = await api(url, opts);
+      if (!r.ok) { alert('Download failed.'); return; }
+      const href = URL.createObjectURL(await r.blob());
+      const a = document.createElement('a'); a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 30000);
     };
-    $('noOpen').onclick = async () => {
-      $('noForm').classList.remove('hidden'); $('noMsg').textContent = '';
-      if (!$('noLines').children.length) addLine();
+    const addLine = (sku = '', qty = 1) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td><input class="nwSku" list="nwSkuList" placeholder="Search SKU" style="width:100%;padding:.45rem;border:1.5px solid var(--border);border-radius:8px"></td><td class="nwDesc muted"></td><td class="r"><input class="nwQty" type="number" min="1" step="1" style="width:5rem;padding:.45rem;border:1.5px solid var(--border);border-radius:8px"></td><td><button type="button" class="btn-sm nwDel" title="Remove line" style="padding:.35rem .55rem">&#10005;</button></td>';
+      const s = tr.querySelector('.nwSku'); s.value = sku; tr.querySelector('.nwQty').value = qty;
+      const sync = () => {
+        const v = s.value.split(' — ')[0].trim(); s.value = v;
+        const it = items.find(x => x.sku.toUpperCase() === v.toUpperCase());
+        tr.querySelector('.nwDesc').textContent = it ? it.name || '' : (v ? '⚠ Not in your item master' : '');
+        tr.classList.toggle('nw-bad', !!v && !it);
+      };
+      s.addEventListener('change', sync); if (sku) setTimeout(sync);
+      tr.querySelector('.nwDel').onclick = () => tr.remove();
+      $('nwLines').appendChild(tr);
+    };
+    const setMode = m => {
+      mode = m;
+      document.querySelectorAll('[data-nwmode]').forEach(b => b.classList.toggle('on', b.dataset.nwmode === m));
+      $('nwForm').classList.toggle('hidden', m !== 'form'); $('nwFile').classList.toggle('hidden', m !== 'file');
+    };
+    const showStep = n => {
+      $('nwStep1').classList.toggle('hidden', n !== 1); $('nwStep2').classList.toggle('hidden', n !== 2);
+      $('nwStepLabel').textContent = n === 1 ? 'Step 1 of 2 — create orders' : 'Step 2 of 2 — attach waybills (optional)';
+    };
+    const resetForm = () => {
+      ['nwOrderNo', 'nwChannel', 'nwName', 'nwPhone', 'nwAddress', 'nwPostal', 'nwRemarks'].forEach(id => { $(id).value = ''; });
+      $('nwLines').innerHTML = ''; addLine(); msg('nwFormMsg', '', '');
+      preview = null; $('nwPreview').innerHTML = ''; msg('nwFileMsg', '', ''); $('nwFileInput').value = '';
+    };
+    const open = async () => {
+      $('nwWizard').classList.remove('hidden'); showStep(1);
+      if (!$('nwLines').children.length) addLine();
       try {
-        const d = await (await api('/api/portal/stock')).json();
-        items = (d && d.rows) || [];
-        $('noSkuList').innerHTML = items.map(i => `<option value="${esc(i.sku)} — ${esc(i.name || '')}"></option>`).join('');
+        const d = await (await api('/api/portal/orders/new/items')).json();
+        items = (d && d.items) || [];
+        $('nwSkuList').innerHTML = items.map(i => `<option value="${esc(i.sku)} — ${esc(i.name || '')}"></option>`).join('');
       } catch (_) {}
     };
-    $('noCancel').onclick = () => $('noForm').classList.add('hidden');
-    $('noAddLine').onclick = addLine;
-    $('noForm').onsubmit = async (ev) => {
-      ev.preventDefault();
-      const body = {
-        ship_to_name: $('noShipTo').value, address: $('noAddress').value, postal: $('noPostal').value,
-        phone: $('noPhone').value, contact: $('noContact').value, delivery_date: $('noDate').value, remarks: $('noRemarks').value,
-        lines: [...$('noLines').querySelectorAll('tr')].map(tr => ({ sku: tr.querySelector('.noSku').value.trim(), qty: tr.querySelector('.noQty').value })),
-      };
-      $('noMsg').textContent = 'Submitting…';
+    window.portalNewOrderOpen = open;
+    $('nwOpen').onclick = () => { if (!canWrite()) { alert('This login is view-only.'); return; } open(); };
+    document.querySelectorAll('.nwCancel').forEach(b => { b.onclick = () => { $('nwWizard').classList.add('hidden'); resetForm(); setMode('form'); loadAll(); }; });
+    document.querySelectorAll('[data-nwmode]').forEach(b => { b.onclick = () => setMode(b.dataset.nwmode); });
+    $('nwAddLine').onclick = () => addLine();
+    $('nwTplXlsx').onclick = () => download('/api/portal/orders/new/template', 'IdealOne-new-orders-template.xlsx');
+    $('nwTplCsv').onclick = () => download('/api/portal/orders/new/template?format=csv', 'IdealOne-new-orders-template.csv');
+
+    // Client-side check mirrors the server's rules; the server re-checks all.
+    const formOrder = () => ({
+      order_number: $('nwOrderNo').value.trim(), channel: $('nwChannel').value.trim(), recipient_name: $('nwName').value.trim(),
+      phone: $('nwPhone').value.trim(), address: $('nwAddress').value.trim(), postal_code: $('nwPostal').value.trim(), remarks: $('nwRemarks').value.trim(),
+      lines: [...$('nwLines').querySelectorAll('tr')].map(tr => ({ sku: tr.querySelector('.nwSku').value.split(' — ')[0].trim(), qty: tr.querySelector('.nwQty').value })).filter(l => l.sku || (l.qty && l.qty !== '1')),
+    });
+    const formErrors = o => {
+      const e = [];
+      const mark = (id, bad) => $(id).parentElement.classList.toggle('nw-bad', bad);
+      mark('nwName', !o.recipient_name); if (!o.recipient_name) e.push('Recipient name is required.');
+      mark('nwPhone', !/^\+?[0-9 ()-]{6,20}$/.test(o.phone)); if (!o.phone) e.push('Phone is required.'); else if (!/^\+?[0-9 ()-]{6,20}$/.test(o.phone)) e.push('Phone must be 6–20 digits.');
+      mark('nwAddress', !o.address); if (!o.address) e.push('Address is required.');
+      mark('nwPostal', !/^\d{6}$/.test(o.postal_code)); if (!/^\d{6}$/.test(o.postal_code)) e.push('Postal code must be 6 digits.');
+      if (!o.lines.length) e.push('Add at least one item line.');
+      for (const l of o.lines) {
+        if (!items.some(x => x.sku.toUpperCase() === l.sku.toUpperCase())) e.push(`Unknown SKU ${l.sku || '(blank)'} — pick one from your item master.`);
+        if (!/^\d+$/.test(String(l.qty)) || Number(l.qty) < 1) e.push(`Qty for ${l.sku || 'a line'} must be a whole number above 0.`);
+      }
+      return e;
+    };
+    const submit = async (orders, submitMode, msgId) => {
+      msg(msgId, 'busy', 'Creating…');
       try {
-        const r = await (await api('/api/portal/new-order', { method: 'POST', body: JSON.stringify(body) })).json();
-        if (!r || r.error) { $('noMsg').textContent = '⚠ ' + ((r && (r.errors || [r.error]).join(' ')) || 'Failed'); return; }
-        $('noMsg').innerHTML = `✅ Order <b>${esc(r.orderNumber)}</b> sent for approval. <a href="${r.doUrl}?token=${encodeURIComponent(token)}" target="_blank" rel="noopener">&#128196; Download Delivery Order (PDF)</a>`;
-        $('noLines').innerHTML = ''; addLine();
-      } catch (e) { $('noMsg').textContent = '⚠ ' + e.message; }
+        const r = await api('/api/portal/orders/new/submit', { method: 'POST', body: JSON.stringify({ mode: submitMode, orders }) });
+        const d = await r.json();
+        if (!d || !Array.isArray(d.results)) { msg(msgId, 'err', '⚠ ' + esc((d && d.error) || 'Could not create orders.')); return; }
+        msg(msgId, '', ''); showResults(d.results);
+      } catch (e) { msg(msgId, 'err', '⚠ ' + esc(e.message)); }
+    };
+    $('nwForm').onsubmit = ev => {
+      ev.preventDefault();
+      const o = formOrder(); const e = formErrors(o);
+      if (e.length) { msg('nwFormMsg', 'err', '⚠ ' + e.map(esc).join('<br>')); return; }
+      submit([o], 'form', 'nwFormMsg');
+    };
+
+    // Upload → preview (nothing is written until "Create").
+    $('nwFileInput').onchange = async () => {
+      const f = $('nwFileInput').files[0]; if (!f) return;
+      $('nwPreview').innerHTML = ''; msg('nwFileMsg', 'busy', `Reading ${esc(f.name)}…`);
+      const fd = new FormData(); fd.append('file', f);
+      try {
+        const d = await (await api('/api/portal/orders/new/preview', { method: 'POST', body: fd })).json();
+        if (!d || d.error) { msg('nwFileMsg', 'err', '⚠ ' + esc((d && d.error) || 'Could not read the file.')); return; }
+        preview = d; msg('nwFileMsg', '', ''); renderPreview();
+      } catch (e) { msg('nwFileMsg', 'err', '⚠ ' + esc(e.message)); }
+    };
+    const linesTxt = o => (o.input_lines || o.lines || []).map(l => `${esc(l.sku)} × ${esc(l.qty)}`).join('<br>');
+    function renderPreview() {
+      const d = preview;
+      $('nwPreview').innerHTML = `
+        <div style="margin:.6rem 0" class="row"><b>${esc(d.filename)}</b>
+          <span class="pill p-sla-met" style="margin-left:.4rem">${d.valid} ready</span>
+          ${d.invalid ? `<span class="pill p-sla-miss nw-fail-pill" style="margin-left:.3rem">${d.invalid} with errors</span>` : ''}</div>
+        <div style="overflow-x:auto"><table class="dtab"><thead><tr><th>Rows</th><th>Order no</th><th>Recipient</th><th>Address</th><th>Items</th><th>Check</th></tr></thead><tbody>
+        ${d.orders.map(o => `<tr${o.ok ? '' : ' style="background:#fef2f2"'}>
+          <td class="muted">${esc((o.rows || []).join(', '))}</td><td class="mono">${esc(o.order_number || '—')}</td>
+          <td>${esc(o.recipient_name)}<div class="muted">${esc(o.phone)}${o.channel ? ' · ' + esc(o.channel) : ''}</div></td>
+          <td>${esc(o.address)} ${esc(o.postal_code)}</td><td class="mono" style="font-size:.75rem">${linesTxt(o)}</td>
+          <td>${o.ok ? '<span class="pill p-sla-met">OK</span>' : `<span class="pill p-sla-miss nw-fail-pill">Error</span><div class="nw-err">${o.errors.map(esc).join('<br>')}</div>`}</td></tr>`).join('')}
+        </tbody></table></div>
+        <div class="row" style="justify-content:flex-start;gap:.4rem;margin-top:.6rem;flex-wrap:wrap">
+          <button type="button" class="btn-sm asn-primary" id="nwFileSubmit" ${d.valid ? '' : 'disabled'}>Create ${d.valid} order${d.valid === 1 ? '' : 's'}${d.invalid ? ` (skip ${d.invalid} with errors)` : ''}</button>
+          ${d.invalid ? '<button type="button" class="btn-sm" id="nwPrevFailed">&#8681; Download rows with errors</button>' : ''}
+          <button type="button" class="btn-sm nwCancel2">Cancel</button>
+        </div>`;
+      $('nwPreview').querySelector('.nwCancel2').onclick = () => { preview = null; $('nwPreview').innerHTML = ''; $('nwFileInput').value = ''; };
+      if ($('nwPrevFailed')) $('nwPrevFailed').onclick = () => downloadFailed(d.orders.filter(o => !o.ok));
+      $('nwFileSubmit').onclick = () => submit(d.orders, 'file', 'nwFileMsg').then(() => {
+        // Orders refused at preview never reach the server; keep them in the result screen.
+        if (!$('nwStep2').classList.contains('hidden')) {
+          const bad = d.orders.filter(o => !o.ok).map(o => ({ ...o, reason: o.errors.join(' ') }));
+          const seen = new Set(lastResults.map(r => (r.rows || []).join(',')));
+          showResults([...lastResults, ...bad.filter(b => !seen.has((b.rows || []).join(',')))]);
+        }
+      });
+    }
+    const downloadFailed = rows => download('/api/portal/orders/new/failed-csv', 'failed-orders.csv',
+      { method: 'POST', body: JSON.stringify({ results: rows.map(r => ({ ...r, ok: false })) }) });
+
+    // Result screen + per-order waybill (step 2).
+    function wbForm(o) {
+      return `<div class="nw-wb" data-o="${esc(o.order_number)}">
+        <label>Waybill label (PDF / image)<input type="file" class="nwWbFile" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"></label>
+        <label>or tracking no.<input type="text" class="nwWbTrk" maxlength="60" placeholder="e.g. SPXSG01234567"></label>
+        <button type="button" class="btn-sm asn-primary nwWbGo">Attach</button>
+        <button type="button" class="btn-sm nwWbSkip">Skip</button>
+        <div class="nwWbMsg" style="flex-basis:100%;font-size:.78rem"></div></div>`;
+    }
+    function showResults(results) {
+      lastResults = results;
+      const ok = results.filter(r => r.ok), bad = results.filter(r => !r.ok);
+      $('nwResultSummary').innerHTML = `<span class="pill p-sla-met">${ok.length} created</span>${bad.length ? ` <span class="pill p-sla-miss nw-fail-pill">${bad.length} failed</span>` : ''}
+        ${ok.length ? '<div class="muted" style="margin-top:.35rem">Attach a waybill to each order now, or skip and do it later from the order list.</div>' : ''}`;
+      $('nwResults').innerHTML = results.map(r => `<div class="nw-res ${r.ok ? 'ok' : 'fail'}">
+        <div class="row" style="justify-content:space-between;gap:.5rem">
+          <div><b class="mono">${esc(r.order_number || '(no order no)')}</b>${r.auto_number ? ' <span class="muted">(auto-generated)</span>' : ''}
+            <div class="muted">${esc(r.recipient_name || '')}${(r.lines || []).length ? ` · ${r.lines.length} line(s)` : ''}${r.rows && r.rows.length ? ` · file row ${esc(r.rows.join(', '))}` : ''}</div></div>
+          <span class="pill ${r.ok ? 'p-sla-met' : 'p-sla-miss nw-fail-pill'}">${r.ok ? '&#10003; Created' : '&#10007; Failed'}</span>
+        </div>
+        ${r.ok ? wbForm(r) : `<div class="nw-err">${esc(r.reason || (r.errors || []).join(' '))}</div>`}
+      </div>`).join('');
+      $('nwFailedCsv').classList.toggle('hidden', !bad.length);
+      $('nwFailedCsv').onclick = () => downloadFailed(bad);
+      showStep(2);
+    }
+    $('nwAnother').onclick = () => { resetForm(); showStep(1); };
+    $('nwResults').addEventListener('click', async e => {
+      const box = e.target.closest('.nw-wb'); if (!box) return;
+      const out = box.querySelector('.nwWbMsg');
+      if (e.target.classList.contains('nwWbSkip')) { box.innerHTML = '<span class="muted">Skipped — attach later from the order list.</span>'; return; }
+      if (!e.target.classList.contains('nwWbGo')) return;
+      const f = box.querySelector('.nwWbFile').files[0]; const t = box.querySelector('.nwWbTrk').value.trim();
+      if (!f && !t) { out.innerHTML = '<span class="nw-err">Choose a label file or enter a tracking number.</span>'; return; }
+      const fd = new FormData(); if (f) fd.append('file', f); if (t) fd.append('tracking', t);
+      out.textContent = 'Attaching…';
+      try {
+        const d = await (await api('/api/portal/orders/' + encodeURIComponent(box.dataset.o) + '/waybill', { method: 'POST', body: fd })).json();
+        if (!d || d.error) { out.innerHTML = `<span class="nw-err">&#10007; Failed — ${esc((d && d.error) || 'not attached')}</span>`; return; }
+        box.innerHTML = `<span class="pill p-sla-met">&#10003; Waybill attached</span> <span class="muted">${d.label ? 'label file' : ''}${d.label && d.tracking ? ' + ' : ''}${d.tracking ? 'tracking ' + esc(d.tracking) : ''}</span>`;
+      } catch (err) { out.innerHTML = `<span class="nw-err">&#10007; ${esc(err.message)}</span>`; }
+    });
+    // From the order list: "Attach waybill" opens step 2 for that one order.
+    window.portalAttachWaybill = orderNo => {
+      $('nwWizard').classList.remove('hidden');
+      showResults([{ order_number: orderNo, ok: true }]);
+      $('nwResultSummary').innerHTML = '<div class="muted">Attach a waybill label or tracking number to this order.</div>';
+      $('nwWizard').scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
   })();
   async function loadSubmissions() {
@@ -2460,6 +2608,8 @@
     if (e.target.classList.contains('pick')) return;
     // Neither must opening the waybill — it sits INSIDE the expanded card, so
     // letting the click through would collapse it again.
+    const aw = e.target.closest('.nwAttachWb');
+    if (aw) { e.preventDefault(); e.stopPropagation(); window.portalAttachWaybill && window.portalAttachWaybill(aw.dataset.o); return; }
     const wb = e.target.closest('.wbpill[data-o]');
     if (wb) {
       e.stopPropagation();

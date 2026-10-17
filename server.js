@@ -14378,6 +14378,196 @@ app.get('/api/portal/submissions/:id/do', requirePortalAuthMiddleware, async (re
     res.end(buf);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ── PORTAL NEW ORDER (form + Excel/CSV) → THE SHARED INTAKE ────────────────
+// Step 1 creates orders straight through runOrderIntake (the code behind
+// POST /api/orders/intake — one pipeline, not a fork), filed under the
+// logged-in client and tagged source 'portal'. Step 2 attaches a waybill per
+// order: a PDF/image label through attachLabelPage, or a tracking number.
+// Rules: unknown SKU, duplicate order no (existing or within the file) and
+// missing required fields are refused per order, with the reason.
+const portalOrderEntry = require('./lib/portal-order-entry');
+function _portalItemMap(client) {
+  const items = new Map();
+  try { for (const r of inventory.getAll({ clientId: invClientId(client) })) { items.set(r.sku, r); items.set(String(r.sku).toUpperCase(), r); } } catch (_) {}
+  return items;
+}
+function _portalOrderNoTaken(db) {
+  const held = new Set();
+  for (const b of db.batches || []) for (const o of b.orders || []) held.add(String(o.order_number).toUpperCase());
+  for (const s of clientSubs(db)) if (s.kind === 'orders') for (const o of (s.summary?.orders || [])) held.add(String(o.order_number).toUpperCase());
+  return n => held.has(String(n || '').trim().toUpperCase());
+}
+app.get('/api/portal/orders/new/template', requirePortalAuthMiddleware, (req, res) => {
+  const csv = req.query.format === 'csv';
+  res.setHeader('Content-Type', csv ? 'text/csv; charset=utf-8' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="IdealOne-new-orders-template.${csv ? 'csv' : 'xlsx'}"`);
+  res.end(portalOrderEntry.templateBuffer(csv ? 'csv' : 'xlsx'));
+});
+// The client's own item master, for the form's SKU picker.
+app.get('/api/portal/orders/new/items', requirePortalAuthMiddleware, (req, res) => {
+  const seen = new Set(); const out = [];
+  for (const r of _portalItemMap(req.portalClient).values()) if (!seen.has(r.sku)) { seen.add(r.sku); out.push({ sku: r.sku, name: r.name || '' }); }
+  out.sort((a, b) => String(a.sku).localeCompare(String(b.sku)));
+  res.json({ items: out });
+});
+// Upload → parsed, validated preview. Nothing is written.
+app.post('/api/portal/orders/new/preview', upload.single('file'), (req, res) => {
+  requirePortalWrite(req, res, () => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+      if (!/\.(xlsx|xls|csv)$/i.test(req.file.originalname || '')) return res.status(400).json({ error: 'Upload an .xlsx or .csv file (use the sample template).' });
+      let aoa;
+      try { aoa = portalOrderEntry.readSheet(req.file.buffer, req.file.originalname); } catch (e) { return res.status(400).json({ error: 'Could not read this file — is it a valid Excel or CSV file?' }); }
+      const parsed = portalOrderEntry.parseSheetRows(aoa);
+      if (parsed.fileErrors.length) return res.status(400).json({ error: parsed.fileErrors[0], errors: parsed.fileErrors });
+      const orders = portalOrderEntry.validateOrders(parsed.orders, { items: _portalItemMap(req.portalClient), taken: _portalOrderNoTaken(readDb()), mode: 'file' });
+      res.json({ filename: req.file.originalname, orders, valid: orders.filter(o => o.ok).length, invalid: orders.filter(o => !o.ok).length });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+});
+// Create. Re-validates server-side (the preview is only advice), mints numbers
+// for blank form orders, then runs the shared intake once for the valid set.
+app.post('/api/portal/orders/new/submit', newOrderRateLimit, express.json({ limit: '4mb' }), requirePortalWrite, (req, res) => {
+  try {
+    const client = req.portalClient;
+    const mode = req.body?.mode === 'form' ? 'form' : 'file';
+    const input = Array.isArray(req.body?.orders) ? req.body.orders : [];
+    if (!input.length) return res.status(400).json({ error: 'No orders to create.' });
+    if (input.length > portalOrderEntry.MAX_ORDERS) return res.status(400).json({ error: `At most ${portalOrderEntry.MAX_ORDERS} orders at a time.` });
+    let db = readDb();
+    const taken = _portalOrderNoTaken(db);
+    const checked = portalOrderEntry.validateOrders(input, { items: _portalItemMap(client), taken, mode });
+    let minted = false;
+    for (const o of checked) if (o.ok && !o.order_number) {
+      o.order_number = portalNewOrder.nextPortalOrderNumber(db, canonicalClientName(db, client), n => taken(n) || checked.some(x => x !== o && x.order_number === n));
+      o.auto_number = true; minted = true;
+    }
+    if (minted) writeDb(db);
+    const result = new Map(checked.map((o, i) => [o.ok ? o.order_number : `#${i}`, { ...o, reason: o.errors.join(' ') }]));
+    const fail = (no, reason) => { const r = result.get(no); if (r) { r.ok = false; r.reason = reason; r.errors = [reason]; } };
+    let attempt = checked.filter(o => o.ok);
+    let job = null;
+    for (let pass = 0; pass < 2 && attempt.length; pass++) {
+      const extras = {}; for (const o of attempt) extras[o.order_number] = portalOrderEntry.intakeExtras(o);
+      const r = runOrderIntake({
+        body: { client, orders: attempt.map(portalOrderEntry.toIntakeOrder), on_short: 'drop', reference: `Portal new order — ${canonicalClientName(readDb(), client)}` },
+        userId: `portal:${client}`,
+      }, { source: 'portal', orderExtras: extras });
+      const b = r.body || {};
+      if (r.status === 422 && Array.isArray(b.rejected) && b.rejected.length) {
+        const bad = new Set();
+        for (const x of b.rejected) { bad.add(x.order_number); fail(x.order_number, (x.problems || []).map(p => `${p.field}: ${p.issue}`).join('; ') || 'Refused by order validation.'); }
+        attempt = attempt.filter(o => !bad.has(o.order_number));
+        continue;
+      }
+      if (r.status === 200) {
+        job = b.job || job;
+        for (const x of b.orders || []) { const e = result.get(x.order_number); if (e) { e.ok = true; e.job = b.job; e.reason = ''; } }
+        for (const x of b.duplicates || []) fail(x.order_number, `Order No ${x.order_number} already exists.`);
+        for (const x of b.dropped || []) fail(x.order_number, `Not enough stock — ${x.reason || 'short'}.`);
+        for (const x of b.rejected || []) fail(x.order_number, x.reason);
+      } else if (r.status === 409 && Array.isArray(b.shortOrders)) {
+        for (const x of b.shortOrders) fail(x.order_number, `Not enough stock — ${x.reason || 'short'}.`);
+        for (const o of attempt) if (!result.get(o.order_number).job && result.get(o.order_number).ok) fail(o.order_number, b.error || 'Not created.');
+      } else {
+        for (const o of attempt) fail(o.order_number, b.error || 'Not created.');
+      }
+      break;
+    }
+    // Anything still "ok" without a job never reached a batch.
+    for (const r of result.values()) if (r.ok && !r.job) { r.ok = false; r.reason = r.reason || 'Not created.'; r.errors = [r.reason]; }
+    const results = [...result.values()];
+    const created = results.filter(r => r.ok).length;
+    logAudit('portal_orders_created', { client, mode, created, failed: results.length - created, job, by: req.portalUser?.id || '' });
+    res.status(created ? 201 : 400).json({ ok: created > 0, created, failed: results.length - created, job, results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Failed rows back as CSV in the template layout + an Error column.
+app.post('/api/portal/orders/new/failed-csv', express.json({ limit: '4mb' }), requirePortalAuthMiddleware, (req, res) => {
+  const rows = (Array.isArray(req.body?.results) ? req.body.results : []).filter(r => r && !r.ok).slice(0, 2000);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="failed-orders.csv"');
+  res.end(portalOrderEntry.failedRowsCsv(rows));
+});
+// Step 2 — waybill for ONE of the client's own orders: a label file (PDF page
+// or PNG/JPEG, filed as a one-page label import and attached through
+// attachLabelPage, the writer every other label path uses) and/or a tracking no.
+function _portalOwnOrder(db, client, on) {
+  for (const b of db.batches || []) {
+    if (!sameClient(b.client_name, client)) continue;
+    const o = (b.orders || []).find(x => String(x.order_number) === on);
+    if (o) return { batch: b, order: o };
+  }
+  return null;
+}
+async function _labelFileToPdfPage(buf) {
+  const head = buf.slice(0, 8);
+  if (head.slice(0, 5).toString('latin1') === '%PDF-') {
+    const src = await PDFDocument.load(buf, { ignoreEncryption: true });
+    if (src.getPageCount() !== 1) return { error: `This PDF has ${src.getPageCount()} pages — upload one label page per order.` };
+    return { pdf: Buffer.from(await src.save()) };
+  }
+  const isPng = head[0] === 0x89 && head.slice(1, 4).toString('latin1') === 'PNG';
+  const isJpg = head[0] === 0xFF && head[1] === 0xD8;
+  if (!isPng && !isJpg) return { error: 'Upload the label as a PDF, PNG or JPEG.' };
+  const doc = await PDFDocument.create();
+  const img = isPng ? await doc.embedPng(buf) : await doc.embedJpg(buf);
+  // 4x6in label page, image fitted inside.
+  const W = 288, H = 432; const s = Math.min(W / img.width, H / img.height);
+  const page = doc.addPage([W, H]);
+  page.drawImage(img, { x: (W - img.width * s) / 2, y: (H - img.height * s) / 2, width: img.width * s, height: img.height * s });
+  return { pdf: Buffer.from(await doc.save()) };
+}
+app.post('/api/portal/orders/:orderNumber/waybill', upload.single('file'), (req, res) => {
+  requirePortalWrite(req, res, async () => {
+    try {
+      const client = req.portalClient;
+      const on = safeLabelKey(String(req.params.orderNumber || ''));
+      const tracking = String(req.body?.tracking || '').trim().slice(0, 60);
+      const carrier = String(req.body?.carrier || '').trim().slice(0, 60);
+      if (!on) return res.status(400).json({ error: 'Bad order number.' });
+      if (!req.file && !tracking) return res.status(400).json({ error: 'Attach a label file or enter a tracking number.' });
+      if (tracking && !/^[A-Za-z0-9-]{4,60}$/.test(tracking)) return res.status(400).json({ error: 'Tracking number may only use letters, digits and - (4–60).' });
+      let page = null;
+      if (req.file) {
+        page = await _labelFileToPdfPage(req.file.buffer).catch(() => ({ error: 'Could not read this label file.' }));
+        if (page.error) return res.status(400).json({ error: page.error });
+      }
+      const db = readDb();
+      const own = _portalOwnOrder(db, client, on);
+      if (!own) return res.status(404).json({ error: 'Order not found' });
+      const out = { ok: true, order_number: on };
+      if (tracking) {
+        const cur = String(own.order.waybill_number || '').trim();
+        if (cur && cur.toUpperCase() !== tracking.toUpperCase()) return res.status(409).json({ error: `This order already has tracking number ${cur}.` });
+      }
+      if (page) {
+        const importId = uuidv4();
+        const dir = path.join(LABEL_IMPORT_DIR, importId);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'page_1.pdf'), page.pdf);
+        const role = attachLabelPage(db, on, { importId, pageIndex: 0, pageFile: 'page_1.pdf', tracking: tracking || undefined,
+          attachedAt: new Date().toISOString(), attachedBy: `portal:${client}` });
+        if (['refused', 'reference', 'cancelled'].includes(role)) {
+          fs.rmSync(dir, { recursive: true, force: true });
+          return res.status(409).json({ error: role === 'cancelled' ? CANCELLED_LABEL_MSG : 'A label cannot be attached to this order.' });
+        }
+        if (!db.labelImports) db.labelImports = [];
+        db.labelImports.push({ id: importId, filename: String(req.file.originalname || 'label').slice(0, 120), source: 'portal',
+          contentHash: crypto.createHash('sha256').update(req.file.buffer).digest('hex'),
+          uploadedAt: new Date().toISOString(), uploadedBy: `portal:${client}`, pageCount: 1,
+          pages: [{ pageIndex: 0, pageFile: 'page_1.pdf', extracted: tracking ? { tracking } : {}, rawText: '', matchStatus: 'matched',
+            matchedOrderNumber: on, matchMethod: 'portal', matchConfidence: 'exact', candidates: [], parcel: role === 'parcel' || undefined }] });
+        out.label = role;
+      }
+      if (tracking) { own.order.waybill_number = tracking; if (carrier && !own.order.carrier) own.order.carrier = carrier; out.tracking = tracking; }
+      writeDb(db);
+      logAudit('portal_waybill_attached', { client, order: on, label: out.label || null, tracking: tracking || null, by: req.portalUser?.id || '' });
+      res.json(out);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+});
 // PORTAL → my submissions and where they got to.
 app.get('/api/portal/submissions', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient.trim().toLowerCase();
@@ -18917,7 +19107,18 @@ function completeOrderCore(db, batch, ord, state, { startTime, endTime, operator
 // DECLARED UP FRONT in the request or REFUSED with the numbers — never guessed
 // at on the caller's behalf.
 const INTAKE_MAX_ORDERS = 500;
-app.post('/api/orders/intake', express.json({ limit: '4mb' }), (req, res) => {
+// The intake pipeline as a plain function, so every in-process door (the JSON
+// route below, the portal New Order screen) runs the SAME code. `req` is only
+// { body, userId }; `res` is a recorder, so the body reads exactly as the route
+// always did. opts.source tags the batch ('api' default, 'portal' from the
+// portal); opts.orderExtras (order_number → fields) adds fields the row shape
+// does not carry (postal code, remarks) onto each created order.
+function _intakeRes() {
+  const r = { status: 200, body: null };
+  return { status(c) { r.status = c; return this; }, json(b) { r.body = b; return { status: r.status, body: b }; } };
+}
+function runOrderIntake(req, opts = {}) {
+  const res = _intakeRes();
   try {
     const clientName = String(req.body?.client || '').trim();
     if (!clientName) return res.status(400).json({ error: 'client is required — every order belongs to one client account.' });
@@ -18982,6 +19183,7 @@ app.post('/api/orders/intake', express.json({ limit: '4mb' }), (req, res) => {
     mapped = explodeBundleRows(mapped, () => cid0);
     enrichLinesFromCatalogue(mapped, clientName);
     let orders = summarizeOrders(mapped);
+    if (opts.orderExtras) for (const o of orders) Object.assign(o, opts.orderExtras[o.order_number] || {});
 
     // ── ALREADY HERE IS NOT AN ERROR, IT IS IDEMPOTENCY ──────────────────
     // A partner that retries after a timeout must not create twins, and must
@@ -19111,7 +19313,7 @@ app.post('/api/orders/intake', express.json({ limit: '4mb' }), (req, res) => {
       inventory_tracked: inventoryTracked,
       inventory_client: inventoryTracked ? invCid : undefined,
       pick_strategy: pickStrategy,
-      source: 'api',
+      source: opts.source || 'api',
     };
     let reservedSkus = new Set();
     if (inventoryTracked && inventory.available()) {
@@ -19137,7 +19339,7 @@ app.post('/api/orders/intake', express.json({ limit: '4mb' }), (req, res) => {
       tracked: inventoryTracked, by: req.userId || '',
     });
 
-    res.json({
+    return res.json({
       ok: true,
       job: batch.idealscan_code,
       batchId,
@@ -19156,8 +19358,13 @@ app.post('/api/orders/intake', express.json({ limit: '4mb' }), (req, res) => {
     });
   } catch (e) {
     console.error('[orders/intake]', e);
-    res.status(500).json({ error: 'Intake failed: ' + e.message });
+    return res.status(500).json({ error: 'Intake failed: ' + e.message });
   }
+}
+
+app.post('/api/orders/intake', express.json({ limit: '4mb' }), (req, res) => {
+  const r = runOrderIntake({ body: req.body, userId: req.userId });
+  res.status(r.status).json(r.body);
 });
 
 app.post('/api/scan/complete', (req, res) => {
