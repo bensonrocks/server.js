@@ -16,6 +16,12 @@
   // be what decides whether the Send tab appears.
   let portalUser = (() => { try { return JSON.parse(localStorage.getItem('portal_user') || 'null'); } catch { return null; } })();
   const canWrite = () => (portalUser?.access || 'full') !== 'view';
+  // ONE blank rule for a waybill, the same the server applies on attach
+  // (POST /api/portal/orders/:n/waybill trims before it decides): a
+  // whitespace-only waybill_number from an import is NO waybill, so the
+  // Add AWB button and form must still offer. Truthiness alone hid them.
+  const wbBlank = v => !String(v || '').trim();
+  const wbTrim = v => String(v || '').trim();
   // Which sections this client's portal carries. An absent map, and an absent
   // key inside it, both read as VISIBLE — the same rule the server applies, so
   // the page and the API can never disagree about what is switched on.
@@ -912,8 +918,8 @@
         <span class="pill ${s.pill}">${s.label}</span>
       </div>
       <div class="dd-meta">
-        <span>${o.waybill ? `Waybill <b class="mono">${esc(o.waybill)}</b>` : '<span class="muted">No waybill yet</span>'}</span>
-        ${!o.waybill && canWrite() && !['done', 'unprocessed'].includes(o.status) ? `<button type="button" class="btn-sm nwAttachWb" data-o="${esc(o.order_number)}" style="font-size:.72rem">&#127991; Add AWB / Upload AWB</button>` : ''}
+        <span>${!wbBlank(o.waybill) ? `Waybill <b class="mono">${esc(wbTrim(o.waybill))}</b>` : '<span class="muted">No waybill yet</span>'}</span>
+        ${wbBlank(o.waybill) && canWrite() && !['done', 'unprocessed'].includes(o.status) ? `<button type="button" class="btn-sm nwAttachWb" data-o="${esc(o.order_number)}" style="font-size:.72rem">&#127991; Add AWB / Upload AWB</button>` : ''}
         <span class="muted">${num(o.lines.length)} line${o.lines.length === 1 ? '' : 's'} · ${num(o.total_qty)} pcs</span>
       </div>
       ${cx ? `<div class="dd-cx">
@@ -972,6 +978,7 @@
     if (ddOpen.has(orderNumber)) { ddOpen.delete(orderNumber); renderDrill(); return; }
     ddOpen.add(orderNumber);
     renderDrill();
+    if (orderDetail.get(orderNumber)?.error) orderDetail.delete(orderNumber);   // a failed load is retried, never stuck
     if (orderDetail.has(orderNumber)) return;
     try {
       const r = await api('/api/portal/order/' + encodeURIComponent(orderNumber));
@@ -1138,8 +1145,8 @@
             <div class="muted" style="font-size:.76rem">
               ${fmtDate(o.date)} · ${num(o.lines)} line${o.lines === 1 ? '' : 's'} · ${num(o.total_qty)} pcs
             </div>
-            ${o.waybill ? `<div class="muted mono" style="font-size:.7rem;margin-top:.1rem">Waybill ${esc(o.waybill)}</div>` : '<div class="muted" style="font-size:.7rem;margin-top:.1rem">No waybill yet</div>'}
-            <div style="margin-top:.2rem"><a href="/api/portal/order/${encodeURIComponent(o.order_number)}/do?token=${encodeURIComponent(token)}" target="_blank" rel="noopener" style="font-size:.72rem">&#128196; Delivery Order (PDF)</a>${!o.waybill && canWrite() && !['done', 'unprocessed'].includes(o.status) ? ` <button type="button" class="btn-sm nwAttachWb" data-o="${esc(o.order_number)}" style="font-size:.72rem;margin-left:.35rem">&#127991; Add AWB / Upload AWB</button>` : ''}</div>
+            ${!wbBlank(o.waybill) ? `<div class="muted mono" style="font-size:.7rem;margin-top:.1rem">Waybill ${esc(wbTrim(o.waybill))}</div>` : '<div class="muted" style="font-size:.7rem;margin-top:.1rem">No waybill yet</div>'}
+            <div style="margin-top:.2rem"><a href="/api/portal/order/${encodeURIComponent(o.order_number)}/do?token=${encodeURIComponent(token)}" target="_blank" rel="noopener" style="font-size:.72rem">&#128196; Delivery Order (PDF)</a>${wbBlank(o.waybill) && canWrite() && !['done', 'unprocessed'].includes(o.status) ? ` <button type="button" class="btn-sm nwAttachWb" data-o="${esc(o.order_number)}" style="font-size:.72rem;margin-left:.35rem">&#127991; Add AWB / Upload AWB</button>` : ''}</div>
           </div>
           <div style="text-align:right">
             <span class="pill ${s.pill}">${s.label}</span>
@@ -1273,15 +1280,15 @@
     // take it on trust; this opens the actual label we matched to the order.
     // The fetch+blob dance is because a plain <a href> cannot carry the session
     // token header — the same reason the exports do it.
-    const wb = d.waybill
+    const wb = !wbBlank(d.waybill)
       ? `<span class="pill ${d.has_label ? 'p-sla-met' : 'p-due'} wbpill"${d.has_label ? ` data-o="${esc(d.order_number)}" style="cursor:pointer"` : ''}
            title="${d.has_label ? 'Open the waybill we matched to this order' : 'No waybill label on file for this order yet'}"
-         >&#127991; ${esc(d.waybill)}${d.has_label ? ' \u00b7 view' : ''}</span>`
+         >&#127991; ${esc(wbTrim(d.waybill))}${d.has_label ? ' \u00b7 view' : ''}</span>`
       : '';
     const doneAwb = awbDone.get(d.order_number);
     const awbConfirm = doneAwb ? `<div class="pill p-sla-met" style="margin-bottom:.4rem;white-space:normal;line-height:1.35;max-width:100%">&#10003; AWB attached${doneAwb.tracking ? ` \u2014 waybill ${esc(doneAwb.tracking)}` : ''}${doneAwb.label ? ' \u00b7 label attached' : ''}</div>` : '';
-    const canAddAwb = !d.waybill && !['done', 'unprocessed'].includes(d.status);
-    const awbBlock = d.waybill
+    const canAddAwb = wbBlank(d.waybill) && !['done', 'unprocessed'].includes(d.status);
+    const awbBlock = !wbBlank(d.waybill)
       ? (doneAwb ? `<div class="pill p-sla-met" style="margin-bottom:.5rem;white-space:normal;line-height:1.35;max-width:100%">&#10003; AWB attached — waybill ${esc(doneAwb.tracking || d.waybill)}${doneAwb.label ? ' \u00b7 label attached' : ''}</div>` : '')
       : `${awbConfirm}<div class="add-awb" data-o="${esc(d.order_number)}" style="border:1px dashed var(--border);border-radius:8px;padding:.55rem;margin-bottom:.5rem">
           <div style="font-size:.8rem"><b>No waybill yet</b>${d.has_label ? ' <span class="muted">\u00b7 label already attached</span>' : ''}</div>
@@ -1316,6 +1323,7 @@
     if (openOrder.has(orderNumber)) { openOrder.delete(orderNumber); renderOrders(); return; }
     openOrder.add(orderNumber);
     renderOrders();
+    if (orderDetail.get(orderNumber)?.error) orderDetail.delete(orderNumber);   // a failed load is retried, never stuck
     if (orderDetail.has(orderNumber)) return;
     try {
       const r = await api('/api/portal/order/' + encodeURIComponent(orderNumber));
@@ -1325,6 +1333,31 @@
       orderDetail.set(orderNumber, { error: 'Could not load the order detail — check your connection.' });
     }
     if (openOrder.has(orderNumber)) renderOrders();
+  }
+
+  // Expand an order to its inline Add AWB form, IN PLACE: in the drill-down
+  // popup when it is open (the #96 design — the popup stays up and the form
+  // opens inside its card), otherwise in the Orders list. Defined HERE, in
+  // Orders scope, so the popup button never depends on the New-Order wizard
+  // having run (it used to live only as window.portalAttachWaybill inside
+  // setupNewOrder(), and the popup handler's `window.portalAttachWaybill &&`
+  // guard turned a missing helper into a silent dead tap).
+  async function openAwbForm(orderNo) {
+    const focus = () => {
+      const root = dd ? $('ddBody') : document;
+      const el = root?.querySelector(`.add-awb[data-o="${CSS.escape(orderNo)}"]`);
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); const i = el.querySelector('.addAwbTrk'); if (i) i.focus({ preventScroll: true }); }
+    };
+    if (dd) {
+      if (!ddOpen.has(orderNo)) await toggleDrillOrder(orderNo);
+      // toggleDrillOrder may still be holding a skeleton while detail loads;
+      // poll briefly for the form instead of a single fixed-delay guess.
+      for (let n = 0; n < 20 && !document.querySelector('#ddBody .add-awb'); n++) await new Promise(r => setTimeout(r, 50));
+      focus(); return;
+    }
+    if (!openOrder.has(orderNo)) await toggleOrder(orderNo);
+    for (let n = 0; n < 20 && !document.querySelector('.add-awb'); n++) await new Promise(r => setTimeout(r, 50));
+    focus();
   }
 
   // ── Inbound ───────────────────────────────────────────────────────────────
@@ -2368,16 +2401,7 @@
     // From the order list / drill-down: "Add AWB / Upload AWB" expands that
     // order in place and focuses its inline form (orderDetailHtml) — the
     // order stays on screen, so the client attaches to the order they opened.
-    window.portalAttachWaybill = async orderNo => {
-      const focus = () => {
-        const el = document.querySelector(`.add-awb[data-o="${CSS.escape(orderNo)}"]`);
-        if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); const i = el.querySelector('.addAwbTrk'); if (i) i.focus(); }
-      };
-      if (dd && ddOpen.has(orderNo)) { focus(); return; }
-      if (dd) { await toggleDrillOrder(orderNo); setTimeout(focus, 60); return; }
-      if (!openOrder.has(orderNo)) await toggleOrder(orderNo);
-      setTimeout(focus, 60);
-    };
+    window.portalAttachWaybill = orderNo => openAwbForm(orderNo);
   })();
   async function loadSubmissions() {
     try {
@@ -2783,7 +2807,7 @@
     // Neither must opening the waybill — it sits INSIDE the expanded card, so
     // letting the click through would collapse it again.
     const aw = e.target.closest('.nwAttachWb');
-    if (aw) { e.preventDefault(); e.stopPropagation(); window.portalAttachWaybill && window.portalAttachWaybill(aw.dataset.o); return; }
+    if (aw) { e.preventDefault(); e.stopPropagation(); openAwbForm(aw.dataset.o); return; }
     const wb = e.target.closest('.wbpill[data-o]');
     if (wb) { e.stopPropagation(); openWaybillPill(wb); return; }
     const card = e.target.closest('.card[data-order]');
@@ -2809,7 +2833,7 @@
     if (e.target === $('ddModal')) { closeDrill(); return; }
     if (e.target.closest('.add-awb')) return;  // delegated Add AWB handler (document) submits; just don't toggle
     const aw = e.target.closest('.nwAttachWb');
-    if (aw) { e.preventDefault(); e.stopPropagation(); window.portalAttachWaybill && window.portalAttachWaybill(aw.dataset.o); return; }
+    if (aw) { e.preventDefault(); e.stopPropagation(); openAwbForm(aw.dataset.o); return; }
     const wb = e.target.closest('.wbpill[data-o]');
     if (wb) { e.stopPropagation(); openWaybillPill(wb); return; }
     if (e.target.closest('.detail')) return;   // reading the detail must not collapse it
