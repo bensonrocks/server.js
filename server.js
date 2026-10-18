@@ -14672,12 +14672,48 @@ async function _labelFileToPdfPage(buf) {
   page.drawImage(img, { x: (W - img.width * s) / 2, y: (H - img.height * s) / 2, width: img.width * s, height: img.height * s });
   return { pdf: Buffer.from(await doc.save()) };
 }
+// Read a tracking number off ONE uploaded AWB label, if the file lets us.
+// PDF text layer first (extractLabelFields — the SPXSG…+check-letter reader
+// from #97); an image-only PDF page is rendered + OCR'd, and a PNG/JPEG is
+// OCR'd directly. Any failure is '' (unknown), never an error: the label
+// still attaches, and a typed number (if any) stands on its own.
+async function _portalLabelTracking(buf, pagePdf) {
+  try {
+    if (!extractLabelFields) return '';
+    const head = buf.slice(0, 5).toString('latin1');
+    if (head === '%PDF-') {
+      const texts = await extractPdfPageTexts(buf).catch(() => []);
+      const fromText = extractLabelFields(texts[0] || '').trackingNumber;
+      if (fromText) return String(fromText).toUpperCase();
+      // pdf-parse (pdf.js 1.10) rejects some valid PDFs — notably pdf-lib
+      // output — so fall back to the newer pdfjs text layer before OCR.
+      try {
+        if (typeof pdfjsLib !== 'undefined' && pdfjsLib) {
+          const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf), disableFontFace: true }).promise;
+          const pg = await doc.getPage(1);
+          const tc = await pg.getTextContent();
+          const fromPdfjs = extractLabelFields(tc.items.map(i => i.str).join(' ')).trackingNumber;
+          if (fromPdfjs) return String(fromPdfjs).toUpperCase();
+        }
+      } catch (_) {}
+      if (typeof renderPdfPageToPng === 'function' && typeof runOcr === 'function') {
+        const png = await renderPdfPageToPng(pagePdf || buf, 0).catch(() => null);
+        if (png) return String(extractLabelFields(await runOcr(png)).trackingNumber || '').toUpperCase();
+      }
+      return '';
+    }
+    if (typeof runOcr === 'function') return String(extractLabelFields(await runOcr(buf)).trackingNumber || '').toUpperCase();
+  } catch (_) {}
+  return '';
+}
 app.post('/api/portal/orders/:orderNumber/waybill', upload.single('file'), (req, res) => {
   requirePortalWrite(req, res, async () => {
     try {
       const client = req.portalClient;
       const on = safeLabelKey(String(req.params.orderNumber || ''));
-      const tracking = String(req.body?.tracking || '').trim().slice(0, 60);
+      // Loose on purpose: letters, digits and '-' only, but a trailing check
+      // LETTER (SPXSG…A, #97) is normal — never demand digits at the end.
+      const tracking = String(req.body?.tracking || '').trim().replace(/\s+/g, '').slice(0, 60);
       const carrier = String(req.body?.carrier || '').trim().slice(0, 60);
       if (!on) return res.status(400).json({ error: 'Bad order number.' });
       if (!req.file && !tracking) return res.status(400).json({ error: 'Attach a label file or enter a tracking number.' });
@@ -14690,17 +14726,41 @@ app.post('/api/portal/orders/:orderNumber/waybill', upload.single('file'), (req,
       const db = readDb();
       const own = _portalOwnOrder(db, client, on);
       if (!own) return res.status(404).json({ error: 'Order not found' });
-      const out = { ok: true, order_number: on };
-      if (tracking) {
-        const cur = String(own.order.waybill_number || '').trim();
-        if (cur && cur.toUpperCase() !== tracking.toUpperCase()) return res.status(409).json({ error: `This order already has tracking number ${cur}.` });
+      // Orders-first, and only while the order still needs a waybill.
+      // Done/cancelled work is the office's to reopen — never a portal edit.
+      const st = (own.batch.orderStates || {})[on] || {};
+      if (st.status === 'unprocessed') return res.status(409).json({ error: CANCELLED_LABEL_MSG || 'This order is cancelled — it takes no waybill. Contact IdealOne if that is wrong.' });
+      if (st.status === 'done') return res.status(409).json({ error: 'This order is already completed. Contact IdealOne to change its waybill.' });
+      // NEVER overwrite an existing waybill, and never silently replace a
+      // label already on file (one page per order on this path). Show the
+      // current number so the client can quote it to the office.
+      const cur = String(own.order.waybill_number || '').trim();
+      if (cur) return res.status(409).json({ error: `This order already has tracking number ${cur}. Contact IdealOne if it needs changing.`, waybill: cur, tracking: cur });
+      const hasLabel = !!((db.orderLabels || {})[on]);
+      if (page && hasLabel) return res.status(409).json({ error: 'This order already has a label file attached. Contact IdealOne to replace it.', has_label: true });
+      // What does the label itself say? Checked BEFORE anything is written,
+      // so a mismatch leaves the order exactly as it was.
+      const labelTracking = page ? await _portalLabelTracking(req.file.buffer, page.pdf) : '';
+      if (tracking && labelTracking && tracking.toUpperCase() !== labelTracking) {
+        return res.status(409).json({ error: `The tracking number you typed (${tracking}) does not match the number on the label (${labelTracking}). Check which one is right and try again — nothing was attached.`, label_tracking: labelTracking, tracking });
       }
+      const finalTracking = tracking || labelTracking || '';
+      if (finalTracking) {
+        // One waybill, one order: refuse a number another order already holds
+        // (without naming that order — it may be another client's).
+        for (const b of db.batches || []) for (const o of b.orders || []) {
+          if (String(o.order_number) !== on && String(o.waybill_number || '').trim().toUpperCase() === finalTracking.toUpperCase()) {
+            return res.status(409).json({ error: `Tracking number ${finalTracking} is already used by another order. Check the number and try again — nothing was attached.` });
+          }
+        }
+      }
+      const out = { ok: true, order_number: on, waybill: '', tracking: '', label_tracking: labelTracking || null, has_label: hasLabel };
       if (page) {
         const importId = uuidv4();
         const dir = path.join(LABEL_IMPORT_DIR, importId);
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, 'page_1.pdf'), page.pdf);
-        const role = attachLabelPage(db, on, { importId, pageIndex: 0, pageFile: 'page_1.pdf', tracking: tracking || undefined,
+        const role = attachLabelPage(db, on, { importId, pageIndex: 0, pageFile: 'page_1.pdf', tracking: finalTracking || undefined,
           attachedAt: new Date().toISOString(), attachedBy: `portal:${client}` });
         if (['refused', 'reference', 'cancelled'].includes(role)) {
           fs.rmSync(dir, { recursive: true, force: true });
@@ -14710,13 +14770,18 @@ app.post('/api/portal/orders/:orderNumber/waybill', upload.single('file'), (req,
         db.labelImports.push({ id: importId, filename: String(req.file.originalname || 'label').slice(0, 120), source: 'portal',
           contentHash: crypto.createHash('sha256').update(req.file.buffer).digest('hex'),
           uploadedAt: new Date().toISOString(), uploadedBy: `portal:${client}`, pageCount: 1,
-          pages: [{ pageIndex: 0, pageFile: 'page_1.pdf', extracted: tracking ? { tracking } : {}, rawText: '', matchStatus: 'matched',
+          pages: [{ pageIndex: 0, pageFile: 'page_1.pdf', extracted: finalTracking ? { tracking: finalTracking } : {}, rawText: '', matchStatus: 'matched',
             matchedOrderNumber: on, matchMethod: 'portal', matchConfidence: 'exact', candidates: [], parcel: role === 'parcel' || undefined }] });
-        out.label = role;
+        out.label = role; out.has_label = true;
       }
-      if (tracking) { own.order.waybill_number = tracking; if (carrier && !own.order.carrier) own.order.carrier = carrier; out.tracking = tracking; }
+      // attachLabelPage already fills a blank waybill from a primary/same
+      // page's tracking; set it explicitly so typed-only and recognised
+      // file-only attaches land the same way. Status is NOT touched here:
+      // pending → processing still happens only when packing starts.
+      if (finalTracking) { own.order.waybill_number = finalTracking; if (carrier && !own.order.carrier) own.order.carrier = carrier; }
+      out.waybill = String(own.order.waybill_number || ''); out.tracking = out.waybill;
       writeDb(db);
-      logAudit('portal_waybill_attached', { client, order: on, label: out.label || null, tracking: tracking || null, by: req.portalUser?.id || '' });
+      logAudit('portal_waybill_attached', { client, order: on, label: out.label || null, tracking: out.tracking || null, labelTracking: labelTracking || null, by: req.portalUser?.id || '' });
       res.json(out);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
