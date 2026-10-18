@@ -6528,7 +6528,7 @@ app.get('/api/portal/order/:orderNumber', requirePortalAuthMiddleware, (req, res
       status: st.status || 'pending',
       completed_at: st.endTime || null,
       pickup: portalPickup(st, pickupPolicy(db)),
-      waybill: o.waybill_number || '', po_number: o.po_number || '',
+      waybill: String(o.waybill_number || '').trim(), po_number: o.po_number || '',
       issue_no: o.issue_no || '', carrier: o.carrier || '',
       delivery_address: o.delivery_address || '',
       cartons: (st.cartons || []).length || (st.status === 'done' ? 1 : 0),
@@ -6689,7 +6689,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
       out.push({
         order_number: o.order_number, date: o.date || b.uploaded_at,
         status: st.status || 'pending', total_qty: o.total_qty || (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
-        lines: (o.lines || []).length, waybill: o.waybill_number || '', completed_at: st.endTime || null,
+        lines: (o.lines || []).length, waybill: String(o.waybill_number || '').trim(), completed_at: st.endTime || null,
         // At least one line was substituted for a bundle/kit SKU the order
         // actually named — shown as a pill on the order card without needing
         // to expand it, same fact the office Orders list flags. The kit SKU
@@ -6771,7 +6771,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
         status: st.status,
         total_qty: row.total_qty || lines.reduce((s, l) => s + (l.qty || 0), 0),
         lines: lines.length,
-        waybill: row.waybill_number || '',
+        waybill: String(row.waybill_number || '').trim(),
         completed_at: st.endTime,
         has_bundle: lines.some(l => !!l.from_bundle),
         bundle_skus: [...new Set(lines.filter(l => l.from_bundle).map(l => l.from_bundle))],
@@ -6901,7 +6901,7 @@ app.get('/api/portal/orders/drilldown', requirePortalAuthMiddleware, (req, res) 
       channel: portalChannelOf(o, b),
       date,
       status,
-      waybill: o.waybill_number || '',
+      waybill: String(o.waybill_number || '').trim(),
       completed_at: completedAt,
       total_qty: o.total_qty || lines.reduce((s, l) => s + (l.qty || 0), 0),
       lines,
