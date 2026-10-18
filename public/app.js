@@ -14133,7 +14133,7 @@
               <button class="btn-secondary btn-sm" data-oc-test="${esc(s.id)}">Test</button>
               <button class="btn-secondary btn-sm" data-oc-pull="${esc(s.id)}">Pull</button>
               <button class="btn-secondary btn-sm" data-oc-labels="${esc(s.id)}" title="Ask the channel for shipping labels for every open order that has none">&#127991; Get Labels</button>
-              <button class="btn-secondary btn-sm" data-oc-edit="${esc(s.id)}">Edit</button>
+              <button class="btn-secondary btn-sm" data-oc-flip="${esc(s.id)}">${s.mode==='work'?'Flip to Reference':'Flip to Live'}</button> <button class="btn-secondary btn-sm" data-oc-edit="${esc(s.id)}">Edit</button>
               <button class="btn-secondary btn-sm" data-oc-del="${esc(s.id)}" title="Disconnect this company">🗑</button>
             </td>
           </tr>`;
@@ -14185,6 +14185,14 @@
           $id('ocLabelSync').value = s.labelSync || 'off';
           $id('ocMode').value = s.mode === 'work' ? 'work' : 'reference';
           $id('onecartStoreForm').classList.remove('hidden');
+        }));
+        tb.querySelectorAll('[data-oc-flip]').forEach(b => b.addEventListener('click', async () => {
+          const s = stores.find(x => x.id === b.dataset.ocFlip); const target = s.mode==='work'?'reference':'work';
+          const pv = await fetch(`/api/master/onecart/stores/${s.id}/flip-preview`, { headers: H() }).then(r=>r.json());
+          if (!confirm(`Flip ${s.clientName} to ${target==='work'?'LIVE work orders':'Reference'}?\n${pv.openReferenceOrders} open reference order(s) will STAY reference. Only orders pulled after ${new Date().toISOString()} become work. Type FLIP in next prompt to confirm.`)) return;
+          if (prompt('Type FLIP to confirm') !== 'FLIP') return;
+          const d = await fetch(`/api/master/onecart/stores/${s.id}/flip`, { method:'POST', headers:H(), body: JSON.stringify({mode:target, confirm:'FLIP'}) }).then(r=>r.json());
+          say(d.ok?'success':'error', d.ok?`✓ Live since ${d.workFrom} — restamped ${d.restampedBatches} batch(es)`:'✗ '+(d.error||'flip failed')); load();
         }));
         tb.querySelectorAll('[data-oc-del]').forEach(b => b.addEventListener('click', async () => {
           if (!confirm('Disconnect this OneCart company? Pulled orders stay; nothing new arrives from it.')) return;

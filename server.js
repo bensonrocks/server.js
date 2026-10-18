@@ -3565,6 +3565,9 @@ function globalOrdersWithState(keep) {
         // Betime's stock is held in Keyfields, not here: the row shows no
         // stock verdict at all (neither "No stock" nor "Not in item master").
         stock_external:    isBetimeClient(batch.inventory_client || batch.client_name || '') && !batchStockTracked(batch, _goTracked),
+        // Advisory only while Betime tracking is off: never cancels/blocks (see lib/betime-stock.js).
+        betime_channel:    isBetimeClient(batch.client_name||'') ? betimeStock.orderChannelType(batch, ord) : '',
+        stock_type_warning: (()=>{ if(!isBetimeClient(batch.client_name||'')) return ''; const ch=betimeStock.orderChannelType(batch,ord); for(const l of (ord.lines||[])){ /* lookup-free warning is computed in inventory view; row flag kept light */ } return ''; })(),
         lines:             enrichedLines,
         items:             enrichedLines,
         // At least one line was exploded from a bundle/kit SKU — surfaced on
@@ -4193,14 +4196,17 @@ function findReferenceTwin(db, orderOrNumber) {
 // a store between "reference ledger" and "work orders" re-files its history.
 function stampOnecartReferenceBatches(db, onlyStoreId) {
   const stores = db.onecartStores || [];
-  const modeOf = id => { const s = stores.find(x => x.id === id); return s ? (s.mode === 'work' ? 'work' : 'reference') : 'reference'; };
+  const storeOf = id => stores.find(x => x.id === id);
   let changed = 0;
   for (const b of db.batches || []) {
     if (b.uploaded_by !== 'onecart-sync') continue;
     const sid = b.onecart_store_id || (b.orders || []).find(o => o.onecart_store_id)?.onecart_store_id || '';
     if (onlyStoreId && sid !== onlyStoreId) continue;
     if (!b.onecart_store_id && sid) b.onecart_store_id = sid;
-    const want = modeOf(sid) === 'reference';
+    const st = storeOf(sid);
+    // workFrom cutoff: batches before it stay reference even in work mode (change-request A).
+    const beforeCutoff = st && st.workFrom && String(b.uploaded_at||'') < String(st.workFrom);
+    const want = !st || st.mode !== 'work' || beforeCutoff;
     if (!!b.reference_only !== want) { b.reference_only = want; changed++; }
   }
   return changed;
@@ -29332,6 +29338,7 @@ setInterval(async () => {
 // pipeline, no hub attribution. Pull only: OneCart v2 has no webhooks.
 // ═══════════════════════════════════════════════════════════════════════════
 const onecartApi = require('./lib/onecart');
+const betimeStock = require('./lib/betime-stock');
 function onecartStores(db) { db.onecartStores = db.onecartStores || []; return db.onecartStores; }
 function onecartStorePublic(s) {
   return {
@@ -29339,7 +29346,7 @@ function onecartStorePublic(s) {
     enabled: !!s.enabled, autoPullMinutes: Number(s.autoPullMinutes) || 0,
     completeAction: s.completeAction || 'none',
     labelSync: s.labelSync === 'intake' ? 'intake' : 'off',
-    mode: s.mode === 'work' ? 'work' : 'reference',
+    mode: s.mode === 'work' ? 'work' : 'reference', workFrom: s.workFrom || null, liveSince: s.liveSince || null, liveBy: s.liveBy || '',
     apiKey: s.apiKey ? '••••' + String(s.apiKey).slice(-4) : '',
     endpoint: s.endpoint || '',
     lastPullAt: s.lastPullAt || null, lastResult: s.lastResult || null,
@@ -29374,6 +29381,10 @@ app.post('/api/master/onecart/stores', express.json(), (req, res) => {
   // 'reference' (default): the channel's record, not counted, not work.
   // 'work': a normal batch — the original behaviour.
   if (b.mode !== undefined) s.mode = b.mode === 'work' ? 'work' : 'reference';
+  if (b.workFrom !== undefined) s.workFrom = b.workFrom ? String(b.workFrom) : null;
+  if (s.mode === 'work' && !s.workFrom) s.workFrom = new Date().toISOString();
+  if (s.mode === 'work' && existingRec && existingRec.mode !== 'work') { s.liveSince = s.workFrom; s.liveBy = req.userId || _tokenUserId(req) || 'master'; }
+  if (s.mode === 'reference') { /* keep workFrom for audit; stamp uses mode first */ }
   if (!s.clientName) return res.status(400).json({ error: 'Name the client this OneCart company belongs to.' });
   if (!s.apiKey) return res.status(400).json({ error: 'The OneCart API key is required (Settings → API Keys in their dashboard).' });
   if (existingRec) Object.assign(existingRec, s); else list.push(s);
@@ -29384,7 +29395,7 @@ app.post('/api/master/onecart/stores', express.json(), (req, res) => {
   // Batches just filed as references may hold labels that belong on the work
   // order sharing the waybill — move them now rather than at the next boot.
   if (restamped) { try { rehomeReferenceLabels(db, 'store-mode'); } catch (e) { console.error('[labels] reference re-home:', e.message); } }
-  logAudit('onecart_store_saved', { id: s.id, client: s.clientName, enabled: !!s.enabled, completeAction: s.completeAction || 'none', labelSync: s.labelSync || 'off', mode: s.mode || 'reference', restampedBatches: restamped, by: req.userId || _tokenUserId(req) || 'master' });
+  logAudit('onecart_store_saved', { id: s.id, client: s.clientName, enabled: !!s.enabled, completeAction: s.completeAction || 'none', labelSync: s.labelSync || 'off', mode: s.mode || 'reference', workFrom: s.workFrom||null, restampedBatches: restamped, by: req.userId || _tokenUserId(req) || 'master' });
   res.json(onecartStorePublic(s));
 });
 app.delete('/api/master/onecart/stores/:id', (req, res) => {
@@ -29423,6 +29434,22 @@ app.post('/api/master/onecart/stores/:id/pull', async (req, res) => {
 // current /delivery_orders queue. Writes only with {apply:true, confirm:'APPLY'}.
 // Bounded: at most 5 queue pages (5 requests) and maxOrders (≤500) per call.
 // Fill-blanks only; reference_only, client, scan state and lines untouched.
+// Flip preview + flip: dry-run lists open reference batches that STAY reference.
+function _flipPreview(db, store) {
+  const open=[]; let total=0;
+  for (const b of db.batches||[]) { if (b.uploaded_by!=='onecart-sync') continue; const sid=b.onecart_store_id||(b.orders||[]).find(o=>o.onecart_store_id)?.onecart_store_id||''; if (sid!==store.id) continue; if (!b.reference_only) continue; total++;
+    for (const o of b.orders||[]) { const st=(b.orderStates||{})[o.order_number]; const status=st?st.status:'pending'; if (status==='pending'||status==='processing') open.push({order:o.order_number,status,uploaded_at:b.uploaded_at||'',waybill:o.waybill_number||''}); } }
+  return { storeId: store.id, client: store.clientName, mode: store.mode||'reference', workFrom: store.workFrom||null, referenceBatches: total, openReferenceOrders: open.length, open: open.slice(0,200) };
+}
+app.get('/api/master/onecart/stores/:id/flip-preview', (req,res)=>{ if(!checkMaster(req,res)) return; const db=readDb(); const s=onecartStores(db).find(x=>x.id===req.params.id); if(!s) return res.status(404).json({error:'Store not found'}); res.json(_flipPreview(db,s)); });
+app.post('/api/master/onecart/stores/:id/flip', express.json(), (req,res)=>{ if(!checkMaster(req,res)) return; const db=readDb(); const s=onecartStores(db).find(x=>x.id===req.params.id); if(!s) return res.status(404).json({error:'Store not found'});
+  const preview=_flipPreview(db,s); const target=(req.body||{}).mode==='reference'?'reference':'work';
+  if ((req.body||{}).confirm!=='FLIP') return res.json({ dryRun:true, target, preview, note:'Pass {mode:target, confirm:"FLIP"} to apply. Pre-flip reference orders stay reference.' });
+  const by=req.userId||_tokenUserId(req)||'master'; s.mode=target; if(target==='work'){ s.workFrom=(req.body||{}).workFrom||new Date().toISOString(); s.liveSince=s.workFrom; s.liveBy=by; } const restamped=stampOnecartReferenceBatches(db,s.id); writeDb(db); logAudit('betime_onecart_flip',{storeId:s.id,client:s.clientName,mode:target,workFrom:s.workFrom||null,restampedBatches:restamped,by}); res.json({ok:true,mode:target,workFrom:s.workFrom||null,liveSince:s.liveSince||null,liveBy:s.liveBy||'',restampedBatches:restamped,preview}); });
+app.post('/api/master/onecart/stores/:id/promote-open-references', express.json(), (req,res)=>{ if(!checkMaster(req,res)) return; const db=readDb(); const s=onecartStores(db).find(x=>x.id===req.params.id); if(!s) return res.status(404).json({error:'Store not found'});
+  // Report-only in this PR: never auto-convert (Benson decides). apply:true is refused.
+  if ((req.body||{}).apply) return res.status(409).json({error:'Promotion is report-only in this change; Benson must approve per-order conversion separately.'});
+  res.json({ dryRun:true, ..._flipPreview(db,s) }); });
 app.post('/api/master/onecart/stores/:id/backfill-details', express.json(), async (req, res) => {
   if (!checkMaster(req, res)) return;
   const body = req.body || {};
@@ -32689,7 +32716,8 @@ app.get('/api/inventory', requireAuth, (req, res) => {
   const clientId = reqClientId(req);
   if (!clientId) return res.status(400).json({ error: 'clientId query param is required' });
   const { category, search, lowStock, sort, dir } = req.query;
-  const rows = inventory.getAll({ category, search, lowStock: lowStock === 'true', clientId });
+  const poolCid = betimeStock.resolvePoolClientId(clientId, (()=>{try{return inventory.listClientIds()}catch(_){return[]}})());
+  const rows = inventory.getAll({ category, search, lowStock: lowStock === 'true', clientId: poolCid });
   // WHERE each SKU sits, so the list can show a Location — and, just as usefully,
   // show NOTHING for a SKU that was never put away (on-hand 0, no bin), which is
   // the case that leaves a wave-pick location blank.
@@ -32913,7 +32941,7 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
   if (!rawCid) return res.status(400).json({ error: 'clientId is required (which client owns this stock?)' });
   // ONE SPELLING: adopt the client's known casing (profile / batches / item
   // master) so a typed case-variant can never mint a second stock account.
-  const cid = invClientId(canonicalClientName(readDb(), rawCid));
+  const cid = betimeStock.resolvePoolClientId(invClientId(canonicalClientName(readDb(), rawCid)), (()=>{try{return inventory.listClientIds()}catch(_){return[]}})());
   const mode = String(req.body?.mode || 'add').toLowerCase() === 'set' ? 'set' : 'add';
   // WHAT THE SHEET'S Location COLUMN MEANS — asked, never assumed. Default
   // 'fill' is the old behaviour (a blank location gets filled, an existing one
@@ -33162,6 +33190,7 @@ app.post('/api/inventory/import-file', upload.single('file'), tenantMiddleware, 
         if (!existing) { inventory.upsert({ sku, name: nm, clientId: cid, stock_qty: qty }); if (qty > 0) additions[sku] = (additions[sku] || 0) + qty; }
         else if (qty !== 0) { inventory.adjust(sku, cid, qty, 'upload', 'Stock upload'); if (qty > 0) additions[sku] = (additions[sku] || 0) + qty; }
       }
+      const _st = betimeStock.stockTypeOfRow(r); if (_st && qty) { try { inventory.adjustTyped(sku, cid, mode==='set'?qty:qty, _st, 'Stock upload'); } catch(_){} }
       applied++; affected.add(sku);
       const loc = locOf(r);
       if (loc) posRows.push({ sku, location: loc, qty });
