@@ -44,6 +44,7 @@
   let agingDays = 15, screenDays = 90, exportMaxDays = 365, slaWorkingDays = 2;
   const openOrder = new Set();      // order numbers expanded on screen
   const orderDetail = new Map();    // order_number -> line detail (lazy loaded)
+  const awbDone = new Map();        // order_number -> {tracking, label} just attached this session (confirmation)
 
   // ── Faults reach US, not the client ───────────────────────────────────────
   // Per the user: if the portal hits an error, it is notified through System
@@ -912,6 +913,7 @@
       </div>
       <div class="dd-meta">
         <span>${o.waybill ? `Waybill <b class="mono">${esc(o.waybill)}</b>` : '<span class="muted">No waybill yet</span>'}</span>
+        ${!o.waybill && canWrite() && !['done', 'unprocessed'].includes(o.status) ? `<button type="button" class="btn-sm nwAttachWb" data-o="${esc(o.order_number)}" style="font-size:.72rem">&#127991; Add AWB / Upload AWB</button>` : ''}
         <span class="muted">${num(o.lines.length)} line${o.lines.length === 1 ? '' : 's'} · ${num(o.total_qty)} pcs</span>
       </div>
       ${cx ? `<div class="dd-cx">
@@ -1136,8 +1138,8 @@
             <div class="muted" style="font-size:.76rem">
               ${fmtDate(o.date)} · ${num(o.lines)} line${o.lines === 1 ? '' : 's'} · ${num(o.total_qty)} pcs
             </div>
-            ${o.waybill ? `<div class="muted mono" style="font-size:.7rem;margin-top:.1rem">Waybill ${esc(o.waybill)}</div>` : ''}
-            <div style="margin-top:.2rem"><a href="/api/portal/order/${encodeURIComponent(o.order_number)}/do?token=${encodeURIComponent(token)}" target="_blank" rel="noopener" style="font-size:.72rem">&#128196; Delivery Order (PDF)</a>${!o.waybill && canWrite() && !['done', 'unprocessed'].includes(o.status) ? ` · <a href="#" class="nwAttachWb" data-o="${esc(o.order_number)}" style="font-size:.72rem">&#127991; Attach waybill</a>` : ''}</div>
+            ${o.waybill ? `<div class="muted mono" style="font-size:.7rem;margin-top:.1rem">Waybill ${esc(o.waybill)}</div>` : '<div class="muted" style="font-size:.7rem;margin-top:.1rem">No waybill yet</div>'}
+            <div style="margin-top:.2rem"><a href="/api/portal/order/${encodeURIComponent(o.order_number)}/do?token=${encodeURIComponent(token)}" target="_blank" rel="noopener" style="font-size:.72rem">&#128196; Delivery Order (PDF)</a>${!o.waybill && canWrite() && !['done', 'unprocessed'].includes(o.status) ? ` <button type="button" class="btn-sm nwAttachWb" data-o="${esc(o.order_number)}" style="font-size:.72rem;margin-left:.35rem">&#127991; Add AWB / Upload AWB</button>` : ''}</div>
           </div>
           <div style="text-align:right">
             <span class="pill ${s.pill}">${s.label}</span>
@@ -1276,7 +1278,25 @@
            title="${d.has_label ? 'Open the waybill we matched to this order' : 'No waybill label on file for this order yet'}"
          >&#127991; ${esc(d.waybill)}${d.has_label ? ' \u00b7 view' : ''}</span>`
       : '';
+    const doneAwb = awbDone.get(d.order_number);
+    const awbConfirm = doneAwb ? `<div class="pill p-sla-met" style="margin-bottom:.4rem;white-space:normal;line-height:1.35;max-width:100%">&#10003; AWB attached${doneAwb.tracking ? ` \u2014 waybill ${esc(doneAwb.tracking)}` : ''}${doneAwb.label ? ' \u00b7 label attached' : ''}</div>` : '';
+    const canAddAwb = !d.waybill && !['done', 'unprocessed'].includes(d.status);
+    const awbBlock = d.waybill
+      ? (doneAwb ? `<div class="pill p-sla-met" style="margin-bottom:.5rem;white-space:normal;line-height:1.35;max-width:100%">&#10003; AWB attached — waybill ${esc(doneAwb.tracking || d.waybill)}${doneAwb.label ? ' \u00b7 label attached' : ''}</div>` : '')
+      : `${awbConfirm}<div class="add-awb" data-o="${esc(d.order_number)}" style="border:1px dashed var(--border);border-radius:8px;padding:.55rem;margin-bottom:.5rem">
+          <div style="font-size:.8rem"><b>No waybill yet</b>${d.has_label ? ' <span class="muted">\u00b7 label already attached</span>' : ''}</div>
+          ${canAddAwb && canWrite() ? `<div style="display:flex;flex-direction:column;gap:.4rem;margin-top:.45rem">
+            <label style="font-size:.72rem;font-weight:700;color:var(--muted)">AWB / TRACKING NUMBER <span style="font-weight:400;text-transform:none">(e.g. SPXSG\u2026A \u2014 a letter at the end is OK)</span>
+              <input type="text" class="addAwbTrk" maxlength="60" placeholder="Type or paste the AWB number" style="width:100%;padding:.45rem;border:1.5px solid var(--border);border-radius:8px;margin-top:.2rem"></label>
+            <label style="font-size:.72rem;font-weight:700;color:var(--muted)">OR UPLOAD THE AWB LABEL <span style="font-weight:400;text-transform:none">(PDF / PNG / JPEG, one page)</span>
+              <input type="file" class="addAwbFile" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" style="margin-top:.2rem"></label>
+            <div class="muted" style="font-size:.7rem">You can give either one, or both \u2014 if you give both they must match. Once a waybill is on this order it can only be changed by IdealOne.</div>
+            <div><button type="button" class="btn-sm asn-primary addAwbGo">&#127991; Attach AWB</button></div>
+            <div class="addAwbMsg" style="font-size:.78rem"></div>
+          </div>` : `<div class="muted" style="font-size:.74rem;margin-top:.3rem">${canAddAwb ? 'This login is view-only, so it cannot add a waybill. Ask a full-access login to attach it.' : 'Contact IdealOne if this order needs a waybill.'}</div>`}
+        </div>`;
     return `
+      ${awbBlock}
       ${wb ? `<div style="margin-bottom:.5rem">${wb}</div>` : ''}
       ${meta.length ? `<div class="muted" style="margin-bottom:.45rem">${meta.join(' · ')}</div>` : ''}
       ${d.delivery_address ? `<div class="muted" style="margin-bottom:.45rem">&#128205; ${esc(d.delivery_address)}</div>` : ''}
@@ -2316,7 +2336,7 @@
       lastResults = results;
       const ok = results.filter(r => r.ok), bad = results.filter(r => !r.ok);
       $('nwResultSummary').innerHTML = `<span class="pill p-sla-met">${ok.length} created</span>${bad.length ? ` <span class="pill p-sla-miss nw-fail-pill">${bad.length} failed</span>` : ''}
-        ${ok.length ? '<div class="muted" style="margin-top:.35rem">Attach a waybill to each order now, or skip and do it later from the order list.</div>' : ''}`;
+        ${ok.length ? '<div class="muted" style="margin-top:.35rem">Attach a waybill to each order now, or skip and do it later from the order itself (open the order \u2192 Add AWB / Upload AWB).</div>' : ''}`;
       $('nwResults').innerHTML = results.map(r => `<div class="nw-res ${r.ok ? 'ok' : 'fail'}">
         <div class="row" style="justify-content:space-between;gap:.5rem">
           <div><b class="mono">${esc(r.order_number || '(no order no)')}</b>${r.auto_number ? ' <span class="muted">(auto-generated)</span>' : ''}
@@ -2333,7 +2353,7 @@
     $('nwResults').addEventListener('click', async e => {
       const box = e.target.closest('.nw-wb'); if (!box) return;
       const out = box.querySelector('.nwWbMsg');
-      if (e.target.classList.contains('nwWbSkip')) { box.innerHTML = '<span class="muted">Skipped — attach later from the order list.</span>'; return; }
+      if (e.target.classList.contains('nwWbSkip')) { box.innerHTML = '<span class="muted">Skipped \u2014 attach later from the order itself (open the order \u2192 Add AWB / Upload AWB).</span>'; return; }
       if (!e.target.classList.contains('nwWbGo')) return;
       const f = box.querySelector('.nwWbFile').files[0]; const t = box.querySelector('.nwWbTrk').value.trim();
       if (!f && !t) { out.innerHTML = '<span class="nw-err">Choose a label file or enter a tracking number.</span>'; return; }
@@ -2345,12 +2365,18 @@
         box.innerHTML = `<span class="pill p-sla-met">&#10003; Waybill attached</span> <span class="muted">${d.label ? 'label file' : ''}${d.label && d.tracking ? ' + ' : ''}${d.tracking ? 'tracking ' + esc(d.tracking) : ''}</span>`;
       } catch (err) { out.innerHTML = `<span class="nw-err">&#10007; ${esc(err.message)}</span>`; }
     });
-    // From the order list: "Attach waybill" opens step 2 for that one order.
-    window.portalAttachWaybill = orderNo => {
-      $('nwWizard').classList.remove('hidden');
-      showResults([{ order_number: orderNo, ok: true }]);
-      $('nwResultSummary').innerHTML = '<div class="muted">Attach a waybill label or tracking number to this order.</div>';
-      $('nwWizard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // From the order list / drill-down: "Add AWB / Upload AWB" expands that
+    // order in place and focuses its inline form (orderDetailHtml) — the
+    // order stays on screen, so the client attaches to the order they opened.
+    window.portalAttachWaybill = async orderNo => {
+      const focus = () => {
+        const el = document.querySelector(`.add-awb[data-o="${CSS.escape(orderNo)}"]`);
+        if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); const i = el.querySelector('.addAwbTrk'); if (i) i.focus(); }
+      };
+      if (dd && ddOpen.has(orderNo)) { focus(); return; }
+      if (dd) { await toggleDrillOrder(orderNo); setTimeout(focus, 60); return; }
+      if (!openOrder.has(orderNo)) await toggleOrder(orderNo);
+      setTimeout(focus, 60);
     };
   })();
   async function loadSubmissions() {
@@ -2721,10 +2747,39 @@
     finally { btn.disabled = false; btn.textContent = orig; }
   });
 
+  // Inline Add AWB form (in order detail, used by the list AND drill-down):
+  // post number and/or file to the existing per-order waybill endpoint, then
+  // update the caches in place so the confirmation + waybill pill show
+  // without a reload. The server is the fence (own order, no overwrite).
+  document.addEventListener('click', async e => {
+    const go = e.target.closest('.addAwbGo');
+    if (!go) return;
+    e.preventDefault(); e.stopPropagation();
+    const box = go.closest('.add-awb'); if (!box) return;
+    const on = box.dataset.o;
+    const out = box.querySelector('.addAwbMsg');
+    const f = box.querySelector('.addAwbFile')?.files?.[0];
+    const t = (box.querySelector('.addAwbTrk')?.value || '').trim();
+    if (!f && !t) { out.innerHTML = '<span class="nw-err">Enter the AWB number or choose the AWB label file.</span>'; return; }
+    const fd = new FormData(); if (f) fd.append('file', f); if (t) fd.append('tracking', t);
+    go.disabled = true; out.textContent = 'Attaching\u2026';
+    try {
+      const r = await api('/api/portal/orders/' + encodeURIComponent(on) + '/waybill', { method: 'POST', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d || d.error) { out.innerHTML = `<span class="nw-err">&#10007; ${esc((d && d.error) || 'Not attached')}</span>`; go.disabled = false; return; }
+      awbDone.set(on, { tracking: d.tracking || d.waybill || '', label: !!(d.label || d.has_label) });
+      const row = orders.find(x => x.order_number === on); if (row && (d.waybill || d.tracking)) row.waybill = d.waybill || d.tracking;
+      const det = orderDetail.get(on); if (det) { det.waybill = d.waybill || det.waybill || ''; det.has_label = !!(d.has_label || det.has_label); }
+      if (dd) { const dr = (dd.rows || []).find(x => x.order_number === on); if (dr && (d.waybill || d.tracking)) dr.waybill = d.waybill || d.tracking; renderDrill(); }
+      renderOrders();
+    } catch (err) { out.innerHTML = `<span class="nw-err">&#10007; ${esc(err.message)}</span>`; go.disabled = false; }
+  });
+
   // Order cards expand to show their contents.
   $('orList').addEventListener('click', async e => {
     // Ticking the cancel checkbox must not also expand the card.
     if (e.target.classList.contains('pick')) return;
+    if (e.target.closest('.add-awb')) return;  // delegated Add AWB handler (document) submits; just don't toggle
     // Neither must opening the waybill — it sits INSIDE the expanded card, so
     // letting the click through would collapse it again.
     const aw = e.target.closest('.nwAttachWb');
@@ -2752,6 +2807,9 @@
   $('ddClose').addEventListener('click', closeDrill);
   $('ddModal').addEventListener('click', e => {
     if (e.target === $('ddModal')) { closeDrill(); return; }
+    if (e.target.closest('.add-awb')) return;  // delegated Add AWB handler (document) submits; just don't toggle
+    const aw = e.target.closest('.nwAttachWb');
+    if (aw) { e.preventDefault(); e.stopPropagation(); window.portalAttachWaybill && window.portalAttachWaybill(aw.dataset.o); return; }
     const wb = e.target.closest('.wbpill[data-o]');
     if (wb) { e.stopPropagation(); openWaybillPill(wb); return; }
     if (e.target.closest('.detail')) return;   // reading the detail must not collapse it
