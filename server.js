@@ -39,6 +39,7 @@ const {
   generateKeyfieldsXLSX, generateTemplateSampleXLSX,
   KEYFIELDS_HEADERS,
 } = require('./lib/keyfields');
+const { checkSpreadsheetRows } = require('./lib/upload-checker');
 
 // Upload validation ruleset — edit lib/validation.js to change rules
 const { validateRows } = require('./lib/validation');
@@ -11748,7 +11749,16 @@ function collectSkipped(all, kept, rowOffset) {
 async function parseOrderFileToRows(buffer, filename, opts = {}) {
   const ext = path.extname(filename || '').toLowerCase();
   const pdfWarnings = [];
-  let allRows = [], skipped = 0, flagged = [], skippedRows = [];
+  let allRows = [], skipped = 0, flagged = [], skippedRows = [], checker = null;
+  const _checkerFor = (records, mappedAll, known, melted) => {
+    if (melted) return null; // wide/pivot melt re-shapes rows; column-level checker does not apply (stated in PR)
+    try {
+      const clientResolved = String(opts.clientName || '').trim() || String((mappedAll.find(r=>r.client_name)||{}).client_name || '').trim();
+      let identifiers = null;
+      if (clientResolved) { identifiers = new Set(); try { const cid = invClientId(clientResolved); for (const r of inventory.getAll({ clientId: cid }) || []) { if (r.sku) identifiers.add(String(r.sku).trim().toLowerCase()); if (r.barcode) identifiers.add(String(r.barcode).trim().toLowerCase()); } } catch (_) {} if (!identifiers.size) identifiers = null; }
+      return checkSpreadsheetRows({ records, mapped: mappedAll, knownSkus: identifiers });
+    } catch (e) { console.warn('[upload-checker]', e.message); return null; }
+  };
   if (ext === '.pdf') {
     const detailed = await parsePdfPicklistDetailed(buffer);
     allRows = detailed.rows;
@@ -11772,6 +11782,7 @@ async function parseOrderFileToRows(buffer, filename, opts = {}) {
     allRows = all.filter(r => r.sku && !isMetadataRow(r, known));
     skipped = all.length - allRows.length;
     skippedRows = collectSkipped(all, allRows, 2);
+    checker = _checkerFor(records, all, known, false);
   } else if (ext === '.xlsx' || ext === '.xls') {
     const wb                   = XLSX.read(buffer, { type: 'buffer', cellDates: true });
     const ws                   = wb.Sheets[wb.SheetNames[0]];
@@ -11786,10 +11797,11 @@ async function parseOrderFileToRows(buffer, filename, opts = {}) {
     allRows = all.filter(r => r.sku && !isMetadataRow(r, known));
     skipped = cleanRecs.length - allRows.length;
     skippedRows = collectSkipped(all, allRows, 1); // data-row index (header excluded)
+    checker = _checkerFor(cleanRecs, all, known, !!melted);
   } else {
-    return { unsupported: true, allRows: [], skipped: 0, pdfWarnings: [], flagged: [] };
+    return { unsupported: true, allRows: [], skipped: 0, pdfWarnings: [], flagged: [], checker: null };
   }
-  return { unsupported: false, allRows, skipped, skippedRows, pdfWarnings, flagged };
+  return { unsupported: false, allRows, skipped, skippedRows, pdfWarnings, flagged, checker };
 }
 
 app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (req, res) => {
@@ -11963,6 +11975,7 @@ app.post('/api/preview', upload.single('orderFile'), tenantMiddleware, async (re
       skippedRows: skippedRows.slice(0, 2000),
       stagingUnits: staging.units,
       stagingSkus: staging.skus.slice(0, 8),
+      checker: parsed.checker || null,
       deliveryPlanningAvailable,
       deliveryPlanningHint: deliveryPlanningAvailable ? 'This shipment can be grouped into delivery jobs for route planning.' : null
     });
@@ -12176,6 +12189,22 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       pdfIssues = detailed.issues;
     } else {
       mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname, { clientName: req.body?.client_name });
+    }
+    // ── UPLOAD CHECKER GATE (spreadsheet intake) ──────────────────────────
+    // Errors block filing; warnings need upload_checker_ack=yes (the UI sends
+    // it only after the uploader ticks the acknowledgement in the checker panel).
+    if (orderExt !== '.pdf') {
+      try {
+        const chkParsed = await parseOrderFileToRows(orderFile.buffer, orderFile.originalname, { clientName: req.body?.client_name });
+        const checker = chkParsed && chkParsed.checker;
+        if (checker && checker.errors && checker.errors.length) {
+          return res.status(422).json({ error: 'UPLOAD BLOCKED — fix these problems in the file, then upload again:\n' + checker.errors.slice(0,20).map(e=>`• ${e.message} ${e.action||''}`).join('\n'), checker, uploadCheckerBlocked: true });
+        }
+        if (checker && checker.warnings && checker.warnings.length && String(req.body?.upload_checker_ack || '') !== 'yes') {
+          return res.status(409).json({ needsUploadCheckerAck: true, checker, message: `${checker.warnings.length} warning(s) need your acknowledgement before this file can be uploaded. Review them — especially any column that will be IGNORED — then confirm to proceed.` });
+        }
+        if (checker) req._uploadChecker = checker;
+      } catch (e) { console.warn('[upload-checker gate]', e.message); }
     }
     // SAFETY RULE — no picking list may be silently dropped
     const criticalPdf = pdfIssues.filter(i => i.critical);

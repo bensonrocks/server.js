@@ -1070,6 +1070,11 @@ body.scan-open { overflow: hidden; }
 .confirm-stock-notice.csn-info { background: #f1f5f9; border: 1px solid #cbd5e1; color: #334155; }
 .confirm-stock-notice.csn-warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
 .confirm-stock-notice b { display: block; margin-bottom: .15rem; }
+.confirm-checker { border-radius: var(--radius-sm); padding:.7rem .85rem; font-size:.82rem; margin-top:.75rem; border:1px solid #ccc; }
+.confirm-checker.checker-error { background:#fef2f2; border-color:#ef4444; color:#991b1b; }
+.confirm-checker.checker-warning { background:#fffbeb; border-color:#f59e0b; color:#92400e; }
+.confirm-checker.checker-clean { background:#f0fdf4; border-color:#22c55e; color:#166534; }
+.confirm-checker ul { margin:.4rem 0 .4rem 1.1rem; } .confirm-checker li { margin:.25rem 0; }
 .confirm-dup-warnings { background: var(--primary-light); border: 1px solid var(--primary); border-radius: var(--radius-sm); padding: .6rem .85rem; font-size: .8rem; color: var(--primary); margin-top: .75rem; list-style: disc inside; }
 
 .confirm-val-edit { flex: 1; min-width: 0; }

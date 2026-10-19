@@ -1236,6 +1236,30 @@
       noClientChk.onchange = evaluateClientGate;
     }
 
+    // ── UPLOAD CHECKER panel ── red errors block, amber warnings need tick, green clean
+    const chkEl = document.getElementById('confirmChecker');
+    let checkerAck = !(preview.checker && preview.checker.warnings && preview.checker.warnings.length);
+    if (chkEl) {
+      const chk = preview.checker;
+      if (!chk) { chkEl.classList.add('hidden'); chkEl.innerHTML=''; }
+      else {
+        const sm = chk.summary || {};
+        const head = chk.errors.length ? `⛔ ${chk.errors.length} problem(s) must be fixed before this file can be uploaded`
+          : chk.warnings.length ? `⚠ ${chk.warnings.length} warning(s) — check these before uploading`
+          : '✓ File checked — no problems found';
+        chkEl.className = 'confirm-checker ' + (chk.errors.length ? 'checker-error' : chk.warnings.length ? 'checker-warning' : 'checker-clean');
+        chkEl.innerHTML = `<b>${esc(head)}</b><div>${sm.rows||0} row(s) · ${sm.orders||0} order(s) · ${sm.errors||0} error(s) · ${sm.warnings||0} warning(s) · ${sm.skippedRows||0} skipped row(s) · ${sm.unmappedColumns||0} ignored column(s)</div>`
+          + (chk.errors.length?`<div><b>Errors — fix in the file, then upload again:</b><ul>${chk.errors.map(e=>`<li>${esc(e.message)}${e.action?` <i>${esc(e.action)}</i>`:''}</li>`).join('')}</ul></div>`:'')
+          + (chk.warnings.length?`<div><b>Warnings — these will happen if you proceed:</b><ul>${chk.warnings.map(e=>`<li>${esc(e.message)}${e.action?` <i>${esc(e.action)}</i>`:''}</li>`).join('')}</ul><label style="display:block;font-weight:700"><input type="checkbox" id="checkerAckChk" ${chk.errors.length?'disabled':''}/> I understand — proceed anyway (including dropping any IGNORED columns and skipped rows listed above)</label></div>`:'');
+        chkEl.classList.remove('hidden');
+        const ackBox = document.getElementById('checkerAckChk');
+        if (ackBox) ackBox.onchange = () => { checkerAck = ackBox.checked; evaluateClientGate(); };
+        const prevGate = evaluateClientGate;
+        evaluateClientGate = () => { prevGate(); if (chk.errors.length || !checkerAck) document.getElementById('confirmApproveBtn').disabled = true; };
+        clientField.oninput = evaluateClientGate; noClientChk.onchange = evaluateClientGate;
+      }
+    }
+
     // Same SKU appearing more than once in one order — not blocked (a
     // genuine split pick across two bins is valid), just flagged so the
     // uploader can check the source file before approving.
@@ -1445,6 +1469,7 @@
     form.append('arrange_delivery', arrangeDeliveryChoice());
     form.append('pick_strategy', pickStrategyChoice());
     form.append('pick_staging', pickStagingChoice());
+    if (document.getElementById('checkerAckChk')?.checked) form.append('upload_checker_ack', 'yes');
 
     try {
       const sendUpload = async () => {
@@ -1484,6 +1509,13 @@
         form.append('overwrite_same_file', 'yes');
         resp = await sendUpload();
         data = await resp.json();
+      }
+
+      if (resp.status === 409 && data.needsUploadCheckerAck) {
+        const lines = (data.checker?.warnings || []).slice(0,12).map(w=>'• '+w.message).join('\n');
+        const ok = confirm(`⚠ UPLOAD CHECKER — PLEASE CONFIRM\n\n${data.message}\n\n${lines}\n\nOK = I understand — proceed anyway\nCancel = abort (fix the file first)`);
+        if (!ok) { document.getElementById('uploadConfirmOverlay').classList.add('hidden'); setUploadStatus('error','Upload cancelled — checker warnings not acknowledged.'); return; }
+        form.append('upload_checker_ack','yes'); resp = await sendUpload(); data = await resp.json();
       }
 
       // Suspect SKUs: the AI column detection found SKUs shaped like
