@@ -1236,24 +1236,21 @@
       noClientChk.onchange = evaluateClientGate;
     }
 
-    // ── UPLOAD CHECKER panel ── red errors block, amber warnings are information only, green clean
+    // ── UPLOAD CHECKER panel ── information only: checker notes never block or disable Approve
     const chkEl = document.getElementById('confirmChecker');
     if (chkEl) {
       const chk = preview.checker;
       if (!chk) { chkEl.classList.add('hidden'); chkEl.innerHTML=''; }
       else {
         const sm = chk.summary || {};
-        const head = chk.errors.length ? `⛔ ${chk.errors.length} problem(s) must be fixed before this file can be uploaded`
-          : chk.warnings.length ? `⚠ ${chk.warnings.length} warning(s) — check these before uploading`
+        const head = (chk.errors.length || chk.warnings.length) ? `ℹ ${chk.errors.length + chk.warnings.length} checker note(s) — for information only, upload will proceed`
           : '✓ File checked — no problems found';
         chkEl.className = 'confirm-checker ' + (chk.errors.length ? 'checker-error' : chk.warnings.length ? 'checker-warning' : 'checker-clean');
         chkEl.innerHTML = `<b>${esc(head)}</b><div>${sm.rows||0} row(s) · ${sm.orders||0} order(s) · ${sm.errors||0} error(s) · ${sm.warnings||0} warning(s) · ${sm.skippedRows||0} skipped row(s) · ${sm.unmappedColumns||0} ignored column(s)</div>`
-          + (chk.errors.length?`<div><b>Errors — fix in the file, then upload again:</b><ul>${chk.errors.map(e=>`<li>${esc(e.message)}${e.action?` <i>${esc(e.action)}</i>`:''}</li>`).join('')}</ul></div>`:'')
+          + (chk.errors.length?`<div><b>Checker notes — for information only (upload will proceed):</b><ul>${chk.errors.map(e=>`<li>${esc(e.message)}${e.action?` <i>${esc(e.action)}</i>`:''}</li>`).join('')}</ul></div>`:'')
           + (chk.warnings.length?`<div><b>Warnings — for information only (these will happen if you proceed; they do not block the upload):</b><ul>${chk.warnings.map(e=>`<li>${esc(e.message)}${e.action?` <i>${esc(e.action)}</i>`:''}</li>`).join('')}</ul></div>`:'');
         chkEl.classList.remove('hidden');
-        const prevGate = evaluateClientGate;
-        evaluateClientGate = () => { prevGate(); if (chk.errors.length) document.getElementById('confirmApproveBtn').disabled = true; };
-        clientField.oninput = evaluateClientGate; noClientChk.onchange = evaluateClientGate;
+        // #105: checker is information only — it never disables Approve.
       }
     }
 

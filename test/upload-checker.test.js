@@ -31,11 +31,17 @@ const clean=[
 { // mapped Qty column with all qty=1 must NOT be flagged ignored (blanking defaults to 1)
   const rows=[{'Order No':'ORD-1',SKU:'SKU-1',Qty:1,PONumber:'PO-1',ShipToName:'A'},{'Order No':'ORD-1',SKU:'SKU-2',Qty:1,PONumber:'PO-1',ShipToName:'A'}];
   const r=checkSpreadsheetRows({records:rows,knownSkus:KNOWN}); assert.ok(!r.unmappedColumns.some(c=>/qty/i.test(c.column)),JSON.stringify(r.unmappedColumns)); assert.ok(!r.warnings.some(w=>/Qty/.test(w.column||'')&&/IGNORED/.test(w.message)),JSON.stringify(r.warnings)); console.log('qty-all-1 not flagged ignored'); }
-{ // UI: warnings panel is information only — no ack checkbox, Approve gated only by errors
+{ // UI (#105): checker is information only — never disables Approve, no 'cannot proceed' wording
   const app=require('fs').readFileSync(require('path').join(__dirname,'..','public','app.js'),'utf8');
+  const srv=require('fs').readFileSync(require('path').join(__dirname,'..','server.js'),'utf8');
   assert.ok(!app.includes('checkerAckChk'), 'ack checkbox must be gone');
   assert.ok(!app.includes('needsUploadCheckerAck'), '409 ack retry must be gone');
-  assert.ok(app.includes('Warnings — for information only'), 'warnings panel still shown');
-  assert.ok(/if \(chk\.errors\.length\) document\.getElementById\('confirmApproveBtn'\)\.disabled = true/.test(app), 'Approve disabled only on errors');
-  console.log('ui no ack gate'); }
+  assert.ok(app.includes('for information only, upload will proceed'), 'checker panel must be plainly informational');
+  assert.ok(!app.includes('must be fixed before this file can be uploaded'), 'no checker cannot-proceed wording');
+  assert.ok(!/chk\.errors\.length\)[^\n]*confirmApproveBtn[^\n]*disabled/.test(app), 'Approve must never be disabled by checker errors');
+  assert.ok(!srv.includes('uploadCheckerBlocked'), 'server must not return checker-blocked flag');
+  assert.ok(!/checker[\s\S]{0,200}status\(422\)/.test(srv.slice(srv.indexOf('UPLOAD CHECKER (spreadsheet'), srv.indexOf('UPLOAD CHECKER (spreadsheet')+800)), 'server checker block must not 422');
+  console.log('ui no checker gate'); }
+{ const r=checkSpreadsheetRows({records:[{'Order No':'ORD-1',SKU:'NOPE-9',Qty:'abc',PONumber:'PO-1',ShipToName:'A'}],knownSkus:KNOWN});
+  assert.strictEqual(r.blocking,false); assert.strictEqual(r.requiresAck,false); assert.strictEqual(r.ok,true); assert.ok(r.errors.length>=2, JSON.stringify(r.errors)); console.log('checker report informational flags'); }
 console.log('upload-checker: ok');
