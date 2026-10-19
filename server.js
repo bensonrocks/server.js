@@ -12190,18 +12190,17 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
     } else {
       mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname, { clientName: req.body?.client_name });
     }
-    // ── UPLOAD CHECKER GATE (spreadsheet intake) ──────────────────────────
-    // Errors block filing (422); warnings are information only — they are
-    // shown in the preview/confirm modal but never block or require an ack.
+    // ── UPLOAD CHECKER (spreadsheet intake) — INFORMATION ONLY ─────────────
+    // Checker errors and warnings NEVER block filing: no 422/409 because of
+    // checker results and no ack is required. The report is returned by
+    // /api/preview for information; here it is only attached/logged and the
+    // upload proceeds exactly as the pre-checker importer would.
     if (orderExt !== '.pdf') {
       try {
         const chkParsed = await parseOrderFileToRows(orderFile.buffer, orderFile.originalname, { clientName: req.body?.client_name });
         const checker = chkParsed && chkParsed.checker;
-        if (checker && checker.errors && checker.errors.length) {
-          return res.status(422).json({ error: 'UPLOAD BLOCKED — fix these problems in the file, then upload again:\n' + checker.errors.slice(0,20).map(e=>`• ${e.message} ${e.action||''}`).join('\n'), checker, uploadCheckerBlocked: true });
-        }
         if (checker) req._uploadChecker = checker;
-      } catch (e) { console.warn('[upload-checker gate]', e.message); }
+      } catch (e) { console.warn('[upload-checker]', e.message); }
     }
     // SAFETY RULE — no picking list may be silently dropped
     const criticalPdf = pdfIssues.filter(i => i.critical);
