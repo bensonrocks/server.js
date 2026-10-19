@@ -12191,17 +12191,14 @@ app.post('/api/upload', uploadFields, tenantMiddleware, async (req, res) => {
       mapped = parseUploadedFile(orderFile.buffer, orderFile.originalname, { clientName: req.body?.client_name });
     }
     // ── UPLOAD CHECKER GATE (spreadsheet intake) ──────────────────────────
-    // Errors block filing; warnings need upload_checker_ack=yes (the UI sends
-    // it only after the uploader ticks the acknowledgement in the checker panel).
+    // Errors block filing (422); warnings are information only — they are
+    // shown in the preview/confirm modal but never block or require an ack.
     if (orderExt !== '.pdf') {
       try {
         const chkParsed = await parseOrderFileToRows(orderFile.buffer, orderFile.originalname, { clientName: req.body?.client_name });
         const checker = chkParsed && chkParsed.checker;
         if (checker && checker.errors && checker.errors.length) {
           return res.status(422).json({ error: 'UPLOAD BLOCKED — fix these problems in the file, then upload again:\n' + checker.errors.slice(0,20).map(e=>`• ${e.message} ${e.action||''}`).join('\n'), checker, uploadCheckerBlocked: true });
-        }
-        if (checker && checker.warnings && checker.warnings.length && String(req.body?.upload_checker_ack || '') !== 'yes') {
-          return res.status(409).json({ needsUploadCheckerAck: true, checker, message: `${checker.warnings.length} warning(s) need your acknowledgement before this file can be uploaded. Review them — especially any column that will be IGNORED — then confirm to proceed.` });
         }
         if (checker) req._uploadChecker = checker;
       } catch (e) { console.warn('[upload-checker gate]', e.message); }
