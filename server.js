@@ -49,6 +49,9 @@ const integration = require('./lib/integration');
 const hotCold = require('./lib/hot-cold-archive');
 const incrementalPersist = require('./lib/incremental-persist');
 const ordersSearch = require('./lib/orders-search');
+const perf = require('./lib/perf');
+const _perfCache = new perf.TtlCache(); // stats/portal/report TTL cache (45s default, PERF_CACHE_TTL_MS)
+function _invalidatePerfCaches(){ try{_perfCache.clear();}catch(_){}}
 const rtsGuard = require('./lib/rts-guard');
 
 // OCR parser for photo-based picklist upload
@@ -154,8 +157,38 @@ const app    = express();
 const loopLag = require('./lib/loop-lag');
 app.use(loopLag.middleware);
 if (!/^(0|off|false|no)$/i.test(String(process.env.LOOP_LAG_MONITOR || ''))) {
-  loopLag.start({ thresholdMs: Math.max(100, Number(process.env.LOOP_LAG_THRESHOLD_MS) || 1000) });
+  loopLag.start({ thresholdMs: Math.max(100, Number(process.env.LOOP_LAG_THRESHOLD_MS) || 1000), log: (line) => {
+    console.log(line);
+    // PERF-ALERT hook (log-only; no poke/db write - writing db on a lag would
+    // add the very block we are reporting). Railway log alert can match this.
+    const m = /blocked ~(\d+)ms/.exec(line);
+    if (m && Number(m[1]) > (Number(process.env.PERF_ALERT_LAG_MS) || 2000)) console.log(`[perf-alert] type=event-loop-lag lagMs=${m[1]} ${line.slice(line.indexOf(';'))}`);
+  } });
 }
+// PERF-ALERT route latency: /api/orders, /api/portal/*, daily-summary.
+// Structured [perf-alert] lines when a route exceeds PERF_ALERT_MS (1.5s) or
+// its rolling p95 (last 120, >=20 samples) exceeds it (throttled 60s/route).
+// Log-only by design - see docs/perf-event-loop-2026-10-19.md.
+const _routePerf = new perf.RoutePerf(120);
+const PERF_ALERT_MS = Number(process.env.PERF_ALERT_MS) || 1500;
+app.use((req, res, next) => {
+  const pathOnly = (req.originalUrl || req.url || '').split('?')[0];
+  const watched = pathOnly === '/api/orders' || pathOnly === '/api/stats' || pathOnly.startsWith('/api/portal/') || /^\/api\/master\/report\/daily-summary$/.test(pathOnly);
+  if (!watched) return next();
+  const t0 = Date.now(); let bytes = 0;
+  const _write = res.write.bind(res), _end = res.end.bind(res);
+  res.write = (chunk, ...a) => { if (chunk) bytes += Buffer.byteLength(chunk); return _write(chunk, ...a); };
+  res.end = (chunk, ...a) => { if (chunk && typeof chunk !== 'function') bytes += Buffer.byteLength(chunk); return _end(chunk, ...a); };
+  res.on('finish', () => {
+    const dur = Date.now() - t0;
+    const route = req.method + ' ' + pathOnly;
+    const { p95, count } = _routePerf.record(route, dur);
+    const cl = Number(res.getHeader('content-length')) || bytes;
+    if (dur > PERF_ALERT_MS) console.log(`[perf-alert] type=route-slow route=${route} durationMs=${dur} bytes=${cl} status=${res.statusCode} p95Ms=${Math.round(p95)} samples=${count}`);
+    else if (_routePerf.shouldAlert(route, PERF_ALERT_MS)) console.log(`[perf-alert] type=route-p95 route=${route} durationMs=${dur} bytes=${cl} status=${res.statusCode} p95Ms=${Math.round(p95)} samples=${count}`);
+  });
+  next();
+});
 // GZIP EVERY COMPRESSIBLE RESPONSE. Railway's traffic chart showed 40–80 MB
 // egress bursts every few minutes against near-zero ingress: the orders list
 // JSON and the 1.2 MB app.js were going out raw, and on the phones the floor
@@ -929,8 +962,12 @@ app.use((req, res, next) => {
 // no-cache (= revalidate every load) on HTML/JS/CSS so every deploy reaches
 // browsers on the next reload — stale cached app.js caused phantom bugs.
 app.use(express.static(path.join(__dirname, 'public'), {
+  etag: true, lastModified: true,
   setHeaders(res, filePath) {
-    if (/\.(?:html|js|css)$/.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+    // ETag/Last-Modified revalidation: unchanged JS/CSS/HTML answers 304
+    // (cheap) instead of re-downloading 1.27MB app.js; a deploy changes
+    // mtime/size -> new ETag -> fresh file. Same freshness as no-cache.
+    if (/\.(?:html|js|css)$/.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
   },
 }));
 app.get('/api/ping', (_req, res) => res.json({ ok: true, ts: Date.now() }));
@@ -1494,6 +1531,7 @@ function _flushAllPersistTimers() {
 const DB_SCAN_PERSIST_DEBOUNCE_MS = parseInt(process.env.DB_SCAN_PERSIST_DEBOUNCE_MS || '', 10) || 1000;
 const DB_SCAN_PERSIST_MAX_WAIT_MS = parseInt(process.env.DB_SCAN_PERSIST_MAX_WAIT_MS || '', 10) || 6000;
 function writeDb(data, opts) {
+  if (!(opts && opts.scanRate)) _invalidatePerfCaches();
   const tenantId = tenantContext.currentTenantId();
   data = incrementalPersist.unwrap(data);
   if (incrementalPersist.enabled()) {
@@ -3011,16 +3049,16 @@ function invalidateWaybillCache(batchId) { _waybillDirCache.delete(batchId); }
 // Deliberately reports 'off' and 'missing' as loudly as 'failed': a relay that
 // was never configured, and one that silently never enqueued, both look
 // exactly like success on every screen otherwise.
-function _zortPushState(db, ord, state) {
+function _zortPushState(db, ord, state, _idx) {
   if (!ord || !ord.zort_id) return null;                     // not a synced order
   if (state.zort_pushed_at) {
     return { state: 'sent', at: state.zort_pushed_at, action: state.zort_push_action || '' };
   }
-  const store = (db.zortStores || []).find(s => s.id === ord.zort_store_id);
+  const store = _idx ? _idx.storeById.get(ord.zort_store_id) : (db.zortStores || []).find(s => s.id === ord.zort_store_id);
   if (!store || !store.enabled) return { state: 'off', why: 'the connection is switched off' };
   const action = store.completeAction || 'none';
   if (action === 'none') return { state: 'off', why: 'this store is set to push nothing back on completion (Complete action = none)' };
-  const entry = (db.zortOutbox || []).find(e => e.kind === 'completion' && String(e.orderNumber) === String(ord.order_number));
+  const entry = _idx ? _idx.outboxByKey.get('completion|'+String(ord.order_number)) : (db.zortOutbox || []).find(e => e.kind === 'completion' && String(e.orderNumber) === String(ord.order_number));
   if (entry) {
     // The REASON travels even while it is still retrying. A hub that REFUSED
     // (a business error inside a 200 — see zortBodyError) is not the same as
@@ -3040,13 +3078,13 @@ function _zortPushState(db, ord, state) {
 // Label chip appears when a PDF is attached and there is nothing at all when
 // it is not — so "still being fetched", "the fetch failed", and "we never
 // asked" all looked identical. Asked twice from the floor.
-function _zortLabelState(db, ord) {
+function _zortLabelState(db, ord, _idx) {
   if (!ord || !ord.zort_id) return null;                    // not a synced order
   if ((db.orderLabels || {})[ord.order_number]) return null; // attached — the Label chip says so
-  const store = (db.zortStores || []).find(s => s.id === ord.zort_store_id);
+  const store = _idx ? _idx.storeById.get(ord.zort_store_id) : (db.zortStores || []).find(s => s.id === ord.zort_store_id);
   if (!store || !store.enabled) return { state: 'off', why: 'the connection is switched off' };
   if (!store.labelSync) return { state: 'off', why: 'this store is not set to pull carrier labels' };
-  const entry = (db.zortOutbox || []).find(e => e.kind === 'label' && String(e.orderNumber) === String(ord.order_number));
+  const entry = _idx ? _idx.outboxByKey.get('label|'+String(ord.order_number)) : (db.zortOutbox || []).find(e => e.kind === 'label' && String(e.orderNumber) === String(ord.order_number));
   if (entry) {
     return entry.stalled
       ? { state: 'failed', attempts: entry.attempts || 0, error: entry.lastError || '' }
@@ -3428,6 +3466,10 @@ function cancelledAtOf(state) {
 }
 function globalOrdersWithState(keep) {
   const db          = readDb();
+  // Indexed zort lookups: the per-order .find() over stores/outbox was
+  // O(orders x outbox) on every list refresh (a 15s-class block at scale).
+  const _zortIdx = { storeById: new Map((db.zortStores||[]).map(x=>[x.id,x])), outboxByKey: new Map() };
+  for (const e of (db.zortOutbox||[])) { const k=e.kind+'|'+String(e.orderNumber); if(!_zortIdx.outboxByKey.has(k)) _zortIdx.outboxByKey.set(k,e); }
   const _lineLookup = _makeSkuLookup();
   const orderLabels = db.orderLabels || {};
   const _pol        = pickupPolicy(db);
@@ -3607,8 +3649,8 @@ function globalOrdersWithState(keep) {
         // completed marketplace order says plainly whether its status went
         // back — sent / queued / failed / never configured — instead of the
         // operator having to compare two screens and guess.
-        zort_push:         _zortPushState(db, ord, state),
-        zort_label:        _zortLabelState(db, ord),
+        zort_push:         _zortPushState(db, ord, state, _zortIdx),
+        zort_label:        _zortLabelState(db, ord, _zortIdx),
         has_waybill_pdf:   wbSet.has(`${ord.order_number}.pdf`),
         has_order_label:   !!(orderLabels[ord.order_number]),
         // How many parcels' labels are attached — a split order has one per box.
@@ -6079,6 +6121,8 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
   const cid = invClientId(client);
   const clientNorm = client.trim().toLowerCase();
   const db = readDb();
+  const _ovKey = 'portalOverview|' + tenantContext.currentTenantId() + '|' + clientNorm;
+  const _ovCached = _perfCache.get(_ovKey); if (_ovCached) { res.setHeader('X-Portal-Cache','hit'); return res.json(_ovCached); }
 
   const agingDays = portalAgingDays(db, client);
   let stock = { skus: 0, onHand: 0, reserved: 0, available: 0, lowStock: 0, outOfStock: 0, aging: 0, agingPieces: 0 };
@@ -6193,7 +6237,7 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
 
   const quarantineOpen = (db.quarantine || []).filter(q => q.clientId === cid && q.status === 'open').reduce((s, q) => s + q.qty, 0);
 
-  res.json({
+  const _ovBody = {
     client, stock, openOrders, doneOrders, openPieces, inboundOpen, quarantineOpen,
     waitingStockOrders, waitingStockPieces, waitingStockSample,
     openDiscrepancies,
@@ -6210,10 +6254,14 @@ app.get('/api/portal/overview', requirePortalAuthMiddleware, (req, res) => {
       avgPiecesPerOrder: shipped30Orders ? Math.round((shipped30Pieces / shipped30Orders) * 10) / 10 : 0,
     },
     generatedAt: new Date().toISOString(),
-  });
+  };
+  _perfCache.set(_ovKey, _ovBody);
+  res.json(_ovBody);
 });
 // Stock — the client's own inventory, read-only.
 app.get('/api/portal/stock', requirePortalAuthMiddleware, (req, res) => {
+  const _stkKey = 'portalStock|' + tenantContext.currentTenantId() + '|' + String(req.portalClient||'').trim().toLowerCase() + '|' + String(req.query.sort||'') + '|' + String(req.query.dir||'');
+  const _stkCached = _perfCache.get(_stkKey); if (_stkCached) { res.setHeader('X-Portal-Cache','hit'); return res.json(_stkCached); }
   const cid = invClientId(req.portalClient);
   let rows = [];
   const agingDays = portalAgingDays(readDb(), req.portalClient);
@@ -6245,8 +6293,10 @@ app.get('/api/portal/stock', requirePortalAuthMiddleware, (req, res) => {
   } catch (_) {}
   // Same sorter the office and both exports use — see sortStockRows.
   rows = sortStockRows(rows, req.query.sort, req.query.dir);
-  res.json({ rows, agingDays, agingDaysDefault: PORTAL_AGING_DAYS_DEFAULT,
-    sort: String(req.query.sort || 'sku'), dir: String(req.query.dir || 'asc') });
+  const _stkBody = { rows, agingDays, agingDaysDefault: PORTAL_AGING_DAYS_DEFAULT,
+    sort: String(req.query.sort || 'sku'), dir: String(req.query.dir || 'asc') };
+  _perfCache.set(_stkKey, _stkBody);
+  res.json(_stkBody);
 });
 // ── LOW-STOCK DAILY PROMPT ──────────────────────────────────────────────────
 // Per Benson (16 Oct 2026): flag every SKU whose AVAILABLE qty (on hand minus
@@ -6587,6 +6637,21 @@ function tmsStatusLabelSrv(job) {
 // The transport job for an order, if delivery was arranged. Matched the same
 // way updateTransportOnOrderCompletion does — transport ids are TR- codes, so
 // the real cross-reference is referenceId/clientId (the order number).
+function transportJobMap(db) {
+  // One pass over db.transport -> best job per order key (same ranking as
+  // transportJobForOrder). Portal list used to call the per-order filter
+  // (O(orders x transport)) on every row.
+  const rank = { delivered: 5, 'in-transit': 4, confirmed: 3, preplanned: 2, pending: 1, cancelled: 0 };
+  const map = new Map();
+  for (const j of (db.transport||[])) {
+    for (const raw of [j.referenceId, j.clientId, j.id]) {
+      const k = String(raw||'').trim(); if (!k) continue;
+      const cur = map.get(k);
+      if (!cur || (rank[j.status]??1) > (rank[cur.status]??1) || ((rank[j.status]??1)===(rank[cur.status]??1) && String(j.deliveredAt||j.createdAt||'') > String(cur.deliveredAt||cur.createdAt||''))) map.set(k, j);
+    }
+  }
+  return map;
+}
 function transportJobForOrder(db, orderNumber) {
   const n = String(orderNumber || '').trim();
   if (!n) return null;
@@ -6616,7 +6681,12 @@ const PORTAL_STOCK_LABEL = {
 };
 app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient.trim().toLowerCase();
+  const _poCacheKey = 'portalOrders|' + tenantContext.currentTenantId() + '|' + client;
+  const _poPg = perf.parsePagination(req.query);
+  const _poSlim = String(req.query.slim||'')==='1';
+  if (!String(req.query.q||'').trim() && !_poPg && !_poSlim) { const c=_perfCache.get(_poCacheKey); if (c) { res.setHeader('X-Portal-Cache','hit'); return res.json(c); } }
   const db = readDb();
+  const _jobMap = transportJobMap(db);
   const _lookup = _makeSkuLookup();
   const _poBo = _makeBackorderIndex(db);
   const _poTr = new Map();
@@ -6665,7 +6735,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
       // (and re-place it elsewhere), so `unprocessed` rows are shown with the
       // reason rather than quietly dropped.
       // Delivery, when we are moving it ourselves. Same words the office sees.
-      const job = transportJobForOrder(db, o.order_number);
+      const job = _jobMap.get(String(o.order_number||'').trim()) || null;
       const _pk = portalPickup(st, _pol);
       // A DELIVERY PILL THAT SAYS NOTHING IS WORSE THAN NO PILL. Once a parcel
       // has been collected, "Staging" (waiting for pickup) and "Preplanned"
@@ -6753,7 +6823,7 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
       };
       if (isClientCancelled(st)) continue;
       seen.add(row.order_number);
-      const job = transportJobForOrder(db, row.order_number);
+      const job = _jobMap.get(String(row.order_number||'').trim()) || null;
       const _pk = portalPickup(st, _pol);
       const _lbl = job ? tmsStatusLabelSrv(job) : '';
       const _stale = _pk?.status === 'picked_up' && (_lbl === 'Staging' || _lbl === 'Preplanned');
@@ -6808,7 +6878,11 @@ app.get('/api/portal/orders', requirePortalAuthMiddleware, (req, res) => {
     res.set('X-Portal-Search-Total', String(out.length));
     return res.json(out.slice(0, PORTAL_SEARCH_MAX));
   }
-  res.json(out.slice(0, PORTAL_ORDERS_MAX));
+  let _rows = out.slice(0, PORTAL_ORDERS_MAX);
+  if (_poSlim) _rows = _rows.map(r => ({...r, stock: r.stock ? {label:r.stock.label, tone:r.stock.tone, state:r.stock.state} : null}));
+  if (_poPg) { for (const [k,v] of Object.entries(perf.paginationHeaders(_poPg,_rows.length))) res.setHeader(k,v); _rows = perf.paginate(_rows,_poPg); }
+  else if (!_poSlim) _perfCache.set(_poCacheKey, _rows);
+  res.json(_rows);
 });
 // ── DRILL-DOWN: the orders behind one number on the Orders tab ───────────────
 // Per the user: a client taps a count in the per-day table (or one of the
@@ -6925,6 +6999,8 @@ app.get('/api/portal/orders/drilldown', requirePortalAuthMiddleware, (req, res) 
 // older is reachable through the dated export (see PORTAL_EXPORT_MAX_DAYS).
 app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
   const client = req.portalClient.trim().toLowerCase();
+  const _inKey = 'portalInbound|' + tenantContext.currentTenantId() + '|' + client;
+  const _inCached = _perfCache.get(_inKey); if (_inCached) { res.setHeader('X-Portal-Cache','hit'); return res.json(_inCached); }
   const db = readDb();
   const cutoff = Date.now() - PORTAL_SCREEN_DAYS * 86400000;
   const out = (db.inbound || [])
@@ -6982,8 +7058,10 @@ app.get('/api/portal/inbound', requirePortalAuthMiddleware, (req, res) => {
       damaged: 0, discrepancies: 0, sla: null, can_delete: false,
     }));
   out.unshift(...waiting);
-  res.json({ rows: out.slice(0, 400), screenDays: PORTAL_SCREEN_DAYS, exportMaxDays: PORTAL_EXPORT_MAX_DAYS,
-             slaWorkingDays: INBOUND_SLA_WORKING_DAYS });
+  const _inBody = { rows: out.slice(0, 400), screenDays: PORTAL_SCREEN_DAYS, exportMaxDays: PORTAL_EXPORT_MAX_DAYS,
+             slaWorkingDays: INBOUND_SLA_WORKING_DAYS };
+  _perfCache.set(_inKey, _inBody);
+  res.json(_inBody);
 });
 // Download their own data as a spreadsheet. Read-only like everything else
 // here, and scoped to the signed-in client by construction — it reuses the
@@ -8963,7 +9041,22 @@ async function ocrLabelPageFile(filePath, worker) {
 }
 
 function buildLabelMatchIndex() {
-  return buildLabelMatchIndexFor(globalOrdersWithState());
+  // PERF: build from raw batch orders, not globalOrdersWithState(). The index
+  // only reads order_number/issue_no/waybill_number/po_number/client_name and
+  // reference_only (batch flag) - exactly the raw fields. Full enrichment
+  // (stock/SLA/zort per order) was a multi-second sync block inside the
+  // background label sweep. Work batches first, then reference (mirrors
+  // globalOrdersWithState dedup: work wins, newest first as stored).
+  try {
+    const db = readDb();
+    const seen = new Set(); const raw = [];
+    const ordered = [...(db.batches||[]).filter(b=>!isReferenceBatch(b)), ...(db.batches||[]).filter(b=>isReferenceBatch(b))];
+    for (const b of ordered) for (const o of (b.orders||[])) {
+      if (!o || seen.has(o.order_number)) continue; seen.add(o.order_number);
+      raw.push({ order_number:o.order_number, issue_no:o.issue_no, waybill_number:o.waybill_number, po_number:o.po_number, client_name:b.client_name||'', reference_only:isReferenceBatch(b) });
+    }
+    return buildLabelMatchIndexFor(raw);
+  } catch (_) { return buildLabelMatchIndexFor(globalOrdersWithState()); }
 }
 
 // The same index, built over ANY order-shaped list. Split out so a client's
@@ -9912,10 +10005,14 @@ async function rematchLabelImport(id, rematchAll, { ocrForFields = false, matchI
   let newMatches = 0;
   let ocrWorker  = null;
   let ocrCount   = 0;
+  let _pageIdx = 0;
   const OCR_PAGE_CAP = 80; // bound worst-case runtime on huge imports
 
   try {
   for (const page of imp.pages) {
+    // PERF: yield every 8 pages so a big import cannot hold the loop (was a
+    // contributor to 15s blocks). Matching decisions unchanged.
+    if ((++_pageIdx % 8) === 0) await perf.yieldLoop();
     if (page.matchStatus === 'matched' && !rematchAll) continue;
 
     // Older imports predate stored rawText — re-parse the page PDF so the
@@ -12613,6 +12710,12 @@ app.get('/api/batches', (_req, res) => {
 });
 
 app.get('/api/stats', (_req, res) => {
+  // PERF CACHE (45s TTL; invalidated by writeDb on non-scan writes, scanRate
+  // writes rely on TTL so the badge can be at most TTL stale during scanning).
+  const _statsKey = 'stats|' + tenantContext.currentTenantId();
+  const _cachedStats = _perfCache.get(_statsKey);
+  if (_cachedStats) { res.setHeader('X-Stats-Cache','hit'); return res.json(_cachedStats); }
+  res.setHeader('X-Stats-Cache','miss');
   const db  = readDb();
   // Calendar days are SGT (Asia/Singapore) — naive UTC slicing put anything
   // before 08:00 SGT on the previous day, so morning uploads/completions
@@ -12704,9 +12807,11 @@ app.get('/api/stats', (_req, res) => {
     .sort((a, b) => (b[1].todayUploaded - a[1].todayUploaded) || a[0].localeCompare(b[0]))
     .map(([name, v]) => ({ name, ...v }));
 
-  res.json({ todayPending, todayDone, yesterdayDone, totalOrders, totalLines,
+  const _statsBody = { todayPending, todayDone, yesterdayDone, totalOrders, totalLines,
     pendingBacklog, totalDone, totalCancelled, referenceOrders,
-    avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats, kpi });
+    avgScanMs: scanCount ? Math.round(totalScanMs / scanCount) : 0, clientStats, kpi };
+  _perfCache.set(_statsKey, _statsBody);
+  res.json(_statsBody);
 });
 
 // Date-windowed orders: the dashboard asks only for the selected range, so
@@ -12860,6 +12965,13 @@ app.get('/api/orders', (req, res) => {
   } else if (qRaw) {
     res.setHeader('X-Search-Lean', '0');
   }
+  // PERF opt-ins (default unchanged bare array): ?slim=1 drops raw-order bulk
+  // while keeping every field app.js list/scan rendering reads (incl. stock_*
+  // per line); ?page=&pageSize= or ?limit=&offset= slices AFTER filtering.
+  // Response stays a bare array; totals ride on headers.
+  const _pg = perf.parsePagination(req.query);
+  if (String(req.query.slim||'')==='1') { orders = orders.map(perf.slimOrder); res.setHeader('X-Orders-Slim','1'); }
+  if (_pg) { const _total = orders.length; for (const [k,v] of Object.entries(perf.paginationHeaders(_pg,_total))) res.setHeader(k,v); orders = perf.paginate(orders,_pg); }
   res.json(orders); // range (+ optional q) already applied via the pre-enrichment `keep` filter
 });
 
@@ -21637,7 +21749,8 @@ app.post('/api/master/reset', (req, res) => {
 //     the admins themselves).
 const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers', 'outbound-stock', 'fulfilment', 'throughput', 'station-throughput']);
 
-app.get('/api/master/report/:kind', (req, res) => {
+const _reportRegen = new Set();
+function _reportHandler(req, res) {
   const { kind } = req.params;
   const isMaster = req.headers['x-master-key'] === MASTER_PASS;
   if (!isMaster) {
@@ -21660,6 +21773,21 @@ app.get('/api/master/report/:kind', (req, res) => {
     const today = sgDateStr();
     const from  = (req.query.from || '').slice(0, 10) || sgDateStr(new Date(Date.now() - 30 * 86400000));
     const to    = (req.query.to   || '').slice(0, 10) || today;
+    // PERF: daily-summary XLSX cached per (tenant,from,to) 60s. Fresh hit
+    // serves the buffer; stale hit serves stale and regenerates in the
+    // background (fake res) so no request pays the audit-log scan + XLSX.write.
+    if (kind === 'daily-summary' && !req._reportRegen) {
+      const _rk = 'report|daily-summary|' + tenantContext.currentTenantId() + '|' + from + '|' + to;
+      req._reportKey = _rk;
+      const _fresh = _perfCache.get(_rk);
+      if (_fresh) { res.setHeader('X-Report-Cache','hit'); res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); res.setHeader('Content-Disposition', `attachment; filename="Daily_Operations_Summary_${from}_to_${to}.xlsx"`); return res.send(_fresh); }
+      const _stale = _perfCache.peekStale(_rk);
+      if (_stale) {
+        res.setHeader('X-Report-Cache','stale');
+        if (!_reportRegen.has(_rk)) { _reportRegen.add(_rk); const _tid = tenantContext.currentTenantId(); const _fakeReq = { params:req.params, query:req.query, headers:req.headers, userId:req.userId, _reportRegen:true, _reportKey:_rk }; const _fakeRes = { setHeader(){}, status(c){this.code=c;return this;}, json(){ _reportRegen.delete(_rk); }, send(buf){ try{_perfCache.set(_rk,buf);}catch(_){} _reportRegen.delete(_rk); } }; setImmediate(()=>{ try{ tenantContext.run(_tid, ()=>_reportHandler(_fakeReq,_fakeRes)); }catch(e){ _reportRegen.delete(_rk); console.error('[report-cache]',e.message); } }); }
+        res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); res.setHeader('Content-Disposition', `attachment; filename="Daily_Operations_Summary_${from}_to_${to}.xlsx"`); return res.send(_stale);
+      }
+    }
     // Transparently pulls in archived months when the range reaches past
     // what's still live in db.auditLog — reports can filter back at least
     // 6 months regardless of how long ago the data actually happened.
@@ -22233,6 +22361,7 @@ app.get('/api/master/report/:kind', (req, res) => {
     }
 
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    if (kind === 'daily-summary') { try { _perfCache.set(req._reportKey || ('report|daily-summary|' + tenantContext.currentTenantId() + '|' + from + '|' + to), buf); } catch(_){} }
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${title}_${from}_to_${to}.xlsx"`);
     res.send(buf);
@@ -22240,7 +22369,8 @@ app.get('/api/master/report/:kind', (req, res) => {
     console.error('[report]', err.message);
     res.status(500).json({ error: err.message });
   }
-});
+}
+app.get('/api/master/report/:kind', _reportHandler);
 
 app.delete('/api/master/batch/:batchId', (req, res) => {
   if (!checkMaster(req, res)) return;
@@ -24937,7 +25067,10 @@ async function pullZortStore(db, store, opts = {}) {
       : await zortApi.getOrders(store, { ...query, page });
     const list = resp.list || resp.orders || resp.data || [];
     fetched += list.length;
+    let _zi = 0;
     for (const o of list) {
+      // PERF: yield every 20 orders; per-order hub reconciliation is sync-heavy.
+      if ((++_zi % 20) === 0) await perf.yieldLoop();
       const number = String(o.number || '').trim();
       // AN ORDER WITH NO USABLE NUMBER. Counted rather than dropped in
       // silence: every other way an order can be left out of this pull says

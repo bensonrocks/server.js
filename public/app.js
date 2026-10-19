@@ -18406,6 +18406,7 @@
       // at them (the Reference sub-tab) or a caller asks for them.
       const withRef = !!(opts && opts.includeReference) || ordersView === 'reference';
       if (!withRef) url += '&reference=exclude';
+      url += '&slim=1'; // PERF: slim list (keeps stock/fulfilment/scan fields app.js reads)
       const resp = await fetch(url);
       const data = await resp.json();
       if (Array.isArray(data)) {
