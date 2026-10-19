@@ -11755,7 +11755,7 @@ async function parseOrderFileToRows(buffer, filename, opts = {}) {
     try {
       const clientResolved = String(opts.clientName || '').trim() || String((mappedAll.find(r=>r.client_name)||{}).client_name || '').trim();
       let identifiers = null;
-      if (clientResolved) { identifiers = new Set(); try { const cid = invClientId(clientResolved); for (const r of inventory.getAll({ clientId: cid }) || []) { if (r.sku) identifiers.add(String(r.sku).trim().toLowerCase()); if (r.barcode) identifiers.add(String(r.barcode).trim().toLowerCase()); } } catch (_) {} if (!identifiers.size) identifiers = null; }
+      if (clientResolved) { identifiers = new Set(); try { const cid = invClientId(clientResolved); for (const r of inventory.getAll({ clientId: cid }) || []) { if (r.sku) identifiers.add(String(r.sku).trim().toLowerCase()); if (r.barcode) identifiers.add(String(r.barcode).trim().toLowerCase()); } for (const b of inventory.getBundles(cid) || []) { if (b.bundle_sku) identifiers.add(String(b.bundle_sku).trim().toLowerCase()); } } catch (_) {} if (!identifiers.size) identifiers = null; }
       return checkSpreadsheetRows({ records, mapped: mappedAll, knownSkus: identifiers });
     } catch (e) { console.warn('[upload-checker]', e.message); return null; }
   };
