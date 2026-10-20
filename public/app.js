@@ -5832,6 +5832,24 @@
     return `<span class="po-exp po-exp-${i.level}" title="${e(note ? 'PO expiry: ' + note : 'PO expiry')}" style="display:inline-block;padding:.05rem .45rem;border-radius:99px;background:${i.bg};color:${i.color};font-size:11px;font-weight:600;white-space:nowrap">${e(i.text)}${i.badge ? ` <b style="background:${i.color};color:#fff;border-radius:99px;padding:0 .35rem;margin-left:.15rem;font-size:10px">${e(i.badge)}</b>` : ''}</span>${note && opts.note ? ` <span style="font-size:10.5px;color:#7c3aed;font-style:italic">(${e(note)})</span>` : ''}`;
   }
 
+  // Run-sheet PO expiry cell — printed on a black-and-white copier, so the
+  // status is spelled out as a text tag (EXPIRED / ≤2 DAYS / OK) instead of
+  // relying on chip colour. Blank → "PO exp TBA". Delivered → date only.
+  function poExpiryRunSheetTag(job) {
+    const i = poExpiryInfo(job);
+    return { expired: 'EXPIRED', soon: '≤2 DAYS', ok: 'OK' }[i.level] || '';
+  }
+  function poExpiryRunSheetCell(job) {
+    const i = poExpiryInfo(job);
+    const e = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const tag = poExpiryRunSheetTag(job);
+    const tagHtml = !tag ? ''
+      : i.level === 'expired' ? ` <b class="poe-tag poe-expired">${e(tag)}</b>`
+      : i.level === 'soon' ? ` <b class="poe-tag poe-soon">${e(tag)}</b>`
+      : ` <span class="poe-tag poe-ok">${e(tag)}</span>`;
+    return `<span class="poe lvl-${i.level}">${e(i.text)}${tagHtml}</span>`;
+  }
+
   function tmsStatusLabel(job) {
     const s = typeof job === 'string' ? job : job?.status;
     const remarks = typeof job === 'object' ? String(job?.podRemarks || '').trim() : '';
@@ -6564,16 +6582,17 @@
             <thead><tr>
               <th style="width:26px">#</th><th>Client</th><th>Address</th>
               <th style="width:52px">Postal</th><th style="width:80px">Phone</th>
-              <th style="width:34px">Ctns</th><th style="width:78px">Status</th><th style="width:110px">Received by / Time</th>
+              <th style="width:34px">Ctns</th><th style="width:112px">PO Expiry</th><th style="width:78px">Status</th><th style="width:110px">Received by / Time</th>
             </tr></thead>
             <tbody>
               ${list.map((j, i) => `<tr>
                 <td>${i + 1}</td>
-                <td><strong>${esc(j.clientName || j.id)}</strong><br/><span style="font-size:9px;color:#555;font-family:monospace">${esc(j.id)}</span></td>
+                <td><strong>${esc(j.clientName || j.id)}</strong><br/><span style="font-size:9px;color:#555;font-family:monospace;white-space:nowrap">${esc(j.id)}</span></td>
                 <td>${esc(j.shipping?.addressLine1 || '')}</td>
                 <td>${esc(j.shipping?.zip || '')}</td>
                 <td>${esc(j.shipping?.phone || '')}</td>
                 <td style="text-align:center">${j.packages || 1}</td>
+                <td style="white-space:nowrap">${poExpiryRunSheetCell(j)}</td>
                 <td>${esc(tmsStatusLabel(j).label)}</td>
                 <td></td>
               </tr>`).join('')}
@@ -6585,7 +6604,7 @@
 
     const w = window.open('', '_blank');
     if (!w) { alert('Pop-up blocked — allow pop-ups to print run sheets.'); return; }
-    w.document.write(`<!DOCTYPE html><html><head><title>Driver Run Sheets</title><style>
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Driver Run Sheets</title><style>
       body { font-family: Arial, sans-serif; margin: 0; color: #111; }
       .sheet { padding: 14mm 12mm; page-break-after: always; }
       .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 12px; }
@@ -6597,6 +6616,12 @@
       th { background: #eee; }
       td:last-child { height: 30px; }
       .foot { margin-top: 10px; font-size: 9px; color: #555; }
+      .poe { white-space: nowrap; font-size: 10.5px; }
+      .poe-tag { display: inline-block; margin-left: 3px; padding: 0 3px; font-size: 9.5px; letter-spacing: .03em; border: 1px solid #111; }
+      .poe-expired { border: 3px double #111; font-weight: 800; }
+      .poe-soon { border-width: 2px; font-weight: 800; }
+      .poe-ok { border-color: #999; color: #333; }
+      .lvl-tba { font-style: italic; }
       @media print { .sheet { padding: 8mm 6mm; } }
     </style></head><body>${pages}</body></html>`);
     w.document.close();
