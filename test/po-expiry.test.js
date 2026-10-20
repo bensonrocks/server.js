@@ -96,3 +96,32 @@ describe('UI chip colour (public/app.js poExpiryInfo)', () => {
     assert.equal(info({ status: 'pending' }).text, 'PO exp TBA');
   });
 });
+
+describe('Delivery Run Sheet PO expiry (public/app.js printDriverRunSheets)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const NOW = Date.parse('2026-10-20T04:00:00Z');                  // 12:00 SGT 20 Oct
+  const FakeDate = class extends Date { constructor(...a) { super(...(a.length ? a : [NOW])); } static now() { return NOW; } };
+  const body = src.slice(src.indexOf('  function poExpiryInfo(job)'), src.indexOf('  function poExpiryChip(job'))
+    + src.slice(src.indexOf('  function poExpiryRunSheetTag(job)'), src.indexOf('  function tmsStatusLabel(job)'));
+  const cell = new Function('Date', body + '; return poExpiryRunSheetCell;')(FakeDate);
+  test('every state prints a text tag, not colour alone', () => {
+    const exp = cell({ poExpiry: '2026-10-19', status: 'preplanned' });
+    assert.match(exp, /PO exp 19 Oct/); assert.match(exp, />EXPIRED</);
+    assert.match(cell({ poExpiry: '2026-10-21', status: 'confirmed' }), /PO exp 21 Oct.*≤2 DAYS/);
+    assert.match(cell({ poExpiry: '2026-10-20', status: 'confirmed' }), /≤2 DAYS/);
+    assert.match(cell({ poExpiry: '2026-10-30', status: 'in-transit' }), /PO exp 30 Oct.*>OK</);
+    const tba = cell({ status: 'preplanned' });
+    assert.match(tba, /PO exp TBA/); assert.doesNotMatch(tba, /EXPIRED|DAYS|OK/);
+    assert.doesNotMatch(cell({ poExpiry: '2026-10-10', status: 'delivered' }), /EXPIRED/);
+    assert.match(cell({ poExpiry: '<x>', status: 'preplanned' }), /PO exp TBA/);
+  });
+  test('run sheet keeps every column and adds PO Expiry on each stop row', () => {
+    const fn = src.slice(src.indexOf('  async function printDriverRunSheets()'), src.indexOf("getElementById('transportRunSheetsBtn')"));
+    for (const h of ['#</th>', 'Client</th>', 'Address</th>', 'Postal</th>', 'Phone</th>', 'Ctns</th>', 'PO Expiry</th>', 'Status</th>', 'Received by / Time</th>'])
+      assert.ok(fn.includes(h), h);
+    assert.ok(fn.includes('${poExpiryRunSheetCell(j)}'));
+    assert.ok(fn.includes('<meta charset="utf-8">'));
+    // single generation path: both the button and post-approve prompt call printDriverRunSheets
+    assert.equal((src.match(/IDEALONE — Delivery Run Sheet/g) || []).length, 1);
+  });
+});
