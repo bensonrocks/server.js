@@ -1446,10 +1446,110 @@ function _writeDbParts(tenantId, parts) {
   });
   pump();
 }
+// NON-BLOCKING REBUILD PATH (DB_REBUILD_NONBLOCKING, default OFF; freeze fix
+// 2026-10-20). Only reached when DB_INCREMENTAL_PERSIST is also on. A due full
+// rebuild runs through incrementalPersist.buildAsync (byte-identical output,
+// yields every DB_REBUILD_SLICE_MS), then the file is written in 1 MB async
+// writes, fsync'd, and renamed over db.json. _dbWriting stays true from build
+// start to rename, so every writeDb in the meantime sets the pending flag and
+// a follow-up persist runs right after — nothing written during the rebuild is
+// dropped. A rebuild deferred for idle now gets its own idle timer (the old
+// gate was only checked straight after a write, so "idle" could never be true
+// and every rebuild waited for the 30-min max-defer force instead).
+const _nbIdleTimers = new Map();
+function _scheduleIdleRebuild(tenantId) {
+  if (_nbIdleTimers.has(tenantId)) return;
+  const wait = Math.max(1000, incrementalPersist.rebuildIdleMs() + 250);
+  const t = setTimeout(() => {
+    _nbIdleTimers.delete(tenantId);
+    if (_shuttingDown || _dbWriting.get(tenantId) || _dbPersistTimers.has(tenantId)) return;
+    const d = incrementalPersist.peekDecision(tenantId);
+    if (d.full) _persistDb(tenantId);
+    else if (d.reason === 'wait-idle') _scheduleIdleRebuild(tenantId);
+  }, wait);
+  if (t.unref) t.unref();
+  _nbIdleTimers.set(tenantId, t);
+}
+async function _writeDbPartsDurable(tenantId, parts) {
+  const dbFile = tenantStore.tenantDbFile(tenantId);
+  const tmp = dbFile + '.tmp';
+  let fh = null;
+  try {
+    fh = await fs.promises.open(tmp, 'w');
+    let group = [], size = 0, last = Date.now();
+    const flush = async () => { if (!group.length) return; const b = group.length === 1 ? group[0] : Buffer.concat(group, size); group = []; size = 0; await fh.write(b); };
+    for (const p of parts) {
+      const b = typeof p === 'string' ? Buffer.from(p) : p;
+      if (!b || !b.length) continue;
+      group.push(b); size += b.length;
+      if (size >= 1048576) { await flush(); last = Date.now(); }
+      else if (Date.now() - last > 8) { await new Promise(r => setImmediate(r)); last = Date.now(); }
+    }
+    await flush();
+    await fh.sync();
+    await fh.close(); fh = null;
+    await fs.promises.rename(tmp, dbFile);
+    try { const dh = await fs.promises.open(path.dirname(dbFile), 'r'); try { await dh.sync(); } finally { await dh.close(); } } catch {}
+    return true;
+  } catch (e) {
+    console.error('[writeDb] persist error:', e && e.message);
+    if (fh) { try { await fh.close(); } catch {} }
+    fs.unlink(tmp, () => {});
+    return false;
+  }
+}
+async function _persistDbNonBlocking(tenantId, data) {
+  const t0 = Date.now();
+  let built;
+  try {
+    built = await incrementalPersist.buildAsync(tenantId, data);
+  } catch (e) {
+    console.error('[writeDb] non-blocking persist failed, falling back to full stringify:', e.message);
+    incrementalPersist.invalidate(tenantId);
+    _dbWriting.set(tenantId, false);
+    // Legacy synchronous path, exactly as with the flag off.
+    const saved = process.env.DB_REBUILD_NONBLOCKING;
+    process.env.DB_REBUILD_NONBLOCKING = '0';
+    try { _persistDb(tenantId); } finally { process.env.DB_REBUILD_NONBLOCKING = saved; }
+    return;
+  }
+  const ms = Date.now() - t0;
+  _notePersistCost(incrementalPersist.partsBytes(built.parts), built.async ? 0 : ms, {
+    mode: built.fullRebuild ? 'rebuild-async' : 'incremental',
+    incrementalEnabled: true,
+    stringifiedBytes: built.stringifiedBytes,
+    reusedBytes: built.reusedBytes,
+    lastDirty: built.dirty,
+    rebuildReason: built.rebuildReason || '',
+    rebuildDeferred: built.rebuildDeferred || 0,
+  });
+  _dbPersistStats.nonBlocking = true;
+  if (built.async) {
+    _dbPersistStats.asyncRebuilds = (_dbPersistStats.asyncRebuilds || 0) + 1;
+    _dbPersistStats.lastRebuildMs = built.elapsedMs;
+    _dbPersistStats.lastRebuildYields = built.yields;
+    _dbPersistStats.lastRebuildAt = new Date().toISOString();
+    console.log(`[writeDb] non-blocking rebuild (${built.rebuildReason}) ${(incrementalPersist.partsBytes(built.parts) / 1048576).toFixed(1)} MB in ${built.elapsedMs} ms, ${built.yields} yields`);
+    if (!built.committed) {
+      // db object swapped mid-rebuild: the newer object has its own write queued.
+      _dbWritePending.set(tenantId, true);
+      _finishTenantPersist(tenantId);
+      return;
+    }
+  } else if (built.rebuildReason === 'wait-idle') {
+    _scheduleIdleRebuild(tenantId);
+  }
+  await _writeDbPartsDurable(tenantId, built.parts);
+  _finishTenantPersist(tenantId);
+}
 function _persistDb(tenantId) {
   if (_dbWriting.get(tenantId)) { _dbWritePending.set(tenantId, true); return; }
   _dbWriting.set(tenantId, true);
   const data = _dbCacheByTenant.get(tenantId);
+  if (incrementalPersist.enabled() && incrementalPersist.nonBlockingEnabled()) {
+    _persistDbNonBlocking(tenantId, data);
+    return;
+  }
   if (incrementalPersist.enabled()) {
     const t0 = Date.now();
     try {
@@ -11221,7 +11321,8 @@ app.get('/api/version', (req, res) => {
     lastStopClean: PERSISTENCE.lastStopClean,
     uncleanStops:  PERSISTENCE.uncleanStops || 0,
     // What each db.json write costs the thread, and whether PDF work is off it.
-    db: { ..._dbPersistStats, incrementalEnabled: incrementalPersist.enabled(), debounceMs: DB_PERSIST_DEBOUNCE_MS, scanDebounceMs: DB_SCAN_PERSIST_DEBOUNCE_MS, scanMaxWaitMs: DB_SCAN_PERSIST_MAX_WAIT_MS },
+    db: { ..._dbPersistStats, incrementalEnabled: incrementalPersist.enabled(), nonBlockingRebuild: incrementalPersist.nonBlockingEnabled(), debounceMs: DB_PERSIST_DEBOUNCE_MS, scanDebounceMs: DB_SCAN_PERSIST_DEBOUNCE_MS, scanMaxWaitMs: DB_SCAN_PERSIST_MAX_WAIT_MS },
+    dailySummary: { asyncEnabled: _dailySummaryAsyncEnabled(), ..._dsStats },
     pdfWorker: pdfPool.snapshot(),
   });
 });
@@ -21775,6 +21876,138 @@ app.post('/api/master/reset', (req, res) => {
 const ADMIN_REPORT_KINDS = new Set(['daily-summary', 'productivity', 'carrier-manifest', 'aging', 'lot-traceability', 'order-size', 'inbound', 'drivers', 'outbound-stock', 'fulfilment', 'throughput', 'station-throughput']);
 
 const _reportRegen = new Set();
+// DAILY-SUMMARY WITHOUT BLOCKING (freeze fix 2026-10-20). DAILY_SUMMARY_ASYNC,
+// default ON ("0" restores the PR #101 path). Why #101's cache did not help:
+//  1. it lived in _perfCache, which _invalidatePerfCaches() clears on EVERY
+//     non-scan writeDb — so by the time anyone downloaded again (hours later,
+//     or after any upload/complete) there was no fresh OR stale entry and the
+//     build ran inline on the request;
+//  2. the "background" regen ran the same synchronous handler via setImmediate,
+//     so it still froze the event loop for everyone, just one tick later;
+//  3. the build read db.auditLog through the incremental-persist Proxy (every
+//     element wrapped, every field a trap) and called Intl date formatting
+//     ~4× per event over ~420k events.
+// Now: its own cache (not cleared by writes; fresh DAILY_SUMMARY_TTL_MS, stale
+// served up to DAILY_SUMMARY_STALE_MAX_MS while one background rebuild runs),
+// single-flight per key, raw (unproxied) log, one SGT-day computation per
+// event, and the scan is sliced with setImmediate yields. A cold miss awaits
+// the shared build; the loop is free while it does.
+function _dailySummaryAsyncEnabled() {
+  const v = String(process.env.DAILY_SUMMARY_ASYNC == null ? '' : process.env.DAILY_SUMMARY_ASYNC).trim().toLowerCase();
+  return !(v === '0' || v === 'off' || v === 'false' || v === 'no');
+}
+const _dsTtl = () => { const n = parseInt(process.env.DAILY_SUMMARY_TTL_MS || '', 10); return Number.isFinite(n) && n >= 0 ? n : 45000; };
+const _dsStaleMax = () => { const n = parseInt(process.env.DAILY_SUMMARY_STALE_MAX_MS || '', 10); return Number.isFinite(n) && n >= 0 ? n : 15 * 60000; };
+const _dsCache = new Map();     // key -> { at, buf }
+const _dsInflight = new Map();  // key -> Promise<Buffer>
+const _dsStats = { hits: 0, stale: 0, miss: 0, builds: 0, joined: 0, lastBuildMs: 0, lastYields: 0 };
+const _SGT_OFF = 8 * 3600000;
+function _sgtDayFast(at) {
+  if (!at) return '';
+  const t = typeof at === 'number' ? at : Date.parse(at);
+  if (!Number.isFinite(t)) return sgDateStr(new Date(at));
+  return new Date(t + _SGT_OFF).toISOString().slice(0, 10); // SGT has no DST
+}
+async function _readAuditLogForRangeAsync(rawDb, from, to) {
+  const live = rawDb.auditLog || [];
+  const cutoff = new Date(Date.now() - AUDIT_ARCHIVE_AFTER_DAYS * 86400000).toISOString().slice(0, 10);
+  if (from >= cutoff) return [live];
+  const months = [];
+  const endMonth = to < cutoff ? to : cutoff;
+  let d = new Date(from.slice(0, 7) + '-01T00:00:00Z');
+  const endD = new Date(endMonth.slice(0, 7) + '-01T00:00:00Z');
+  while (d <= endD) { months.push(d.toISOString().slice(0, 7)); d.setUTCMonth(d.getUTCMonth() + 1); }
+  const out = [];
+  for (const m of months) {
+    try { out.push(JSON.parse(await fs.promises.readFile(path.join(ARCHIVE_DIR, `audit-archive-${m}.json`), 'utf8'))); } catch {}
+    await new Promise(r => setImmediate(r));
+  }
+  out.push(live);
+  return out;
+}
+async function _buildDailySummaryXlsx(from, to) {
+  const t0 = Date.now();
+  const rawDb = incrementalPersist.unwrap(readDb());
+  const logs = await _readAuditLogForRangeAsync(rawDb, from, to);
+  const days = {}, dc = {};
+  const D = d => days[d] ||= { batches: 0, ordUp: 0, lines: 0, done: 0, pieces: 0, durs: [] };
+  let last = Date.now(), yields = 0;
+  for (const log of logs) {
+    const n = log.length; // snapshot: entries appended mid-scan belong to the next build
+    for (let i = 0; i < n; i++) {
+      const e = log[i];
+      if (e && (e.type === 'upload' || e.type === 'order_completed')) {
+        const dd = _sgtDayFast(e.at);
+        if (dd >= from && dd <= to) {
+          if (e.type === 'upload') { const x = D(dd); x.batches++; x.ordUp += e.orders || 0; x.lines += e.lines || 0; }
+          else {
+            const x = D(dd); x.done++; x.pieces += e.pieces || 0;
+            if (e.startTime && e.endTime) x.durs.push(Math.round((new Date(e.endTime) - new Date(e.startTime)) / 6000) / 10);
+            const k = dd + '|' + (e.client || '—'); dc[k] ||= { done: 0, pieces: 0 }; dc[k].done++; dc[k].pieces += e.pieces || 0;
+          }
+        }
+      }
+      if ((i & 1023) === 1023 && Date.now() - last >= 8) { yields++; await new Promise(r => setImmediate(r)); last = Date.now(); }
+    }
+  }
+  const avg = a => a.length ? Math.round(a.reduce((s, v) => s + v, 0) / a.length * 10) / 10 : '';
+  const wb = XLSX.utils.book_new();
+  const addSheet = (name, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
+  addSheet('Daily', [
+    ['Date', 'Batches Uploaded', 'Orders Uploaded', 'Lines Uploaded', 'Orders Completed', 'Pieces Scanned', 'Avg Mins / Order'],
+    ...Object.keys(days).sort().map(d => { const x = days[d]; return [d, x.batches, x.ordUp, x.lines, x.done, x.pieces, avg(x.durs)]; }),
+  ]);
+  addSheet('By Client', [
+    ['Date', 'Client', 'Orders Completed', 'Pieces Scanned'],
+    ...Object.keys(dc).sort().map(k => { const [d, c] = k.split('|'); return [d, c, dc[k].done, dc[k].pieces]; }),
+  ]);
+  await new Promise(r => setImmediate(r));
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  _dsStats.builds++; _dsStats.lastBuildMs = Date.now() - t0; _dsStats.lastYields = yields;
+  return buf;
+}
+function _dailySummaryGet(tenantId, from, to) {
+  const key = tenantId + '|' + from + '|' + to;
+  let p = _dsInflight.get(key);
+  if (p) { _dsStats.joined++; return p; }
+  p = (async () => {
+    try {
+      const buf = await tenantContext.run(tenantId, () => _buildDailySummaryXlsx(from, to));
+      _dsCache.set(key, { at: Date.now(), buf });
+      if (_dsCache.size > 200) _dsCache.delete(_dsCache.keys().next().value);
+      return buf;
+    } finally { _dsInflight.delete(key); }
+  })();
+  _dsInflight.set(key, p);
+  return p;
+}
+async function _serveDailySummary(req, res, from, to) {
+  const tenantId = tenantContext.currentTenantId();
+  const key = tenantId + '|' + from + '|' + to;
+  const send = (buf, tag) => {
+    res.setHeader('X-Report-Cache', tag);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Daily_Operations_Summary_${from}_to_${to}.xlsx"`);
+    res.send(buf);
+  };
+  try {
+    const hit = _dsCache.get(key);
+    const age = hit ? Date.now() - hit.at : Infinity;
+    if (hit && age <= _dsTtl()) { _dsStats.hits++; return send(hit.buf, 'hit'); }
+    if (hit && age <= _dsTtl() + _dsStaleMax()) {
+      _dsStats.stale++;
+      _dailySummaryGet(tenantId, from, to).catch(e => console.error('[report-cache]', e.message));
+      return send(hit.buf, 'stale');
+    }
+    _dsStats.miss++;
+    const buf = await _dailySummaryGet(tenantId, from, to);
+    return send(buf, 'miss');
+  } catch (err) {
+    console.error('[report]', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+}
+
 function _reportHandler(req, res) {
   const { kind } = req.params;
   const isMaster = req.headers['x-master-key'] === MASTER_PASS;
@@ -21801,6 +22034,9 @@ function _reportHandler(req, res) {
     // PERF: daily-summary XLSX cached per (tenant,from,to) 60s. Fresh hit
     // serves the buffer; stale hit serves stale and regenerates in the
     // background (fake res) so no request pays the audit-log scan + XLSX.write.
+    if (kind === 'daily-summary' && _dailySummaryAsyncEnabled()) {
+      return _serveDailySummary(req, res, from, to);
+    }
     if (kind === 'daily-summary' && !req._reportRegen) {
       const _rk = 'report|daily-summary|' + tenantContext.currentTenantId() + '|' + from + '|' + to;
       req._reportKey = _rk;
