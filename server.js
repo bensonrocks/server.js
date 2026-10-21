@@ -5027,6 +5027,13 @@ const PORTAL_SESSION_IDLE_MIN = 15;
 // How many devices a MULTI-DEVICE portal login may hold at once. A backstop,
 // not a plan — idle seats free themselves on the same 15-minute rule.
 const PORTAL_MULTI_MAX = 8;
+// A login may carry its own lower cap (max_sessions, 1..PORTAL_MULTI_MAX) set
+// on the onboarding screen; absent = the global backstop, so nothing changes
+// for logins that never set it.
+function portalMultiMax(u) {
+  const n = Number(u && u.max_sessions);
+  return Number.isInteger(n) && n >= 1 && n <= PORTAL_MULTI_MAX ? n : PORTAL_MULTI_MAX;
+}
 
 // ── WHAT EACH LOGIN MAY SEE — per user, granted by us ──────────────────────
 // Access (full / view) says what a login may DO. This is the other question:
@@ -5158,6 +5165,8 @@ function portalUserPublic(u, live, profile) {
     enabled: u.enabled !== false,
     hasPassword: !!u.passwordHash,
     multi_session: !!u.multi_session,
+    max_sessions: portalMultiMax(u),
+    max_sessions_custom: u.max_sessions != null,
     last_login_at: u.last_login_at || null,
     signed_in: list.length > 0,               // someone is using it right now
     signed_in_at: list[0]?.meta?.at || null,
@@ -5664,6 +5673,20 @@ app.post('/api/master/client-profiles/:client/portal-users', express.json(), (re
   // Switching an account off must also end whatever session it is holding —
   // otherwise a revoked login keeps working until its next request. ALL its
   // keys, device variants included.
+  // PER-LOGIN DEVICE CAP. null/'' clears it (back to the global backstop).
+  // Lowering it does not sign anyone out; the cap bites on the next sign-in.
+  let maxChanged = null;
+  if (b.max_sessions !== undefined) {
+    if (b.max_sessions === null || b.max_sessions === '') {
+      if (u.max_sessions != null) { delete u.max_sessions; maxChanged = 'default'; }
+    } else {
+      const n = Number(b.max_sessions);
+      if (!Number.isInteger(n) || n < 1 || n > PORTAL_MULTI_MAX) {
+        return res.status(400).json({ error: `max_sessions must be a whole number from 1 to ${PORTAL_MULTI_MAX}.` });
+      }
+      if (u.max_sessions !== n) { u.max_sessions = n; maxChanged = n; }
+    }
+  }
   if (u.enabled === false) {
     if (deletePortalSessions(tenantId, u.id, p.client)) persistSessions();
   }
@@ -5674,6 +5697,7 @@ app.post('/api/master/client-profiles/:client/portal-users', express.json(), (re
     client: p.client, user: u.id, access: u.access, enabled: u.enabled !== false,
     passwordSet: !!pw, by: req.userId || 'master',
     ...(multiChanged !== null ? { multiSession: multiChanged } : {}),
+    ...(maxChanged !== null ? { maxSessions: maxChanged } : {}),
   });
   if (visChanged) {
     // Its own event: what a person may SEE is a different decision from what
@@ -5832,7 +5856,7 @@ app.post('/api/portal/login', express.json(), (req, res) => {
       if (!_portalMetaLive(portalSessionMeta.get(k))) { activeSessions.delete(k); portalSessionMeta.delete(k); }
     }
     const liveNow = livePortalSessionsAll(tid, p.client, user.id);
-    if (liveNow.length >= PORTAL_MULTI_MAX) {
+    if (liveNow.length >= portalMultiMax(user)) {
       tenantContext.run(tid, () => logAudit('portal_login_blocked_in_use', { client: p.client, user: user.id, devices: liveNow.length }));
       return res.status(409).json({
         error: `"${user.name || user.id}" is already signed in on ${liveNow.length} devices — the most one login may hold. Sign out somewhere first.`,
