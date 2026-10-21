@@ -13301,6 +13301,7 @@
               <option value="" ${u.multi_session ? '' : 'selected'}>One device at a time</option>
               <option value="1" ${u.multi_session ? 'selected' : ''}>Multiple devices</option>
             </select>
+            ${u.multi_session ? `<label class="hint" title="Most devices this login may be signed in on at once (1–8). Blank = 8.">max <input type="number" class="ob-user-max" data-id="${esc(u.id)}" min="1" max="8" value="${u.max_sessions_custom ? esc(String(u.max_sessions)) : ''}" placeholder="8" style="width:3.2rem;padding:.25rem;border:1px solid #e2e8f0;border-radius:6px"></label>` : ''}
           </td>
           <td class="hint">${u.last_login_at ? new Date(u.last_login_at).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : 'never'}</td>
           <td style="white-space:nowrap">
@@ -13333,6 +13334,15 @@
         const d = await r.json();
         if (!r.ok) { msg(d.error || 'Could not change it', true); loadPortalUsers(); return; }
         msg(`${d.user.name} may now sign in on ${on ? 'several devices at once' : 'one device at a time'}.`);
+        loadPortalUsers();
+      }));
+      // Per-login device cap (only shown while Multiple devices is on).
+      $('obUserList').querySelectorAll('.ob-user-max').forEach(inp => inp.addEventListener('change', async () => {
+        const v = inp.value.trim();
+        const r = await save(inp.dataset.id, { max_sessions: v === '' ? null : Number(v) });
+        const d = await r.json();
+        if (!r.ok) { msg(d.error || 'Could not change the device limit', true); loadPortalUsers(); return; }
+        msg(`${d.user.name} may now be signed in on up to ${d.user.max_sessions} devices at once.`);
         loadPortalUsers();
       }));
       // The report ticks only mean anything while Reports itself is on.
