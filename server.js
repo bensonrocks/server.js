@@ -1,6 +1,10 @@
 // Load environment variables from .env file
 require('dotenv').config();
 
+// DEMO_MODE sandbox guard — must run before anything opens a connection.
+const demoMode = require('./lib/demo-mode');
+demoMode.install();
+
 process.on('uncaughtException',  (err) => console.error('[CRASH] uncaughtException:', err.stack || err.message));
 process.on('unhandledRejection', (err) => console.error('[CRASH] unhandledRejection:', err?.stack || err));
 
@@ -148,6 +152,7 @@ async function runOcr(buffer, extraParams = {}, worker = null) {
 }
 
 const app    = express();
+app.use(demoMode.middleware);
 // EVENT-LOOP LAG MONITOR (lib/loop-lag.js). Logs `[event-loop-lag]` whenever the
 // one request thread was blocked for more than LOOP_LAG_THRESHOLD_MS (default
 // 1000), naming the background jobs that were running and the oldest requests
@@ -211,6 +216,7 @@ const UPLOAD_MAX_ROWS  = 5000;
 // ── MySQL TMS Database (IDEALTMS: Route Planning, Drivers, Vehicles) ────────
 let mysqlPool = null;
 async function initMysqlPool() {
+  if (demoMode.ENABLED) { console.log('[DEMO_MODE] MySQL TMS disabled'); return null; }
   // Keep the pool private until the handshake finishes. It used to be assigned
   // first, so any TMS query (and the pool's own queued getConnection) waited
   // on a dead host. mysql2 ignores `connectionTimeout`; the real option is
@@ -1164,6 +1170,14 @@ const WAYBILL_DIR = path.join(DATA_DIR, 'waybills');
 // called "default" the first time this boots — see lib/tenant-store.js.
 const tenantContext = require('./lib/tenant-context');
 const tenantStore   = require('./lib/tenant-store').init(DATA_DIR);
+if (demoMode.ENABLED) {
+  // Fresh demo volume -> seed the synthetic dataset exactly once.
+  try {
+    require('./scripts/seed-demo').seedIfEmpty(DATA_DIR, {
+      inventory: require('./lib/inventory-store'), tenantContext: require('./lib/tenant-context'),
+    });
+  } catch (e) { console.error('[seed-demo] failed:', e.message); }
+}
 tenantStore.migrateLegacyIfNeeded();
 
 const _dbCacheByTenant = new Map(); // tenantId -> parsed db.json contents
@@ -1284,7 +1298,9 @@ function hashPass(password, salt) {
     try { users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch {}
     if (!users.length) {
       const salt = crypto.randomBytes(16).toString('hex');
-      users = [{ id: 'demo', name: 'Demo', role: 'admin', tenant_id: tenantStore.DEFAULT_TENANT_ID, salt, passwordHash: hashPass('demo', salt) }];
+      // DEMO_MODE: the bootstrap account gets an unguessable random password.
+      const _bootPw = demoMode.ENABLED ? crypto.randomBytes(24).toString('hex') : 'demo';
+      users = [{ id: 'demo', name: 'Demo', role: 'admin', tenant_id: tenantStore.DEFAULT_TENANT_ID, salt, passwordHash: hashPass(_bootPw, salt) }];
     }
     db.users = users;
     writeGlobalDb(db);
