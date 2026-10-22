@@ -11500,6 +11500,14 @@ app.get('/api/master/system-errors/health', (req, res) => {
     openErrors: (db.systemErrors || []).filter(e => e.status === 'open').length,
   });
 });
+// SURVEILLANCE (see block below the auth gate). LIVE IdealOne only: hard-disabled in a DEMO_MODE process (same env flag the
+// idealone-demo sandbox guard uses), whatever the stored config says.
+const SURV_DEMO = /^(1|true|yes)$/i.test(String(process.env.DEMO_MODE || ''));
+app.use(['/api/surveillance', '/api/public/surveillance'], (req, res, next) => {
+  if (!SURV_DEMO) return next();
+  if (req.path === '/status' && req.baseUrl === '/api/surveillance') return res.json({ enabled: false, admin: false, visible: false, demo: true });
+  return res.status(403).json({ error: 'Disabled in demo mode' });
+});
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/')
@@ -11543,6 +11551,114 @@ function grantAdminFeature(req) {
 // auth gate, so every mutating scan / orders / waves route — present and
 // future — refuses a reference-only number without having to remember to.
 app.use(referenceOrderFence);
+
+// ── SURVEILLANCE (packing-station video lookup) — OFF by default ────────────
+// Admin-only toggle + per-user grant, both stored in DATA_DIR/surveillance.json
+// (not in users[].features, so the existing feature PUT — which defaults every
+// key to TRUE — can never switch it on by accident). Read-only against order
+// scan states; nothing here touches the scan / packing routes.
+const surveillance = require('./lib/surveillance').init(DATA_DIR);
+const survIsAdmin = req => req.headers['x-master-key'] === MASTER_PASS;
+function survAccess(req, res, next) {
+  const cfg = surveillance.load();
+  if (survIsAdmin(req) || (cfg.enabled && cfg.grantedUsers.includes(req.userId))) { req.surv = cfg; return next(); }
+  return res.status(403).json({ error: 'Surveillance is not enabled for this login' });
+}
+function survAdmin(req, res, next) {
+  if (!survIsAdmin(req)) return res.status(403).json({ error: 'Administrator access required' });
+  req.surv = surveillance.load(); next();
+}
+// Menu visibility probe — always 200 so the UI can hide the menu quietly.
+app.get('/api/surveillance/status', (req, res) => {
+  const cfg = surveillance.load();
+  const admin = survIsAdmin(req);
+  res.json({ enabled: cfg.enabled, admin, visible: admin || (cfg.enabled && cfg.grantedUsers.includes(req.userId)) });
+});
+app.get('/api/surveillance/settings', survAdmin, (req, res) => {
+  const c = req.surv;
+  res.json({ enabled: c.enabled, grantedUsers: c.grantedUsers, padBeforeSec: c.padBeforeSec, padAfterSec: c.padAfterSec,
+    recorderKeySet: !!c.recorderKey, recorderKeyHint: c.recorderKey ? '…' + c.recorderKey.slice(-4) : '',
+    cameras: c.cameras.map(surveillance.publicCamera), recordings: c.recordings.length });
+});
+app.put('/api/surveillance/settings', survAdmin, (req, res) => {
+  const c = req.surv, b = req.body || {};
+  if (b.enabled !== undefined) c.enabled = b.enabled === true;
+  if (Array.isArray(b.grantedUsers)) c.grantedUsers = b.grantedUsers.map(String).filter(Boolean).slice(0, 200);
+  if (b.padBeforeSec !== undefined) c.padBeforeSec = Math.max(0, Math.min(600, Number(b.padBeforeSec) || 0));
+  if (b.padAfterSec !== undefined) c.padAfterSec = Math.max(0, Math.min(600, Number(b.padAfterSec) || 0));
+  surveillance.save(c);
+  logAudit('surveillance_settings_updated', { enabled: c.enabled, granted: c.grantedUsers.join(','), by: req.userId || 'master-key' });
+  res.json({ ok: true, enabled: c.enabled, grantedUsers: c.grantedUsers });
+});
+// New recorder key — shown ONCE in this response, only a hint afterwards.
+app.post('/api/surveillance/recorder-key', survAdmin, (req, res) => {
+  const c = req.surv; c.recorderKey = crypto.randomBytes(24).toString('hex'); surveillance.save(c);
+  logAudit('surveillance_recorder_key_rotated', { by: req.userId || 'master-key' });
+  res.json({ ok: true, recorderKey: c.recorderKey });
+});
+app.post('/api/surveillance/cameras', survAdmin, (req, res) => {
+  const c = req.surv; const cam = surveillance.upsertCamera(c, req.body);
+  if (!cam.name || !cam.station) { return res.status(400).json({ error: 'name and station are required' }); }
+  surveillance.save(c);
+  logAudit('surveillance_camera_saved', { camera: cam.name, station: cam.station, by: req.userId || 'master-key' });
+  res.json({ ok: true, camera: surveillance.publicCamera(cam) });
+});
+app.delete('/api/surveillance/cameras/:id', survAdmin, (req, res) => {
+  const c = req.surv; const n = c.cameras.length;
+  c.cameras = c.cameras.filter(x => x.id !== req.params.id);
+  if (c.cameras.length === n) return res.status(404).json({ error: 'Camera not found' });
+  surveillance.save(c); res.json({ ok: true });
+});
+app.get('/api/surveillance/lookup', survAccess, (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q (order / GI / tracking number) is required' });
+  const names = new Map(readUsers().map(u => [u.id, u.name || u.id]));
+  const hits = surveillance.findOrders(readDb(), q, id => names.get(id));
+  res.json({ query: q, results: hits.map(h => surveillance.matchVideo(req.surv, h)) });
+});
+// Local recorder agent → registers a FILE NAME + times (no video uploaded).
+// Public path (own key), but answers 403 unless the feature is enabled.
+function survRecorderKey(req, res, next) {
+  const cfg = surveillance.load();
+  if (!cfg.enabled) return res.status(403).json({ error: 'Surveillance is disabled' });
+  const key = req.headers['x-recorder-key'] || req.query.key;
+  if (!surveillance.safeEq(key, cfg.recorderKey)) return res.status(401).json({ error: 'Invalid recorder key' });
+  req.surv = cfg; next();
+}
+app.post('/api/public/surveillance/recordings', survRecorderKey, (req, res) => {
+  const r = surveillance.registerRecording(req.surv, req.body);
+  if (r.error) return res.status(400).json({ error: r.error });
+  surveillance.save(req.surv);
+  res.json({ ok: true, recording: r.recording });
+});
+// OBS overlay feed: plain text "current order" for a station (Browser/Text
+// source polling). ?station=PACKING STATION 4&key=<recorder key>
+let _survOverlayCache = { at: 0, map: null };
+app.get('/api/public/surveillance/overlay', survRecorderKey, (req, res) => {
+  if (!_survOverlayCache.map || Date.now() - _survOverlayCache.at > 3000) {
+    const names = new Map(readUsers().map(u => [u.id, u.name || u.id]));
+    const map = new Map();
+    for (const b of (readDb().batches || [])) {
+      for (const [ord, st] of Object.entries(b.orderStates || {})) {
+        if (!st || !st.operator || !st.startTime || st.endTime || st.status === 'done') continue;
+        for (const k of [st.operator, names.get(st.operator)]) {
+          const K = String(k || '').toUpperCase(); const prev = map.get(K);
+          if (!prev || prev.startTime < st.startTime) map.set(K, { order: ord, startTime: st.startTime });
+        }
+      }
+    }
+    _survOverlayCache = { at: Date.now(), map };
+  }
+  const st = String(req.query.station || '').toUpperCase();
+  const hit = _survOverlayCache.map.get(st);
+  res.type('text/plain').send(hit ? hit.order : '');
+});
+// TODO(surveillance): auto-clip per order — the local agent pulls
+//   GET /api/surveillance/lookup results and runs `ffmpeg -ss <seek> -t <len> -c copy`
+//   on the recorder box; clips stay local. Not implemented here on purpose.
+// TODO(surveillance): direct RTSP/ONVIF recording by the local agent using the
+//   camera list (needs a recorder-side endpoint that returns credentials over
+//   the recorder key — deliberately NOT exposed yet; decide before adding).
 
 // ── WHAT AN API KEY MAY DO ──────────────────────────────────────────────────
 // Path → the scope required to call it. Checked longest-prefix-first, and a
