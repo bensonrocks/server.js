@@ -1,0 +1,84 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Station live panel</title>
+<meta name="robots" content="noindex"><meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="/vendor/qrcode.js"></script>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#000;color:#fff;font-family:"Segoe UI",Arial,Helvetica,sans-serif;overflow:hidden}
+#wrap{display:flex;height:100vh}#panel{flex:1;display:flex;flex-direction:column;padding:1.2vh 1.4vw;gap:1vh;min-width:0}
+body.double #panel{flex:0 0 50%}#cctv{display:none;flex:1;background:#111;border-left:4px solid #333;position:relative;align-items:center;justify-content:center}
+body.double #cctv{display:flex}#cctv img,#cctv video{width:100%;height:100%;object-fit:contain}
+#ph{color:#bbb;font-size:3vh;text-align:center;padding:2vw;line-height:1.4}
+#hdr{display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:4vh;border-bottom:3px solid #444;padding-bottom:.6vh}
+#clock{font-variant-numeric:tabular-nums;color:#ffd84d}
+#ord{display:flex;gap:1.4vw;align-items:center}#qr{background:#fff;padding:.6vh;line-height:0;flex:0 0 auto}#qr svg{width:17vh;height:17vh;display:block}
+.big{font-size:7.2vh;font-weight:900;letter-spacing:.02em;line-height:1.05;word-break:break-all}
+.mid{font-size:5vh;font-weight:800;color:#7fd3ff;word-break:break-all}.sm{font-size:3vh;color:#ddd;font-weight:700}
+body.double #hdr{font-size:2.8vh}body.double .big{font-size:5.4vh}body.double .mid{font-size:3.8vh}body.double .sm{font-size:2.4vh}
+#wb{font-size:3.6vh;font-weight:900;padding:.6vh 1vw;border-radius:6px;background:#333}
+#wb.matched{background:#0a7a2f}#wb.mismatch{background:#c40000;animation:fl .5s steps(2) infinite}#wb.warn{background:#d98a00;color:#000}
+#lines{flex:1;overflow:hidden;display:flex;flex-direction:column;gap:.5vh}
+.ln{display:flex;align-items:center;gap:1vw;background:#1b1b1b;border-left:1.2vh solid #555;padding:.5vh 1vw;font-size:3.6vh;font-weight:800}
+.ln .sku{flex:0 0 auto;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ln .nm{flex:1;color:#bbb;font-size:2.6vh;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ln .q{font-variant-numeric:tabular-nums}.ln.ok{border-color:#19c24a;background:#0e2a16}.ln.over{border-color:#ff2a2a;background:#3a0b0b}
+.ln .tk{width:4.5vh;text-align:center;color:#19c24a}
+#bar{font-size:6.5vh;font-weight:900;text-align:center;padding:1vh;border-radius:8px;background:#444}
+#bar.packing{background:#ffb000;color:#000}#bar.packed{background:#0bb33a}#bar.error{background:#e00000;animation:fl .5s steps(2) infinite}#bar.idle{background:#333;color:#aaa}
+@keyframes fl{50%{background:#5a0000}}
+#flash{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);background:#fff;color:#000;font-size:9vh;font-weight:900;padding:2vh 3vw;border-radius:12px;border:1vh solid #19c24a;display:none;z-index:9;max-width:90vw;word-break:break-all;text-align:center}
+#flash.bad{border-color:#e00000;color:#e00000}
+#ctl{position:fixed;right:1vw;bottom:1vh;font-size:14px;background:#222c;padding:.4rem;border-radius:6px;z-index:10}
+#ctl #wbIn{width:13rem}#ctl label{margin-right:.6rem;color:#ddd}body:not(.obs) #panel{padding-bottom:5vh}body.obs #ctl{display:none}
+</style></head><body>
+<div id="wrap"><div id="panel">
+ <div id="hdr"><span id="st">—</span><span id="pk"></span><span id="clock">--:--:--</span></div>
+ <div id="ord"><div id="qr"></div><div style="min-width:0;flex:1">
+  <div class="big" id="on">No order open</div><div class="mid" id="trk"></div><div class="sm" id="meta"></div></div></div>
+ <div id="wb">WAYBILL — waiting for scan</div>
+ <div id="lines"></div>
+ <div id="bar" class="idle">IDLE</div>
+</div><div id="cctv"><div id="ph"></div></div></div>
+<div id="flash"></div>
+<div id="ctl"><label><input type="radio" name="lay" value="details"> Scanning details only</label>
+ <label><input type="radio" name="lay" value="double"> Double screen</label>
+ &nbsp; <input id="wbIn" placeholder="Scan waybill barcode here"></div>
+<script>
+const P=new URLSearchParams(location.search);const KEY=P.get('key');const ST=P.get('station')||'';
+const TOK=localStorage.getItem('wms_token')||'';
+if(KEY)document.body.classList.add('obs');
+const H=KEY?{'Content-Type':'application/json'}:{'x-auth-token':TOK,'Content-Type':'application/json'};
+const base=KEY?'/api/public/surveillance':'/api/surveillance';const q=KEY?'&key='+encodeURIComponent(KEY):'';
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let layout=P.get('layout')||localStorage.getItem('surv_layout')||null,seq=null,wrongAt=null,qrFor=null,camUrl=null,timer;
+function setLayout(l,save){layout=l==='double'?'double':'details';document.body.classList.toggle('double',layout==='double');
+ document.querySelectorAll('input[name=lay]').forEach(r=>r.checked=r.value===layout);
+ if(save){localStorage.setItem('surv_layout',layout);if(!KEY)fetch('/api/surveillance/layout',{method:'PUT',headers:H,body:JSON.stringify({layout})})}}
+document.querySelectorAll('input[name=lay]').forEach(r=>r.onchange=()=>setLayout(r.value,true));
+if(layout)setLayout(layout,false);
+function tick(){clock.textContent=new Date().toLocaleTimeString('en-GB',{timeZone:'Asia/Singapore',hour12:false})+' SGT'}setInterval(tick,250);tick();
+function flash(t,bad){flashEl.textContent=t;flashEl.className=bad?'bad':'';flashEl.style.display='block';clearTimeout(flash.t);flash.t=setTimeout(()=>flashEl.style.display='none',1100)}
+const flashEl=document.getElementById('flash');
+function qr(v){if(qrFor===v)return;qrFor=v;const el=document.getElementById('qr');if(!v||!window.qrcode){el.innerHTML='';return}
+ const g=qrcode(0,'M');g.addData(v);g.make();el.innerHTML=g.createSvgTag({cellSize:4,margin:2})}
+function cctv(c){const box=document.getElementById('cctv');const u=c&&c.viewUrl;const k=u?c.viewKind+'|'+u:'none';if(camUrl===k)return;camUrl=k;clearInterval(cctv.t);
+ if(!u){box.innerHTML=`<div id="ph">&#127909; ${c?esc(c.name):'No camera set for this station'}<br><br>CCTV is composited in OBS<br>(RTSP can't play in a browser)<br><span style="font-size:2vh">Set a browser view URL (snapshot / MJPEG / HLS) on the camera to show it here.</span></div>`;return}
+ if(c.viewKind==='hls'){box.innerHTML=`<video src="${esc(u)}" autoplay muted playsinline></video>`;return}
+ box.innerHTML=`<img id="cimg" alt="CCTV">`;const im=document.getElementById('cimg');
+ const load=()=>{im.src=u+(c.viewKind==='snapshot'?(u.includes('?')?'&':'?')+'_t='+Date.now():'')};load();if(c.viewKind==='snapshot')cctv.t=setInterval(load,1000)}
+async function poll(){try{
+ const r=await fetch(`${base}/live?station=${encodeURIComponent(ST)}${q}`,{headers:H});const d=await r.json();
+ if(!r.ok){document.getElementById('on').textContent=d.error||'Not available';bar.className='error';bar.textContent='NO ACCESS';return}
+ if(!layout)setLayout(d.layoutPref||'details',false);
+ st.textContent=d.station;pk.textContent='Packer: '+d.packer;cctv(d.camera);
+ const o=d.order;
+ if(!o){on.textContent='No order open';trk.textContent='';meta.textContent='';lines.innerHTML='';qr('');bar.className='idle';bar.textContent='IDLE';wb.className='';wb.textContent='WAYBILL —';return}
+ on.textContent=o.number;trk.textContent=o.tracking?'TRK '+o.tracking:'TRK — none';meta.textContent=[o.courier,o.client].filter(Boolean).join('  ·  ');qr(o.number);
+ lines.innerHTML=d.lines.map(l=>`<div class="ln ${l.over?'over':l.complete?'ok':''}"><span class="tk">${l.complete?'&#10004;':l.over?'!':''}</span><span class="sku">${esc(l.sku)}</span><span class="nm">${esc(l.name)}</span><span class="q">${l.scanned}/${l.expected}</span></div>`).join('');
+ bar.className=d.status;bar.textContent=d.status==='packed'?'PACKED \u2714':d.status==='error'?(d.alert||'CHECK'):d.status==='packing'?`PACKING  ${d.totals.scanned}/${d.totals.expected}`:'IDLE';
+ const w=d.waybill||{};wb.className=w.state==='matched'?'matched':w.state==='mismatch'?'mismatch':w.warning?'warn':'';
+ wb.textContent=w.state==='matched'?`WAYBILL \u2714 matched ${w.value}`:w.state==='mismatch'?`WAYBILL MISMATCH \u2716 scanned ${w.value} \u2260 ${w.expected||'(none)'}`:w.warning?`\u26A0 ${w.warning}`:'WAYBILL \u2014 waiting for scan';
+ if(d.lastScan&&seq!==null&&d.lastScan.seq!==seq)flash(d.lastScan.sku,false);if(d.lastScan)seq=d.lastScan.seq;else seq=0;
+ if(d.lastWrong&&d.lastWrong.at!==wrongAt){if(wrongAt!==null)flash('\u2716 '+d.lastWrong.sku,true);wrongAt=d.lastWrong.at}else if(wrongAt===null)wrongAt='';
+}catch(e){}}
+wbIn.onkeydown=async e=>{if(e.key!=='Enter')return;const v=wbIn.value.trim();wbIn.value='';if(!v)return;
+ await fetch(`${base}/live/waybill${KEY?'?key='+encodeURIComponent(KEY):''}`,{method:'POST',headers:H,body:JSON.stringify({station:ST,value:v})});poll()};
+poll();setInterval(poll,700);
+</script></body></html>

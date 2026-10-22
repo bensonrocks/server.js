@@ -360,6 +360,10 @@
       currentUser.features    = p.features    || null;
       if (p.tablePrefs) tablePrefs = { widths: p.tablePrefs.widths || {}, hidden: p.tablePrefs.hidden || [] };
       applyFeatureToggles(currentUser.features);
+      // Surveillance menu: shown only when the server says this login may see it.
+      fetch('/api/surveillance/status', { headers: hdrs() }).then(r => r.ok ? r.json() : null).then(s => {
+        const b = document.getElementById('surveillanceNavBtn'); if (b) b.style.display = s && s.visible ? '' : 'none';
+      }).catch(() => {});
     } catch {}
     fetchNoBarcodeSkus();
   }
