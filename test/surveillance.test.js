@@ -48,7 +48,7 @@ const SEED = { batches: [{ id: 'b1', client_name: 'BETIME', uploaded_at: '2026-1
   orderStates: {
     'GI-151764': { status: 'done', operator: 'packer4', startTime: '2026-10-22T03:00:30.000Z', endTime: '2026-10-22T03:02:02.000Z', scanned: { SKU1: 1 } },
     'GI-200000': { status: 'done', operator: 'packer9', startTime: '2026-10-22T05:00:00.000Z', endTime: '2026-10-22T05:01:00.000Z', scanned: { SKU1: 1 } },
-    'GI-300000': { status: 'in_progress', operator: 'packer4', startTime: '2026-10-22T04:00:00.000Z', scanned: {} },
+    'GI-300000': { status: 'processing', claimedBy: 'packer4', claimedAt: '2026-10-22T04:00:00.000Z', updated_at: '2026-10-22T04:00:00.000Z', operator: 'packer4', startTime: '2026-10-22T04:00:00.000Z', scanned: {} },
   } }], inbound: [], transport: [], drivers: [], fixSchedules: {} };
 
 async function boot(extraEnv) {
@@ -214,32 +214,104 @@ test('unit: RTSP URL building per preset, IP validation', () => {
   assert.ok(sv.buildRtspUrl({ brand: 'nope', ip: '1.2.3.4', user: 'a', pass: 'b' }).error);
 });
 
-test('quick add: admin only, builds/masks, 4-up, reveal once', async () => {
-  const body = { brand: 'tapo', station: 'PACKING STATION 4', quality: 'hd',
-    cameras: [1, 2, 3, 4].map(i => ({ ip: '192.168.1.' + (60 + i), user: 'tapocam', pass: 'TapoPw' + i })) };
+test('quick add: admin only, ONE camera per station (409 → replace), masked, reveal once', async () => {
+  const body = { brand: 'tapo', station: 'PACKING STATION 4', quality: 'hd', ip: '192.168.1.61', user: 'tapocam', pass: 'TapoPw1' };
   assert.equal((await api('POST', '/api/surveillance/cameras/quick', T(userTok), body)).status, 403);
   assert.equal((await api('GET', '/api/surveillance/packers', T(userTok))).status, 403);
-  assert.equal((await api('POST', '/api/surveillance/cameras/quick', T(adminTok), { ...body, cameras: [...body.cameras, body.cameras[0]] })).status, 400);
-  const badIp = await api('POST', '/api/surveillance/cameras/quick', T(adminTok), { ...body, cameras: [{ ip: '192.168.1.300', user: 'a', pass: 'b' }] });
+  // multi-camera payloads are gone
+  assert.equal((await api('POST', '/api/surveillance/cameras/quick', T(adminTok), { ...body, cameras: [body, body] })).status, 400);
+  const badIp = await api('POST', '/api/surveillance/cameras/quick', T(adminTok), { ...body, ip: '192.168.1.300' });
   assert.equal(badIp.status, 400); assert.match(badIp.body.error, /IP/);
   const pk = await api('GET', '/api/surveillance/packers', T(adminTok));
   assert.ok(pk.body.some(u => u.name === 'PACKING STATION 4'));
   assert.ok(!JSON.stringify(pk.body).match(/salt|passwordHash/));
-  const r = await api('POST', '/api/surveillance/cameras/quick', T(adminTok), body);
+  // station 4 already has "Cam 4" from the earlier test → clear 409 offering replace
+  const dup = await api('POST', '/api/surveillance/cameras/quick', T(adminTok), body);
+  assert.equal(dup.status, 409); assert.match(dup.body.error, /already has a camera/); assert.equal(dup.body.canReplace, true);
+  assert.ok(dup.body.existingCameraId); assert.ok(!JSON.stringify(dup.body).includes('S3cretPw'));
+  // generic add for the same station is refused too
+  assert.equal((await api('POST', '/api/surveillance/cameras', T(adminTok), { name: 'Second', station: 'PACKING STATION 4', rtspUrl: 'rtsp://1.2.3.4/x' })).status, 409);
+  const r = await api('POST', '/api/surveillance/cameras/quick', T(adminTok), { ...body, replace: true });
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.equal(r.body.cameras.length, 4);
-  assert.equal(r.body.cameras[0].name, 'PACKING STATION 4 – 1');
-  assert.equal(r.body.cameras[0].obsMediaSourceUrl, 'rtsp://tapocam:****@192.168.1.61:554/stream1');
+  assert.equal(r.body.replaced, true);
+  assert.equal(r.body.camera.id, dup.body.existingCameraId, 'replaced in place');
+  assert.equal(r.body.camera.name, 'PACKING STATION 4', 'name defaults to the station');
+  assert.equal(r.body.camera.obsMediaSourceUrl, 'rtsp://tapocam:****@192.168.1.61:554/stream1');
   assert.equal(r.body.obsFilenameFormat, '%CCYY-%MM-%DD %hh-%mm-%ss');
-  assert.ok(!JSON.stringify(r.body).includes('TapoPw'));
   const s = await api('GET', '/api/surveillance/settings', T(adminTok));
-  assert.ok(!JSON.stringify(s.body).includes('TapoPw'));
-  const id = r.body.cameras[0].id;
+  assert.equal(s.body.cameras.filter(c => c.station === 'PACKING STATION 4').length, 1);
+  assert.ok(!JSON.stringify(s.body).includes('TapoPw') && !JSON.stringify(r.body).includes('TapoPw'));
+  const id = r.body.camera.id;
   assert.equal((await api('POST', `/api/surveillance/cameras/${id}/reveal`, T(userTok))).status, 403);
   const rv = await api('POST', `/api/surveillance/cameras/${id}/reveal`, T(adminTok));
   assert.equal(rv.body.url, 'rtsp://tapocam:TapoPw1@192.168.1.61:554/stream1');
   assert.equal((await api('POST', `/api/surveillance/cameras/${id}/reveal`, T(adminTok))).status, 410);
-  // single camera, no name → defaults to the station name
-  const one = await api('POST', '/api/surveillance/cameras/quick', T(adminTok), { station: 'PACKING STATION 4', cameras: [{ ip: '192.168.1.70', user: 'u', pass: 'p' }] });
-  assert.equal(one.body.cameras[0].name, 'PACKING STATION 4');
+  // a different station is fine
+  const other = await api('POST', '/api/surveillance/cameras/quick', T(adminTok), { ...body, station: 'staff1', ip: '192.168.1.62' });
+  assert.equal(other.status, 200);
+});
+
+// ── Station LIVE PANEL + waybill + camera detections ────────────────────────
+test('live panel: access-gated; checklist, last scan, wrong-SKU red, over-scan, PACKED', async () => {
+  await api('PUT', '/api/surveillance/settings', T(adminTok), { enabled: true });
+  const L = (tok) => api('GET', '/api/surveillance/live?station=packer4', T(tok));
+  assert.equal((await L(packerTok)).status, 403, 'not granted');
+  assert.equal((await api('GET', '/api/public/surveillance/live?station=packer4&key=nope', {})).status, 401);
+  let r = await L(userTok);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.station, 'PACKING STATION 4'); assert.equal(r.body.order.number, 'GI-300000');
+  assert.equal(r.body.status, 'packing');
+  assert.deepEqual(r.body.lines.map(l => [l.sku, l.scanned, l.expected, l.complete]), [['SKU9', 1, 2, false]]);
+  assert.equal(r.body.lastScan.sku, 'SKU9');
+  assert.ok(!JSON.stringify(r.body).match(/rtsp|TapoPw|S3cret/i), 'no RTSP / credentials in live payload');
+  assert.equal(r.body.camera.name, 'PACKING STATION 4');
+  // wrong SKU via the REAL scan route → still 404 from the scan route, panel goes red
+  const bad = await api('POST', '/api/scan/increment', T(packerTok), { orderNumber: 'GI-300000', sku: 'NOT-IN-ORDER' });
+  assert.equal(bad.status, 404);
+  r = await L(userTok);
+  assert.equal(r.body.status, 'error'); assert.match(r.body.alert, /WRONG SKU: NOT-IN-ORDER/);
+  // a good scan clears it and completes the line
+  assert.equal((await api('POST', '/api/scan/increment', T(packerTok), { orderNumber: 'GI-300000', sku: 'SKU9' })).status, 200);
+  r = await L(userTok);
+  assert.equal(r.body.status, 'packing'); assert.equal(r.body.lines[0].complete, true);
+  // public (OBS) path with the recorder key
+  const pub = await api('GET', '/api/public/surveillance/live?station=' + encodeURIComponent('PACKING STATION 4') + '&key=' + recKey, {});
+  assert.equal(pub.status, 200); assert.equal(pub.body.order.number, 'GI-300000');
+});
+
+test('waybill: matched green, mismatch red, missing at close amber; no order state touched', async () => {
+  const W = v => api('POST', '/api/surveillance/live/waybill', T(userTok), { station: 'packer4', value: v });
+  const mm = await W('SPX000WRONG');
+  assert.deepEqual([mm.status, mm.body.matched], [200, false]);
+  let r = await api('GET', '/api/surveillance/live?station=packer4', T(userTok));
+  assert.equal(r.body.waybill.state, 'mismatch');
+  const ok = await W(' live1 ');
+  assert.equal(ok.body.matched, true);
+  r = await api('GET', '/api/surveillance/live?station=packer4', T(userTok));
+  assert.deepEqual([r.body.waybill.state, r.body.waybill.expected], ['matched', 'LIVE1']);
+  assert.equal((await api('POST', '/api/surveillance/live/waybill', T(packerTok), { station: 'packer4', value: 'x' })).status, 403);
+  // close the order WITHOUT a matched waybill on a fresh station → amber warning
+  const c = await api('POST', '/api/scan/complete', T(packerTok), { orderNumber: 'GI-300000', operator: 'packer4' });
+  assert.equal(c.status, 200, JSON.stringify(c.body));
+  r = await api('GET', '/api/surveillance/live?station=packer4', T(userTok));
+  assert.equal(r.body.status, 'packed');
+  assert.equal(r.body.waybill.state, 'matched', 'matched before close → no warning');
+  assert.equal(r.body.waybill.warning, undefined);
+  const u = sv.liveForStation({ batches: [{ client_name: 'X', orders: [{ order_number: 'A1', waybill_number: 'T1', lines: [{ sku: 'S', qty: 1 }] }],
+    orderStates: { A1: { status: 'done', operator: 'p', scanned: { S: 1 }, updated_at: '2026-01-01T00:00:00Z' } } }] }, { id: 'p', name: 'P' });
+  assert.equal(u.waybill.warning, 'WAYBILL NOT SCANNED AT CLOSE');
+});
+
+test('recorder detections: exact tracking match → "seen on camera" with seek; near-miss ignored', async () => {
+  const body = { fileName: '2026-10-22 10-59-00.mkv', station: 'PACKING STATION 4', durationSec: 600,
+    detections: [{ offsetSec: 95.5, value: 'SPX123456789', type: 'CODE-128' }, { offsetSec: 96, value: 'SPX12345678S', type: 'OCR' },
+                 { time: '2026-10-22T03:01:50.000Z', value: 'spx123456789', type: 'QR-Code' }] };
+  const p = await api('POST', '/api/public/surveillance/recordings', { 'x-recorder-key': recKey, 'Content-Type': 'application/json' }, body);
+  assert.equal(p.status, 200, JSON.stringify(p.body)); assert.equal(p.body.recording.detections.length, 3);
+  const r = await api('GET', '/api/surveillance/lookup?q=GI-151764', T(userTok));
+  const ws = r.body.results[0].waybillSeen;
+  assert.equal(ws.length, 2, JSON.stringify(ws));
+  assert.equal(ws[0].at, '2026-10-22T03:00:35.500Z'); assert.equal(ws[0].seekSec, 96);
+  assert.equal(ws[1].seekHms, '00:02:50');
+  assert.equal(r.body.results[0].videos[0].fileName, '2026-10-22 10-59-00.mkv', 'newest recording containing the order first');
 });

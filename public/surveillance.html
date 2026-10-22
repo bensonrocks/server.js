@@ -14,16 +14,22 @@ Granted users (login IDs, comma separated): <input id="gu" size="40"><br>
 Padding before/after (s): <input id="pb" size="4"> / <input id="pa" size="4"> <button id="saveS">Save</button>
 <p>Recorder key: <span id="rk"></span> <button id="rot">Generate new key</button></p>
 <h3>Cameras</h3><table id="cams"></table>
+<h3>Station live panel</h3><p>Station <select id="lvSt"></select> <button type="button" id="lvOpen">Open live panel</button><br>
+<span class="muted">OBS Browser Source URL (1280×720):</span> <code id="lvUrl"></code></p>
 <h3>Quick add camera</h3>
 <details open><summary class="muted">Where do I find these? (Tapo)</summary><p class="muted" style="font-size:13px">
 Tapo app › your camera › <b>Camera Settings › Advanced Settings › Camera Account</b> — create the username/password here (not your TP-Link login).
 The IP is under <b>Device Info</b>. Battery models (e.g. C4xx / C400, C420, C425) do <b>not</b> support RTSP.</p></details>
-<form id="qf">Brand <select id="qBrand"><option value="tapo" selected>TP-Link Tapo</option><option value="hikvision">Hikvision</option>
+<form id="qf"><p class="muted" style="font-size:13px">One camera per packing station.</p>
+Brand <select id="qBrand"><option value="tapo" selected>TP-Link Tapo</option><option value="hikvision">Hikvision</option>
 <option value="dahua">Dahua</option><option value="custom">Custom RTSP URL</option></select>
-Packing station <select id="qStation"></select> Cameras <select id="qCount"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+Packing station <select id="qStation"></select><br>
+Camera name <input id="qName" placeholder="(defaults to station)"> Camera IP <input id="qIp" placeholder="192.168.1.50" size="14"><br>
+Camera account username <input id="qUser" autocomplete="off"> Camera account password <input id="qPass" type="password" autocomplete="new-password"><br>
 Quality <select id="qQual"><option value="hd" selected>HD (stream1)</option><option value="sd">SD (stream2)</option></select>
-<details><summary class="muted">Advanced</summary>RTSP port <input id="qPort" value="554" size="5"></details>
-<div id="qRows"></div><button>Save camera(s)</button></form>
+<details><summary class="muted">Advanced</summary>RTSP port <input id="qPort" value="554" size="5"><br>
+Browser view URL (optional, snapshot / MJPEG / HLS for the Double-screen panel) <input id="qView" size="40" placeholder="http://192.168.1.10:8080/snapshot.jpg"></details>
+<button>Save camera</button></form>
 <div id="qOut"></div>
 <div id="customWrap" class="hidden"><h3>Custom RTSP URL</h3>
 <form id="cf">Name <input name="name"> Station <input name="station" placeholder="PACKING STATION 4"><br>
@@ -52,22 +58,24 @@ f.onsubmit=async e=>{e.preventDefault();const {ok,j}=await api('GET','/api/surve
  <tr><th>Station / packer</th><td>${esc(r.operatorName||r.operator||'—')}</td></tr>
  <tr><th>Pack start → end</th><td>${fmt(r.startTime)} → ${fmt(r.endTime)}</td></tr>
  <tr><th>Window (−${r.padBeforeSec}s / +${r.padAfterSec}s)</th><td>${fmt(r.windowStart)} → ${fmt(r.windowEnd)}</td></tr>
+ <tr><th>Waybill seen on camera</th><td>${(r.waybillSeen||[]).length?r.waybillSeen.map(w=>`<b style="color:#0a7a2f">&#10004; ${esc(w.camera)}</b> at <b>${fmt(w.at)}</b> (${esc(w.type)}): ${esc(w.fileName)}, seek to <b>${esc(w.seekHms)}</b>`).join('<br>'):'<span class="muted">Not detected on camera</span>'}</td></tr>
  <tr><th>Recording</th><td>${r.videos.length?r.videos.map(v=>`<b>${esc(v.camera)}</b>: ${esc(v.folder)}${v.folder?'/':''}${esc(v.fileName)} — seek to <b>${esc(v.seekHms)}</b> (${v.seekSec}s), watch ${v.clipLengthSec}s`).join('<br>'):'<span class="muted">No recording registered yet — times only.</span>'}</td></tr></table>`).join('')};
 
 const ipOk=ip=>{const p=String(ip).trim().split('.');return p.length===4&&p.every(x=>/^\d{1,3}$/.test(x)&&+x<=255&&String(+x)===x)};
-function rows(){const n=+qCount.value;qRows.innerHTML=Array.from({length:n},(_,i)=>`<div style="margin:.4rem 0">#${i+1} Name <input data-f="name" placeholder="(defaults to station)">
- IP <input data-f="ip" placeholder="192.168.1.50" size="14"> Username <input data-f="user" autocomplete="off"> Password <input data-f="pass" type="password" autocomplete="new-password"></div>`).join('')}
-qCount.onchange=rows;rows();
-qBrand.onchange=()=>{const c=qBrand.value==='custom';qf.querySelectorAll('#qRows,#qQual,#qCount').forEach(e=>e.disabled=c);customWrap.classList.toggle('hidden',!c)};
-async function loadPackers(){const {j}=await api('GET','/api/surveillance/packers');qStation.innerHTML=(j||[]).map(u=>`<option value="${esc(u.name)}">${esc(u.name)} (${esc(u.id)})</option>`).join('')}
-qf.onsubmit=async e=>{e.preventDefault();if(qBrand.value==='custom')return;
- const cams=[...qRows.children].map(d=>Object.fromEntries([...d.querySelectorAll('input')].map(i=>[i.dataset.f,i.value.trim()])));
- const bad=cams.findIndex(c=>!ipOk(c.ip));if(bad>=0){qOut.textContent=`Camera ${bad+1}: IP must look like 192.168.1.50`;return}
- const {ok,j}=await api('POST','/api/surveillance/cameras/quick',{brand:qBrand.value,station:qStation.value,quality:qQual.value,port:+qPort.value||554,cameras:cams});
- if(!ok){qOut.textContent=j.error;return} qRows.querySelectorAll('input[type=password]').forEach(i=>i.value='');
- qOut.innerHTML='<p><b>Saved.</b> OBS setup:</p>'+j.cameras.map(c=>`<p>${esc(c.name)} — Media Source (untick "Local File") Input: <code id="u_${esc(c.id)}">${esc(c.obsMediaSourceUrl)}</code>
- <button data-rev="${esc(c.id)}">Reveal once</button> <button data-copy="u_${esc(c.id)}">Copy</button></p>`).join('')+
- `<p>OBS › Settings › Advanced › Recording › Filename Formatting: <code id="fnf">${esc(j.obsFilenameFormat)}</code> <button data-copy="fnf">Copy</button></p>`;loadS()};
+qBrand.onchange=()=>{const c=qBrand.value==='custom';customWrap.classList.toggle('hidden',!c);qf.querySelectorAll('input,#qQual,#qStation').forEach(e=>e.disabled=c)};
+async function loadPackers(){const {j}=await api('GET','/api/surveillance/packers');const o=(j||[]).map(u=>`<option value="${esc(u.name)}">${esc(u.name)} (${esc(u.id)})</option>`).join('');qStation.innerHTML=o;lvSt.innerHTML=o;lvUpd()}
+function lvUpd(){lvUrl.textContent=location.origin+'/surveillance-live.html?station='+encodeURIComponent(lvSt.value)+'&layout=details&key=<recorder key>'}
+lvSt.onchange=lvUpd;lvOpen.onclick=()=>window.open('/surveillance-live.html?station='+encodeURIComponent(lvSt.value),'_blank');
+async function quickSave(replace){
+ if(!ipOk(qIp.value)){qOut.textContent='Camera IP must look like 192.168.1.50';return}
+ const body={brand:qBrand.value,station:qStation.value,name:qName.value.trim(),ip:qIp.value.trim(),user:qUser.value.trim(),pass:qPass.value,quality:qQual.value,port:+qPort.value||554,viewUrl:qView.value.trim(),replace};
+ const {ok,j}=await api('POST','/api/surveillance/cameras/quick',body);
+ if(!ok&&j.canReplace){if(confirm(j.error+'\n\nReplace the existing camera with these details?'))return quickSave(true);qOut.textContent=j.error;return}
+ if(!ok){qOut.textContent=j.error;return} qPass.value='';const c=j.camera;
+ qOut.innerHTML=`<p><b>${j.replaced?'Camera replaced':'Saved'}.</b> OBS setup:</p><p>${esc(c.name)}: Media Source (untick "Local File"), Input: <code id="u_${esc(c.id)}">${esc(c.obsMediaSourceUrl)}</code>
+ <button type="button" data-rev="${esc(c.id)}">Reveal once</button> <button type="button" data-copy="u_${esc(c.id)}">Copy</button></p>
+ <p>OBS › Settings › Advanced › Recording › Filename Formatting: <code id="fnf">${esc(j.obsFilenameFormat)}</code> <button type="button" data-copy="fnf">Copy</button></p>`;loadS()}
+qf.onsubmit=e=>{e.preventDefault();if(qBrand.value!=='custom')quickSave(false)};
 qOut.onclick=async e=>{const id=e.target.dataset.rev,cp=e.target.dataset.copy;
  if(cp){navigator.clipboard.writeText(document.getElementById(cp).textContent);return}
  if(id){if(!confirm('Show the full URL with password? It can only be revealed once.'))return;const {ok,j}=await api('POST',`/api/surveillance/cameras/${id}/reveal`);

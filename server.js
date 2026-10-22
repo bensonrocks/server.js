@@ -962,6 +962,15 @@ app.use((req, res, next) => {
 // any tenant-scoped work.
 // no-cache (= revalidate every load) on HTML/JS/CSS so every deploy reaches
 // browsers on the next reload — stale cached app.js caused phantom bugs.
+// Surveillance live panel ONLY: the optional browser camera view (snapshot /
+// MJPEG / HLS) lives on the warehouse LAN, so this one page may load images and
+// media from any http(s) origin. Scripts, frames, connect etc. stay locked.
+app.get('/surveillance-live.html', (req, res, next) => {
+  res.setHeader('Content-Security-Policy', CSP
+    .replace("img-src 'self' data: blob: https://server.arcgisonline.com", "img-src 'self' data: blob: http: https:")
+    .replace("frame-ancestors 'none'", "frame-ancestors 'self'") + "; media-src 'self' blob: http: https:");
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public'), {
   etag: true, lastModified: true,
   setHeaders(res, filePath) {
@@ -11597,43 +11606,133 @@ app.post('/api/surveillance/recorder-key', survAdmin, (req, res) => {
   res.json({ ok: true, recorderKey: c.recorderKey });
 });
 app.post('/api/surveillance/cameras', survAdmin, (req, res) => {
-  const c = req.surv; const cam = surveillance.upsertCamera(c, req.body);
+  const c = req.surv, b0 = req.body || {};
+  const target = b0.station !== undefined ? b0.station : (c.cameras.find(x => x.id === b0.id) || {}).station;
+  const conflict = survOneCameraConflict(c, target, b0.id, false);
+  if (conflict) return res.status(conflict.status).json(conflict.body);
+  const cam = surveillance.upsertCamera(c, req.body);
   if (req.body && (req.body.rtspPass || /:[^*@/]+@/.test(String(req.body.rtspUrl || '')))) cam.revealPending = true;
   if (!cam.name || !cam.station) { return res.status(400).json({ error: 'name and station are required' }); }
   surveillance.save(c);
   logAudit('surveillance_camera_saved', { camera: cam.name, station: cam.station, by: req.userId || 'master-key' });
   res.json({ ok: true, camera: surveillance.publicCamera(cam) });
 });
+// ── Station LIVE PANEL ──────────────────────────────────────────────────────
+// Wrong-SKU flashes: the scan route answers 404 for a SKU not in the order but
+// records nothing. This OBSERVER only listens for the finished response — it
+// never alters the request, the response or the timing, and does nothing at
+// all unless Surveillance is enabled (config cached 5 s, no per-scan disk I/O).
+const _survWrong = new Map();           // userId → { order, sku, at }
+let _survEnabledCache = { at: 0, on: false };
+function survEnabledCached() {
+  if (SURV_DEMO) return false;
+  if (Date.now() - _survEnabledCache.at > 5000) {
+    try { _survEnabledCache = { at: Date.now(), on: !!surveillance.load().enabled }; } catch { _survEnabledCache = { at: Date.now(), on: false }; }
+  }
+  return _survEnabledCache.on;
+}
+app.use('/api/scan/increment', (req, res, next) => {
+  if (req.method === 'POST' && survEnabledCached()) {
+    res.on('finish', () => {
+      try {
+        if (res.statusCode === 404 && req.userId && req.body && req.body.orderNumber) {
+          _survWrong.set(req.userId, { order: String(req.body.orderNumber), sku: String(req.body.sku || '').slice(0, 80), at: new Date().toISOString() });
+          if (_survWrong.size > 500) _survWrong.delete(_survWrong.keys().next().value);
+        }
+      } catch (_) {}
+    });
+  }
+  next();
+});
+function survResolveStation(q) {
+  const Q = String(q || '').trim().toUpperCase(); if (!Q) return null;
+  const u = readUsers().find(x => String(x.id).toUpperCase() === Q || String(x.name || '').toUpperCase() === Q);
+  return u ? { id: u.id, name: u.name || u.id } : null;
+}
+function survLivePayload(cfg, stationQ) {
+  const user = survResolveStation(stationQ);
+  if (!user) return null;
+  const live = surveillance.liveForStation(readDb(), user, _survWrong.get(user.id), _survWaybill.get(user.id));
+  const cams = cfg.cameras.filter(c => [user.id, user.name].map(x => String(x).toUpperCase()).includes(String(c.station || '').toUpperCase()));
+  // Only the browser-playable URL (snapshot / MJPEG / HLS) leaves the server —
+  // never the RTSP URL or its credentials.
+  const c1 = cams[0];
+  live.camera = c1 ? { name: c1.name, viewUrl: c1.viewUrl || '', viewKind: surveillance.viewKind(c1.viewUrl) } : null;
+  return live;
+}
+app.get('/api/surveillance/live', survAccess, (req, res) => {
+  const p = survLivePayload(req.surv, req.query.station);
+  if (!p) return res.status(404).json({ error: 'Unknown station (packer login)' });
+  p.layoutPref = (req.surv.layoutPrefs || {})[req.userId] || 'details';
+  res.json(p);
+});
+app.get('/api/public/surveillance/live', survRecorderKey, (req, res) => {
+  const p = survLivePayload(req.surv, req.query.station);
+  if (!p) return res.status(404).json({ error: 'Unknown station (packer login)' });
+  res.json(p);
+});
+// WAYBILL check on the live panel. IdealOne has no waybill-scan event, so the
+// panel accepts the waybill barcode itself and this Surveillance-only endpoint
+// just RECORDS whether it matches the station's current order. It never
+// touches order / scan state.
+const _survWaybill = new Map();         // station login → { order, value, matched, at }
+function survWaybillScan(cfg, station, value, res) {
+  const user = survResolveStation(station);
+  if (!user) return res.status(404).json({ error: 'Unknown station (packer login)' });
+  const v = String(value || '').trim().slice(0, 80);
+  if (!v) return res.status(400).json({ error: 'value (scanned waybill barcode) is required' });
+  const live = surveillance.liveForStation(readDb(), user, null, null);
+  if (!live.order) return res.status(409).json({ error: 'No order open at this station' });
+  const matched = surveillance.norm(v) === surveillance.norm(live.order.tracking) && !!live.order.tracking;
+  const rec = { order: live.order.number, value: v, matched, at: new Date().toISOString() };
+  _survWaybill.set(user.id, rec);
+  logAudit(matched ? 'surveillance_waybill_matched' : 'surveillance_waybill_mismatch', { station: user.id, order: rec.order, value: v });
+  res.json({ ok: true, ...rec, expected: live.order.tracking });
+}
+app.post('/api/surveillance/live/waybill', survAccess, (req, res) => survWaybillScan(req.surv, req.body?.station, req.body?.value, res));
+app.post('/api/public/surveillance/live/waybill', survRecorderKey, (req, res) => survWaybillScan(req.surv, req.body?.station, req.body?.value, res));
+// Per-user remembered layout (any user with Surveillance access).
+app.put('/api/surveillance/layout', survAccess, (req, res) => {
+  const layout = req.body && req.body.layout === 'double' ? 'double' : 'details';
+  const c = surveillance.load(); c.layoutPrefs = c.layoutPrefs || {};
+  if (req.userId) { c.layoutPrefs[req.userId] = layout; surveillance.save(c); }
+  res.json({ ok: true, layout });
+});
 // Packer logins for the Quick-add station dropdown (id + name only).
 app.get('/api/surveillance/packers', survAdmin, (req, res) => {
   res.json(readUsers().filter(u => u.role !== 'driver').map(u => ({ id: u.id, name: u.name || u.id })));
 });
 // Quick add: brand preset + IP + camera account → RTSP URL built server-side.
-// Up to 4 cameras for one station at once (the OBS 4-panel layout).
+// EXACTLY ONE camera per packing station: a second one for the same station is
+// refused (409) unless the caller asks to replace / edit the existing one.
+function survStationCamera(cfg, station) {
+  return cfg.cameras.find(c => String(c.station || '').toUpperCase() === String(station || '').toUpperCase()) || null;
+}
+function survOneCameraConflict(cfg, station, id, replace) {
+  if (!String(station || '').trim()) return null;
+  const ex = survStationCamera(cfg, station);
+  if (!ex || ex.id === id || replace) return null;
+  return { status: 409, body: { error: `${station} already has a camera ("${ex.name}"). Each packing station has exactly one camera — edit or replace the existing one.`,
+    existingCameraId: ex.id, existingCamera: surveillance.publicCamera(ex), canReplace: true } };
+}
 app.post('/api/surveillance/cameras/quick', survAdmin, (req, res) => {
   const c = req.surv, b = req.body || {};
   const station = String(b.station || '').trim();
   if (!station) return res.status(400).json({ error: 'Packing station is required' });
-  const list = Array.isArray(b.cameras) ? b.cameras : [b];
-  if (!list.length || list.length > 4) return res.status(400).json({ error: 'Add 1 to 4 cameras at a time' });
-  const built = [];
-  for (const [i, x] of list.entries()) {
-    const r = surveillance.buildRtspUrl({ brand: b.brand || x.brand || 'tapo', ip: x.ip, port: x.port || b.port || 554,
-      user: x.user, pass: x.pass, quality: x.quality || b.quality });
-    if (r.error) return res.status(400).json({ error: `Camera ${i + 1}: ${r.error}` });
-    built.push({ x, r });
-  }
-  const saved = built.map(({ x, r }, i) => {
-    const name = String(x.name || '').trim() || (list.length > 1 ? `${station} – ${i + 1}` : station);
-    const cam = surveillance.upsertCamera(c, { name, station, rtspUrl: r.base, rtspUser: String(x.user), rtspPass: String(x.pass),
-      folder: x.folder ?? b.folder, filePattern: 'YYYY-MM-DD HH-mm-ss', tz: '+08:00', clockOffsetSec: 0 });
-    cam.brand = b.brand || 'tapo'; cam.quality = r.quality; cam.revealPending = true;
-    return cam;
-  });
+  if (Array.isArray(b.cameras)) return res.status(400).json({ error: 'One camera per packing station — send a single camera' });
+  const r = surveillance.buildRtspUrl({ brand: b.brand || 'tapo', ip: b.ip, port: b.port || 554, user: b.user, pass: b.pass, quality: b.quality });
+  if (r.error) return res.status(400).json({ error: r.error });
+  const conflict = survOneCameraConflict(c, station, null, b.replace === true);
+  if (conflict) return res.status(conflict.status).json(conflict.body);
+  const existing = survStationCamera(c, station);
+  const cam = surveillance.upsertCamera(c, { id: existing ? existing.id : undefined, name: String(b.name || '').trim() || station, station,
+    rtspUrl: r.base, rtspUser: String(b.user), rtspPass: String(b.pass), folder: b.folder, viewUrl: b.viewUrl,
+    filePattern: 'YYYY-MM-DD HH-mm-ss', tz: '+08:00', clockOffsetSec: existing ? existing.clockOffsetSec : 0 });
+  cam.brand = b.brand || 'tapo'; cam.quality = r.quality; cam.revealPending = true;
   surveillance.save(c);
-  logAudit('surveillance_camera_quick_added', { station, cameras: saved.map(s => s.name).join(','), by: req.userId || 'master-key' });
-  res.json({ ok: true, obsFilenameFormat: surveillance.OBS_FILENAME_FORMAT,
-    cameras: saved.map(cam => ({ ...surveillance.publicCamera(cam), obsMediaSourceUrl: surveillance.maskRtsp(cam) })) });
+  logAudit('surveillance_camera_quick_added', { station, camera: cam.name, replaced: !!existing, by: req.userId || 'master-key' });
+  res.json({ ok: true, replaced: !!existing, obsFilenameFormat: surveillance.OBS_FILENAME_FORMAT,
+    camera: { ...surveillance.publicCamera(cam), obsMediaSourceUrl: surveillance.maskRtsp(cam) } });
 });
 // Reveal the full RTSP URL (with password) ONCE after a save — admin only.
 app.post('/api/surveillance/cameras/:id/reveal', survAdmin, (req, res) => {
