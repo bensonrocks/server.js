@@ -44,10 +44,15 @@ const SEED = { batches: [{ id: 'b1', client_name: 'BETIME', uploaded_at: '2026-1
     { order_number: 'GI-151764', waybill_number: 'SPX123456789', lines: [{ sku: 'SKU1', qty: 1 }] },
     { order_number: 'GI-200000', waybill_number: 'NJV999', lines: [{ sku: 'SKU1', qty: 1 }] },
     { order_number: 'GI-300000', waybill_number: 'LIVE1', lines: [{ sku: 'SKU9', qty: 2 }] },
+    { order_number: 'GI-400000', waybill_number: 'CLIP1', carrier: 'Flash Express', lines: [{ sku: 'SKU1', qty: 2 }] },
+    { order_number: 'GI-500000', waybill_number: 'OPEN1', lines: [{ sku: 'SKU1', qty: 1 }] },
   ],
   orderStates: {
     'GI-151764': { status: 'done', operator: 'packer4', startTime: '2026-10-22T03:00:30.000Z', endTime: '2026-10-22T03:02:02.000Z', scanned: { SKU1: 1 } },
     'GI-200000': { status: 'done', operator: 'packer9', startTime: '2026-10-22T05:00:00.000Z', endTime: '2026-10-22T05:01:00.000Z', scanned: { SKU1: 1 } },
+    'GI-400000': { status: 'done', operator: 'packer4', startTime: '2026-10-22T05:00:35.000Z', endTime: '2026-10-22T05:00:40.000Z', scanned: { SKU1: 2 },
+      scanLog: [{ kind: 'scan', at: '2026-10-22T05:00:36.000Z', sku: 'SKU1', qty: 1, by: 'packer4' }, { kind: 'scan', at: '2026-10-22T05:00:38.000Z', sku: 'SKU1', qty: 2, by: 'packer4' }] },
+    'GI-500000': { status: 'processing', claimedBy: 'packer9', scanned: {} },
     'GI-300000': { status: 'processing', claimedBy: 'packer4', claimedAt: '2026-10-22T04:00:00.000Z', updated_at: '2026-10-22T04:00:00.000Z', operator: 'packer4', startTime: '2026-10-22T04:00:00.000Z', scanned: {} },
   } }], inbound: [], transport: [], drivers: [], fixSchedules: {} };
 
@@ -190,6 +195,12 @@ test('DEMO_MODE hard-disables it, even for the master key', async () => {
     D = await boot({ DEMO_MODE: 'true' });
     const r = await fetch(D.base + '/api/surveillance/settings', { headers: { 'x-master-key': KEY } });
     assert.equal(r.status, 403); assert.equal((await r.json()).error, 'Disabled in demo mode');
+    for (const u of ['/api/surveillance/order/GI-151764/packing', '/api/public/surveillance/agent/clips?key=x']) {
+      const x = await fetch(D.base + u, { headers: { 'x-master-key': KEY } });
+      assert.equal(x.status, 403, u); assert.equal((await x.json()).error, 'Disabled in demo mode');
+    }
+    const up = await fetch(D.base + '/api/public/surveillance/agent/clips/abc/upload', { method: 'POST', headers: { 'x-recorder-key': 'x' }, body: 'x' });
+    assert.equal(up.status, 403);
     const p = await fetch(D.base + '/api/surveillance/status', { headers: { 'x-master-key': KEY } });
     assert.equal((await p.json()).visible, false);
   } finally { await stop(D); }
@@ -314,4 +325,119 @@ test('recorder detections: exact tracking match → "seen on camera" with seek; 
   assert.equal(ws[0].at, '2026-10-22T03:00:35.500Z'); assert.equal(ws[0].seekSec, 96);
   assert.equal(ws[1].seekHms, '00:02:50');
   assert.equal(r.body.results[0].videos[0].fileName, '2026-10-22 10-59-00.mkv', 'newest recording containing the order first');
+});
+
+
+// ── Completed order → packing info + clip queue (real agent script) ─────────
+const AGENT = path.join(ROOT, 'scripts', 'surveillance-recorder-agent.js');
+const SAMPLE = process.env.SURV_SAMPLE_VIDEO || '/workspace/uploads/packing-obs.mp4';
+const { execFileSync } = require('child_process');
+const haveFfmpeg = (() => { try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+
+test('packing info: gated (off / no access / not completed) and content', async () => {
+  const U = o => api('GET', `/api/surveillance/order/${o}/packing`, T(userTok));
+  assert.equal((await api('GET', '/api/surveillance/order/GI-400000/packing', T(packerTok))).status, 403, 'no access');
+  assert.equal((await U('GI-500000')).status, 409, 'not completed');
+  assert.equal((await U('NOPE')).status, 404);
+  await api('PUT', '/api/surveillance/settings', T(adminTok), { enabled: false });
+  assert.equal((await U('GI-400000')).status, 403, 'feature off');
+  assert.equal((await api('GET', '/api/surveillance/status', T(userTok))).body.visible, false, 'button hidden');
+  await api('PUT', '/api/surveillance/settings', T(adminTok), { enabled: true });
+  // waybill + a wrong-SKU event on the panel timeline come from earlier tests for GI-300000
+  const r3 = await U('GI-300000');
+  assert.equal(r3.status, 200);
+  assert.ok(r3.body.timeline.some(e => e.kind === 'wrong' && e.sku === 'NOT-IN-ORDER'), 'wrong SKU in timeline');
+  assert.equal(r3.body.waybill.result, 'matched'); assert.ok(r3.body.waybill.scannedAt);
+  const r = await U('GI-400000');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const d = r.body;
+  assert.deepEqual([d.station, d.login, d.client, d.courier, d.tracking, d.durationSec], ['PACKING STATION 4', 'packer4', 'BETIME', 'Flash Express', 'CLIP1', 5]);
+  assert.deepEqual(d.timeline.map(e => [e.sku, e.qty]), [['SKU1', 1], ['SKU1', 2]]);
+  assert.equal(d.waybill.result, 'missing');
+  assert.equal(d.video.recording.fileName, '2026-10-22 10-30-00.mkv', 'long recording covers it');
+  assert.equal(d.clip, null);
+  // packer9 has no camera → no recording → times only, and no clip
+  const n = (await U('GI-200000')).body;
+  assert.equal(n.video.recording, null); assert.ok(n.video.windowStart);
+  assert.equal((await api('POST', '/api/surveillance/order/GI-200000/clip', T(userTok))).status, 409, 'no recording → no clip');
+});
+
+test('clip queue: agent auth, request → real agent cuts packing-obs.mp4 → ready → audited download', { skip: !(haveFfmpeg && fs.existsSync(SAMPLE)) && 'ffmpeg or sample video missing' }, async () => {
+  // recorder registers the sample as the station's recording (13:00:00 SGT = 05:00:00Z)
+  const RDIR = fs.mkdtempSync(path.join(os.tmpdir(), 'surv-rec-'));
+  const fname = '2026-10-22 13-00-00.mp4';
+  fs.copyFileSync(SAMPLE, path.join(RDIR, fname));
+  const reg = await api('POST', '/api/public/surveillance/recordings', { 'x-recorder-key': recKey, 'Content-Type': 'application/json' }, { fileName: fname, station: 'PACKING STATION 4', durationSec: 36 });
+  assert.equal(reg.status, 200);
+  let d = (await api('GET', '/api/surveillance/order/GI-400000/packing', T(userTok))).body;
+  assert.equal(d.video.recording.fileName, fname); assert.equal(d.video.recording.seekSec, 5);
+  // agent endpoints need the key
+  assert.equal((await api('GET', '/api/public/surveillance/agent/clips', {})).status, 401);
+  assert.equal((await api('GET', '/api/public/surveillance/agent/clips', { 'x-recorder-key': 'wrong' })).status, 401);
+  assert.equal((await api('POST', '/api/public/surveillance/agent/clips/x/upload', { 'x-recorder-key': 'wrong' })).status, 401);
+  assert.equal((await api('POST', '/api/public/surveillance/agent/clips/x/fail', { 'x-recorder-key': 'wrong' })).status, 401);
+  // request
+  const q = await api('POST', '/api/surveillance/order/GI-400000/clip', T(userTok));
+  assert.equal(q.status, 200); assert.equal(q.body.clip.status, 'requested');
+  assert.equal((await api('POST', '/api/surveillance/order/GI-400000/clip', T(userTok))).body.clip.id, q.body.clip.id, 'idempotent');
+  // the REAL reference agent, one pass
+  const out = execFileSync(process.execPath, [AGENT, '--once'], { env: { ...process.env, IDEALONE_URL: B, RECORDER_KEY: recKey, RECORDINGS_DIR: RDIR }, encoding: 'utf8', timeout: 120000 });
+  assert.match(out, /uploaded/);
+  d = (await api('GET', '/api/surveillance/order/GI-400000/packing', T(userTok))).body;
+  assert.equal(d.clip.status, 'ready', JSON.stringify(d.clip)); assert.ok(d.clip.size > 1000);
+  assert.equal(d.clip.file, undefined, 'server path not exposed');
+  assert.equal(d.clip.hasPoster, true, 'agent uploaded a poster frame');
+  const pr = await fetch(`${B}/api/surveillance/clips/${d.clip.id}/poster`, { headers: T(userTok) });
+  assert.equal(pr.status, 200); assert.equal(pr.headers.get('content-type'), 'image/jpeg');
+  // download: no access → 403; granted → MP4 + audit
+  assert.equal((await fetch(`${B}/api/surveillance/clips/${d.clip.id}/video`, { headers: T(packerTok) })).status, 403);
+  const v = await fetch(`${B}/api/surveillance/clips/${d.clip.id}/video?download=1`, { headers: T(userTok) });
+  assert.equal(v.status, 200); assert.equal(v.headers.get('content-type'), 'video/mp4');
+  assert.match(v.headers.get('content-disposition'), /attachment; filename="GI-400000-packing.mp4"/);
+  const buf = Buffer.from(await v.arrayBuffer());
+  assert.equal(buf.slice(4, 8).toString(), 'ftyp');
+  const tmpMp4 = path.join(RDIR, 'got.mp4'); fs.writeFileSync(tmpMp4, buf);
+  const probe = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', tmpMp4]).toString();
+  assert.ok(Number(probe) > 20 && Number(probe) < 36, 'clip ≈ seek 5 s → end of 36 s file: ' + probe);
+  let audit = '';
+  for (let k = 0; k < 20 && !/surveillance_clip_downloaded[^}]*staff1/.test(audit); k++) {
+    await sleep(500);
+    const files = []; const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const fp = path.join(d, e.name); if (e.isDirectory()) walk(fp); else if (e.name === 'db.json') files.push(fp); } };
+    walk(S.dir); audit = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
+  }
+  assert.match(audit, /staff1/, 'download audited with the user');
+  // agent failure path: missing recording on the PC
+  const q2 = await api('POST', '/api/surveillance/order/GI-151764/clip', T(userTok));
+  assert.equal(q2.status, 200);
+  execFileSync(process.execPath, [AGENT, '--once'], { env: { ...process.env, IDEALONE_URL: B, RECORDER_KEY: recKey, RECORDINGS_DIR: RDIR }, encoding: 'utf8', timeout: 60000 });
+  const f = (await api('GET', '/api/surveillance/order/GI-151764/packing', T(userTok))).body.clip;
+  assert.equal(f.status, 'failed'); assert.match(f.reason, /not found on this PC/);
+  // non-MP4 upload refused; oversize refused
+  const q3 = await api('POST', '/api/surveillance/order/GI-151764/clip', T(userTok), { retry: true });
+  const bad = await fetch(`${B}/api/public/surveillance/agent/clips/${q3.body.clip.id}/upload`, { method: 'POST', headers: { 'x-recorder-key': recKey, 'Content-Type': 'video/mp4' }, body: 'x'.repeat(500) });
+  assert.equal(bad.status, 400);
+  await api('PUT', '/api/surveillance/settings', T(adminTok), { clipMaxMB: 1 });
+  const big = await fetch(`${B}/api/public/surveillance/agent/clips/${q3.body.clip.id}/upload`, { method: 'POST', headers: { 'x-recorder-key': recKey, 'Content-Type': 'video/mp4' }, body: Buffer.alloc(1.5 * 1048576) });
+  assert.equal(big.status, 413);
+  fs.rmSync(RDIR, { recursive: true, force: true });
+});
+
+test('clip retention: clips older than the admin-set days are deleted from disk', { skip: !(haveFfmpeg && fs.existsSync(SAMPLE)) && 'needs the clip test' }, async () => {
+  const f = path.join(S.dir, 'surveillance.json');
+  const cfg = JSON.parse(fs.readFileSync(f, 'utf8'));
+  const c = cfg.clips.find(x => x.order === 'GI-400000' && x.status === 'ready');
+  assert.ok(c && fs.existsSync(path.join(S.dir, 'surveillance-clips', c.file)));
+  c.readyAt = new Date(Date.now() - 31 * 86400000).toISOString();
+  fs.writeFileSync(f, JSON.stringify(cfg));
+  await api('PUT', '/api/surveillance/settings', T(adminTok), { clipRetentionDays: 30 });
+  await api('POST', '/api/surveillance/order/GI-151764/clip', T(userTok), { retry: true }); // any request runs the sweep
+  assert.ok(!fs.existsSync(path.join(S.dir, 'surveillance-clips', c.file)), 'file deleted');
+  assert.equal((await api('GET', '/api/surveillance/order/GI-400000/packing', T(userTok))).body.clip, null);
+});
+
+test('orders UI hook is isolated: index.html only adds one deferred script', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.equal((html.match(/surveillance-order\.js/g) || []).length, 1);
+  const js = fs.readFileSync(path.join(ROOT, 'public', 'surveillance-order.js'), 'utf8');
+  assert.match(js, /\/api\/surveillance\/status/); assert.match(js, /status-done/);
 });

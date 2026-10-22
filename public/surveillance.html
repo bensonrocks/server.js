@@ -11,7 +11,7 @@ section{border:1px solid #e3e3e3;border-radius:8px;padding:1rem;margin:1rem 0}.h
 <section id="admin" class="hidden"><h2>Settings (Administrator)</h2>
 <label><input type="checkbox" id="en"> Enabled globally</label><br>
 Granted users (login IDs, comma separated): <input id="gu" size="40"><br>
-Padding before/after (s): <input id="pb" size="4"> / <input id="pa" size="4"> <button id="saveS">Save</button>
+Padding before/after (s): <input id="pb" size="4"> / <input id="pa" size="4"> <br>Clips: keep <input id="cRet" size="3"> days, max <input id="cMax" size="3"> MB each, <input id="cTot" size="5"> MB total <button id="saveS">Save</button>
 <p>Recorder key: <span id="rk"></span> <button id="rot">Generate new key</button></p>
 <h3>Cameras</h3><table id="cams"></table>
 <h3>Station live panel</h3><p>Station <select id="lvSt"></select> <button type="button" id="lvOpen">Open live panel</button><br>
@@ -46,9 +46,9 @@ async function boot(){const s=await api('GET','/api/surveillance/status');
  if(!s.j.visible){document.body.innerHTML='<p>Surveillance is not enabled for this login.</p>';return}
  if(s.j.admin){document.getElementById('admin').classList.remove('hidden');loadS();loadPackers()}}
 async function loadS(){const {j}=await api('GET','/api/surveillance/settings');en.checked=j.enabled;gu.value=(j.grantedUsers||[]).join(',');
- pb.value=j.padBeforeSec;pa.value=j.padAfterSec;rk.textContent=j.recorderKeySet?'set ('+j.recorderKeyHint+')':'not set';
+ pb.value=j.padBeforeSec;pa.value=j.padAfterSec;cRet.value=j.clipRetentionDays;cMax.value=j.clipMaxMB;cTot.value=j.clipTotalMaxMB;rk.textContent=j.recorderKeySet?'set ('+j.recorderKeyHint+')':'not set';
  cams.innerHTML='<tr><th>Name</th><th>Station</th><th>RTSP</th><th>Folder</th><th>Pattern</th><th>Offset</th><th></th></tr>'+j.cameras.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.station)}</td><td>${esc(c.rtspUrl)}</td><td>${esc(c.folder)}</td><td>${esc(c.filePattern)} ${esc(c.tz)}</td><td>${esc(c.clockOffsetSec)}s</td><td><button data-del="${esc(c.id)}">Delete</button></td></tr>`).join('')}
-saveS.onclick=async()=>{await api('PUT','/api/surveillance/settings',{enabled:en.checked,grantedUsers:gu.value.split(',').map(s=>s.trim()).filter(Boolean),padBeforeSec:+pb.value,padAfterSec:+pa.value});loadS()};
+saveS.onclick=async()=>{await api('PUT','/api/surveillance/settings',{enabled:en.checked,grantedUsers:gu.value.split(',').map(s=>s.trim()).filter(Boolean),padBeforeSec:+pb.value,padAfterSec:+pa.value,clipRetentionDays:+cRet.value,clipMaxMB:+cMax.value,clipTotalMaxMB:+cTot.value});loadS()};
 rot.onclick=async()=>{if(!confirm('Replace the recorder key? The local agent must be updated.'))return;const {j}=await api('POST','/api/surveillance/recorder-key');prompt('New recorder key (shown once):',j.recorderKey);loadS()};
 cams.onclick=async e=>{const id=e.target.dataset.del;if(id&&confirm('Delete camera?')){await api('DELETE','/api/surveillance/cameras/'+id);loadS()}};
 cf.onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(cf));const r=await api('POST','/api/surveillance/cameras',b);msg.textContent=r.ok?'Camera saved':r.j.error;cf.rtspUrl.value='';loadS()};
