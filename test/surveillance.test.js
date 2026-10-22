@@ -199,3 +199,47 @@ test('unit: file-name time pattern', () => {
   assert.equal(sv.parseFileTime('Rec_20261022_105500.mp4', 'YYYYMMDD_HHmmss', '+08:00'), '2026-10-22T02:55:00.000Z');
   assert.equal(sv.parseFileTime('nothing.mp4', 'YYYY-MM-DD HH-mm-ss'), null);
 });
+
+// ── Quick add camera (Tapo preset) ──────────────────────────────────────────
+test('unit: RTSP URL building per preset, IP validation', () => {
+  const t = sv.buildRtspUrl({ brand: 'tapo', ip: '192.168.1.50', user: 'cam', pass: 'p@ss:1' });
+  assert.equal(t.url, 'rtsp://cam:p%40ss%3A1@192.168.1.50:554/stream1');
+  assert.equal(t.base, 'rtsp://192.168.1.50:554/stream1');
+  assert.equal(sv.buildRtspUrl({ brand: 'tapo', ip: '10.0.0.9', user: 'a', pass: 'b', quality: 'sd', port: 8554 }).url, 'rtsp://a:b@10.0.0.9:8554/stream2');
+  assert.match(sv.buildRtspUrl({ brand: 'hikvision', ip: '10.0.0.9', user: 'a', pass: 'b' }).url, /Channels\/101$/);
+  assert.match(sv.buildRtspUrl({ brand: 'dahua', ip: '10.0.0.9', user: 'a', pass: 'b', quality: 'sd' }).url, /subtype=1$/);
+  for (const ip of ['192.168.1', '256.1.1.1', '1.2.3.4.5', 'abc', '01.2.3.4', '']) assert.ok(sv.buildRtspUrl({ ip, user: 'a', pass: 'b' }).error, ip);
+  assert.ok(sv.buildRtspUrl({ ip: '1.2.3.4', user: 'a' }).error, 'password required');
+  assert.ok(sv.buildRtspUrl({ ip: '1.2.3.4', user: 'a', pass: 'b', port: 70000 }).error);
+  assert.ok(sv.buildRtspUrl({ brand: 'nope', ip: '1.2.3.4', user: 'a', pass: 'b' }).error);
+});
+
+test('quick add: admin only, builds/masks, 4-up, reveal once', async () => {
+  const body = { brand: 'tapo', station: 'PACKING STATION 4', quality: 'hd',
+    cameras: [1, 2, 3, 4].map(i => ({ ip: '192.168.1.' + (60 + i), user: 'tapocam', pass: 'TapoPw' + i })) };
+  assert.equal((await api('POST', '/api/surveillance/cameras/quick', T(userTok), body)).status, 403);
+  assert.equal((await api('GET', '/api/surveillance/packers', T(userTok))).status, 403);
+  assert.equal((await api('POST', '/api/surveillance/cameras/quick', T(adminTok), { ...body, cameras: [...body.cameras, body.cameras[0]] })).status, 400);
+  const badIp = await api('POST', '/api/surveillance/cameras/quick', T(adminTok), { ...body, cameras: [{ ip: '192.168.1.300', user: 'a', pass: 'b' }] });
+  assert.equal(badIp.status, 400); assert.match(badIp.body.error, /IP/);
+  const pk = await api('GET', '/api/surveillance/packers', T(adminTok));
+  assert.ok(pk.body.some(u => u.name === 'PACKING STATION 4'));
+  assert.ok(!JSON.stringify(pk.body).match(/salt|passwordHash/));
+  const r = await api('POST', '/api/surveillance/cameras/quick', T(adminTok), body);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.cameras.length, 4);
+  assert.equal(r.body.cameras[0].name, 'PACKING STATION 4 – 1');
+  assert.equal(r.body.cameras[0].obsMediaSourceUrl, 'rtsp://tapocam:****@192.168.1.61:554/stream1');
+  assert.equal(r.body.obsFilenameFormat, '%CCYY-%MM-%DD %hh-%mm-%ss');
+  assert.ok(!JSON.stringify(r.body).includes('TapoPw'));
+  const s = await api('GET', '/api/surveillance/settings', T(adminTok));
+  assert.ok(!JSON.stringify(s.body).includes('TapoPw'));
+  const id = r.body.cameras[0].id;
+  assert.equal((await api('POST', `/api/surveillance/cameras/${id}/reveal`, T(userTok))).status, 403);
+  const rv = await api('POST', `/api/surveillance/cameras/${id}/reveal`, T(adminTok));
+  assert.equal(rv.body.url, 'rtsp://tapocam:TapoPw1@192.168.1.61:554/stream1');
+  assert.equal((await api('POST', `/api/surveillance/cameras/${id}/reveal`, T(adminTok))).status, 410);
+  // single camera, no name → defaults to the station name
+  const one = await api('POST', '/api/surveillance/cameras/quick', T(adminTok), { station: 'PACKING STATION 4', cameras: [{ ip: '192.168.1.70', user: 'u', pass: 'p' }] });
+  assert.equal(one.body.cameras[0].name, 'PACKING STATION 4');
+});

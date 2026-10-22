@@ -11598,10 +11598,51 @@ app.post('/api/surveillance/recorder-key', survAdmin, (req, res) => {
 });
 app.post('/api/surveillance/cameras', survAdmin, (req, res) => {
   const c = req.surv; const cam = surveillance.upsertCamera(c, req.body);
+  if (req.body && (req.body.rtspPass || /:[^*@/]+@/.test(String(req.body.rtspUrl || '')))) cam.revealPending = true;
   if (!cam.name || !cam.station) { return res.status(400).json({ error: 'name and station are required' }); }
   surveillance.save(c);
   logAudit('surveillance_camera_saved', { camera: cam.name, station: cam.station, by: req.userId || 'master-key' });
   res.json({ ok: true, camera: surveillance.publicCamera(cam) });
+});
+// Packer logins for the Quick-add station dropdown (id + name only).
+app.get('/api/surveillance/packers', survAdmin, (req, res) => {
+  res.json(readUsers().filter(u => u.role !== 'driver').map(u => ({ id: u.id, name: u.name || u.id })));
+});
+// Quick add: brand preset + IP + camera account → RTSP URL built server-side.
+// Up to 4 cameras for one station at once (the OBS 4-panel layout).
+app.post('/api/surveillance/cameras/quick', survAdmin, (req, res) => {
+  const c = req.surv, b = req.body || {};
+  const station = String(b.station || '').trim();
+  if (!station) return res.status(400).json({ error: 'Packing station is required' });
+  const list = Array.isArray(b.cameras) ? b.cameras : [b];
+  if (!list.length || list.length > 4) return res.status(400).json({ error: 'Add 1 to 4 cameras at a time' });
+  const built = [];
+  for (const [i, x] of list.entries()) {
+    const r = surveillance.buildRtspUrl({ brand: b.brand || x.brand || 'tapo', ip: x.ip, port: x.port || b.port || 554,
+      user: x.user, pass: x.pass, quality: x.quality || b.quality });
+    if (r.error) return res.status(400).json({ error: `Camera ${i + 1}: ${r.error}` });
+    built.push({ x, r });
+  }
+  const saved = built.map(({ x, r }, i) => {
+    const name = String(x.name || '').trim() || (list.length > 1 ? `${station} – ${i + 1}` : station);
+    const cam = surveillance.upsertCamera(c, { name, station, rtspUrl: r.base, rtspUser: String(x.user), rtspPass: String(x.pass),
+      folder: x.folder ?? b.folder, filePattern: 'YYYY-MM-DD HH-mm-ss', tz: '+08:00', clockOffsetSec: 0 });
+    cam.brand = b.brand || 'tapo'; cam.quality = r.quality; cam.revealPending = true;
+    return cam;
+  });
+  surveillance.save(c);
+  logAudit('surveillance_camera_quick_added', { station, cameras: saved.map(s => s.name).join(','), by: req.userId || 'master-key' });
+  res.json({ ok: true, obsFilenameFormat: surveillance.OBS_FILENAME_FORMAT,
+    cameras: saved.map(cam => ({ ...surveillance.publicCamera(cam), obsMediaSourceUrl: surveillance.maskRtsp(cam) })) });
+});
+// Reveal the full RTSP URL (with password) ONCE after a save — admin only.
+app.post('/api/surveillance/cameras/:id/reveal', survAdmin, (req, res) => {
+  const c = req.surv; const cam = c.cameras.find(x => x.id === req.params.id);
+  if (!cam) return res.status(404).json({ error: 'Camera not found' });
+  if (!cam.revealPending) return res.status(410).json({ error: 'Already revealed — re-enter the password to reveal again' });
+  cam.revealPending = false; surveillance.save(c);
+  logAudit('surveillance_rtsp_revealed', { camera: cam.name, by: req.userId || 'master-key' });
+  res.json({ ok: true, url: surveillance.fullRtsp(cam) });
 });
 app.delete('/api/surveillance/cameras/:id', survAdmin, (req, res) => {
   const c = req.surv; const n = c.cameras.length;

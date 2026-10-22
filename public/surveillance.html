@@ -14,11 +14,23 @@ Granted users (login IDs, comma separated): <input id="gu" size="40"><br>
 Padding before/after (s): <input id="pb" size="4"> / <input id="pa" size="4"> <button id="saveS">Save</button>
 <p>Recorder key: <span id="rk"></span> <button id="rot">Generate new key</button></p>
 <h3>Cameras</h3><table id="cams"></table>
+<h3>Quick add camera</h3>
+<details open><summary class="muted">Where do I find these? (Tapo)</summary><p class="muted" style="font-size:13px">
+Tapo app › your camera › <b>Camera Settings › Advanced Settings › Camera Account</b> — create the username/password here (not your TP-Link login).
+The IP is under <b>Device Info</b>. Battery models (e.g. C4xx / C400, C420, C425) do <b>not</b> support RTSP.</p></details>
+<form id="qf">Brand <select id="qBrand"><option value="tapo" selected>TP-Link Tapo</option><option value="hikvision">Hikvision</option>
+<option value="dahua">Dahua</option><option value="custom">Custom RTSP URL</option></select>
+Packing station <select id="qStation"></select> Cameras <select id="qCount"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+Quality <select id="qQual"><option value="hd" selected>HD (stream1)</option><option value="sd">SD (stream2)</option></select>
+<details><summary class="muted">Advanced</summary>RTSP port <input id="qPort" value="554" size="5"></details>
+<div id="qRows"></div><button>Save camera(s)</button></form>
+<div id="qOut"></div>
+<div id="customWrap" class="hidden"><h3>Custom RTSP URL</h3>
 <form id="cf">Name <input name="name"> Station <input name="station" placeholder="PACKING STATION 4"><br>
 RTSP URL <input name="rtspUrl" size="40" placeholder="rtsp://user:pass@192.168.1.20:554/stream1"><br>
 Recordings folder <input name="folder" size="30"> File-name pattern <input name="filePattern" value="YYYY-MM-DD HH-mm-ss">
 TZ <input name="tz" value="+08:00" size="6"> Clock offset (s) <input name="clockOffsetSec" value="0" size="4">
-<button>Add / update camera</button></form></section>
+<button>Add / update camera</button></form></div></section>
 <script>
 const T=localStorage.getItem('wms_token')||'';const H={'x-auth-token':T,'Content-Type':'application/json'};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -26,7 +38,7 @@ const fmt=t=>t?new Date(t).toLocaleString('en-SG',{timeZone:'Asia/Singapore'})+'
 async function api(m,p,b){const r=await fetch(p,{method:m,headers:H,body:b?JSON.stringify(b):undefined});return{ok:r.ok,j:await r.json().catch(()=>({}))}}
 async function boot(){const s=await api('GET','/api/surveillance/status');
  if(!s.j.visible){document.body.innerHTML='<p>Surveillance is not enabled for this login.</p>';return}
- if(s.j.admin){document.getElementById('admin').classList.remove('hidden');loadS()}}
+ if(s.j.admin){document.getElementById('admin').classList.remove('hidden');loadS();loadPackers()}}
 async function loadS(){const {j}=await api('GET','/api/surveillance/settings');en.checked=j.enabled;gu.value=(j.grantedUsers||[]).join(',');
  pb.value=j.padBeforeSec;pa.value=j.padAfterSec;rk.textContent=j.recorderKeySet?'set ('+j.recorderKeyHint+')':'not set';
  cams.innerHTML='<tr><th>Name</th><th>Station</th><th>RTSP</th><th>Folder</th><th>Pattern</th><th>Offset</th><th></th></tr>'+j.cameras.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.station)}</td><td>${esc(c.rtspUrl)}</td><td>${esc(c.folder)}</td><td>${esc(c.filePattern)} ${esc(c.tz)}</td><td>${esc(c.clockOffsetSec)}s</td><td><button data-del="${esc(c.id)}">Delete</button></td></tr>`).join('')}
@@ -41,5 +53,24 @@ f.onsubmit=async e=>{e.preventDefault();const {ok,j}=await api('GET','/api/surve
  <tr><th>Pack start → end</th><td>${fmt(r.startTime)} → ${fmt(r.endTime)}</td></tr>
  <tr><th>Window (−${r.padBeforeSec}s / +${r.padAfterSec}s)</th><td>${fmt(r.windowStart)} → ${fmt(r.windowEnd)}</td></tr>
  <tr><th>Recording</th><td>${r.videos.length?r.videos.map(v=>`<b>${esc(v.camera)}</b>: ${esc(v.folder)}${v.folder?'/':''}${esc(v.fileName)} — seek to <b>${esc(v.seekHms)}</b> (${v.seekSec}s), watch ${v.clipLengthSec}s`).join('<br>'):'<span class="muted">No recording registered yet — times only.</span>'}</td></tr></table>`).join('')};
+
+const ipOk=ip=>{const p=String(ip).trim().split('.');return p.length===4&&p.every(x=>/^\d{1,3}$/.test(x)&&+x<=255&&String(+x)===x)};
+function rows(){const n=+qCount.value;qRows.innerHTML=Array.from({length:n},(_,i)=>`<div style="margin:.4rem 0">#${i+1} Name <input data-f="name" placeholder="(defaults to station)">
+ IP <input data-f="ip" placeholder="192.168.1.50" size="14"> Username <input data-f="user" autocomplete="off"> Password <input data-f="pass" type="password" autocomplete="new-password"></div>`).join('')}
+qCount.onchange=rows;rows();
+qBrand.onchange=()=>{const c=qBrand.value==='custom';qf.querySelectorAll('#qRows,#qQual,#qCount').forEach(e=>e.disabled=c);customWrap.classList.toggle('hidden',!c)};
+async function loadPackers(){const {j}=await api('GET','/api/surveillance/packers');qStation.innerHTML=(j||[]).map(u=>`<option value="${esc(u.name)}">${esc(u.name)} (${esc(u.id)})</option>`).join('')}
+qf.onsubmit=async e=>{e.preventDefault();if(qBrand.value==='custom')return;
+ const cams=[...qRows.children].map(d=>Object.fromEntries([...d.querySelectorAll('input')].map(i=>[i.dataset.f,i.value.trim()])));
+ const bad=cams.findIndex(c=>!ipOk(c.ip));if(bad>=0){qOut.textContent=`Camera ${bad+1}: IP must look like 192.168.1.50`;return}
+ const {ok,j}=await api('POST','/api/surveillance/cameras/quick',{brand:qBrand.value,station:qStation.value,quality:qQual.value,port:+qPort.value||554,cameras:cams});
+ if(!ok){qOut.textContent=j.error;return} qRows.querySelectorAll('input[type=password]').forEach(i=>i.value='');
+ qOut.innerHTML='<p><b>Saved.</b> OBS setup:</p>'+j.cameras.map(c=>`<p>${esc(c.name)} — Media Source (untick "Local File") Input: <code id="u_${esc(c.id)}">${esc(c.obsMediaSourceUrl)}</code>
+ <button data-rev="${esc(c.id)}">Reveal once</button> <button data-copy="u_${esc(c.id)}">Copy</button></p>`).join('')+
+ `<p>OBS › Settings › Advanced › Recording › Filename Formatting: <code id="fnf">${esc(j.obsFilenameFormat)}</code> <button data-copy="fnf">Copy</button></p>`;loadS()};
+qOut.onclick=async e=>{const id=e.target.dataset.rev,cp=e.target.dataset.copy;
+ if(cp){navigator.clipboard.writeText(document.getElementById(cp).textContent);return}
+ if(id){if(!confirm('Show the full URL with password? It can only be revealed once.'))return;const {ok,j}=await api('POST',`/api/surveillance/cameras/${id}/reveal`);
+  if(ok){document.getElementById('u_'+id).textContent=j.url;e.target.disabled=true}else alert(j.error)}};
 boot();
 </script></body></html>
