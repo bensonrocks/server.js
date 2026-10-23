@@ -11579,18 +11579,15 @@ function survAccess(req, res, next) {
 // Request values may arrive as arrays / objects (?a=1&a=2, {"x":[..]}): only a
 // real string is accepted, anything else is treated as absent.
 const survStr = v => (typeof v === 'string' ? v : '');
-// Small in-memory sliding-window limiter (per IP + login) for the clip / poster
-// file routes, which read or write the filesystem.
-function survRateLimit(name, max, windowMs) {
-  const hits = new Map();
-  return function (req, res, next) {
-    const k = name + '|' + (req.ip || 'x') + '|' + survStr(req.userId), now = Date.now();
-    const h = (hits.get(k) || []).filter(t => now - t < windowMs);
-    if (h.length >= max) { res.setHeader('Retry-After', String(Math.ceil(windowMs / 1000))); return res.status(429).json({ error: 'Too many requests. Please try again shortly.' }); }
-    h.push(now); hits.set(k, h);
-    if (hits.size > 2000) { for (const [kk, v] of hits) if (!v.length || now - v[v.length - 1] >= windowMs) hits.delete(kk); if (hits.size > 2000) hits.clear(); }
-    next();
-  };
+// Per IP + login rate limit (express-rate-limit, in-memory store) for the clip /
+// poster file routes, which read or write the filesystem.
+const expressRateLimit = require('express-rate-limit');
+function survRateLimit(max, windowMs) {
+  return expressRateLimit({
+    windowMs, limit: max, standardHeaders: false, legacyHeaders: false, validate: false,
+    keyGenerator: req => (req.ip || 'x') + '|' + survStr(req.userId),
+    handler: (req, res) => { res.setHeader('Retry-After', String(Math.ceil(windowMs / 1000))); res.status(429).json({ error: 'Too many requests. Please try again shortly.' }); },
+  });
 }
 // express.raw() leaves a Buffer in req.body; anything else (string, array,
 // parsed object — e.g. a mismatched Content-Type) is rejected.
@@ -11599,8 +11596,8 @@ function survRawBody(req) {
   if (typeof b === 'string' || Array.isArray(b) || !Buffer.isBuffer(b)) return null;
   return b;
 }
-const survClipFileLimit = survRateLimit('clipfile', 60, 60000);     // GET video / poster
-const survClipUploadLimit = survRateLimit('clipup', 120, 60000);    // recorder agent POST upload / poster
+const survClipFileLimit = survRateLimit(60, 60000);     // GET video / poster
+const survClipUploadLimit = survRateLimit(120, 60000);    // recorder agent POST upload / poster
 // Is a (password-bearing) credential present in an RTSP URL? Parsed with the
 // URL parser on a bounded string — no regex on user input.
 function survRtspHasPassword(v) {
