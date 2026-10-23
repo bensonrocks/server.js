@@ -360,9 +360,11 @@
       currentUser.features    = p.features    || null;
       if (p.tablePrefs) tablePrefs = { widths: p.tablePrefs.widths || {}, hidden: p.tablePrefs.hidden || [] };
       applyFeatureToggles(currentUser.features);
-      // Surveillance menu: shown only when the server says this login may see it.
+      // Surveillance menu: shown only while Surveillance is ON and this login may see it
+      // (s.visible) — or, while it is OFF, to an administrator only (s.canToggle), as the
+      // minimal way to reach the on/off switch. Never on the demo (server answers false).
       fetch('/api/surveillance/status', { headers: hdrs() }).then(r => r.ok ? r.json() : null).then(s => {
-        const b = document.getElementById('surveillanceNavBtn'); if (b) b.style.display = s && s.visible ? '' : 'none';
+        const b = document.getElementById('surveillanceNavBtn'); if (b) b.style.display = s && (s.visible || s.canToggle) ? '' : 'none';
       }).catch(() => {});
     } catch {}
     fetchNoBarcodeSkus();

@@ -97,10 +97,32 @@ test('OFF by default: status hidden for staff, every API 403, recorder/overlay 4
   assert.equal((await api('GET', '/api/public/surveillance/overlay?station=x&key=x', {})).status, 403);
 });
 
+test('OFF hides everything for EVERYONE incl. admin; admin keeps only the toggle route', async () => {
+  const a = (await api('GET', '/api/surveillance/status', T(adminTok))).body;
+  assert.deepEqual([a.enabled, a.admin, a.visible, a.canToggle], [false, true, false, true], 'admin: no menu/panel/Video button, but a toggle entry');
+  const u = (await api('GET', '/api/surveillance/status', T(userTok))).body;
+  assert.deepEqual([u.visible, u.canToggle], [false, false], 'ordinary user sees nothing');
+  // a per-user grant never helps while OFF
+  const sf = path.join(S.dir, 'surveillance.json');
+  const cfg = fs.existsSync(sf) ? JSON.parse(fs.readFileSync(sf, 'utf8')) : {};
+  assert.ok(!cfg.enabled);
+  for (const [m, p] of [['GET', '/api/surveillance/lookup?q=GI-151764'], ['GET', '/api/surveillance/live?station=PACKING%20STATION%204'],
+    ['GET', '/api/surveillance/order/GI-400000/packing'], ['POST', '/api/surveillance/order/GI-400000/clip'],
+    ['GET', '/api/surveillance/clips/x/video'], ['GET', '/api/surveillance/clips/x/poster']]) {
+    assert.equal((await api(m, p, T(adminTok))).status, 403, 'admin ' + m + ' ' + p + ' while OFF');
+    assert.equal((await api(m, p, T(userTok))).status, 403, 'user ' + m + ' ' + p + ' while OFF');
+  }
+  // the minimal admin path: settings stay reachable so the switch can be flipped
+  assert.equal((await api('GET', '/api/surveillance/settings', T(adminTok))).status, 200);
+  assert.equal((await api('GET', '/api/surveillance/settings', T(userTok))).status, 403);
+});
+
 test('only an admin can toggle / grant; non-admin is refused even when ON', async () => {
   assert.equal((await api('PUT', '/api/surveillance/settings', T(userTok), { enabled: true, grantedUsers: ['staff1'] })).status, 403);
   const r = await api('PUT', '/api/surveillance/settings', T(adminTok), { enabled: true });
   assert.deepEqual([r.status, r.body.enabled], [200, true]);
+  const on = (await api('GET', '/api/surveillance/status', T(adminTok))).body;
+  assert.deepEqual([on.visible, on.canToggle], [true, false], 'ON: admin sees the full feature, no toggle-only entry');
   // enabled but not granted → still 403
   assert.equal((await api('GET', '/api/surveillance/lookup?q=GI-151764', T(userTok))).status, 403);
   assert.equal((await api('GET', '/api/surveillance/status', T(userTok))).body.visible, false);
@@ -202,7 +224,7 @@ test('DEMO_MODE hard-disables it, even for the master key', async () => {
     const up = await fetch(D.base + '/api/public/surveillance/agent/clips/abc/upload', { method: 'POST', headers: { 'x-recorder-key': 'x' }, body: 'x' });
     assert.equal(up.status, 403);
     const p = await fetch(D.base + '/api/surveillance/status', { headers: { 'x-master-key': KEY } });
-    assert.equal((await p.json()).visible, false);
+    const pj = await p.json(); assert.equal(pj.visible, false); assert.equal(pj.canToggle, false, 'demo never offers even the admin toggle');
   } finally { await stop(D); }
 });
 
@@ -440,4 +462,73 @@ test('orders UI hook is isolated: index.html only adds one deferred script', () 
   assert.equal((html.match(/surveillance-order\.js/g) || []).length, 1);
   const js = fs.readFileSync(path.join(ROOT, 'public', 'surveillance-order.js'), 'utf8');
   assert.match(js, /\/api\/surveillance\/status/); assert.match(js, /status-done/);
+});
+
+// ── CodeQL hardening: ReDoS, parameter type confusion, rate limiting ────────
+test('RTSP credential check is linear-time (no ReDoS) and still flags real passwords', async () => {
+  const post = body => api('POST', '/api/surveillance/cameras', T(adminTok), body);
+  const t0 = Date.now();
+  await post({ name: 'redos', station: 'ST-REDOS', rtspUrl: ':'.repeat(200000) });
+  await post({ name: 'redos2', station: 'ST-REDOS2', rtspUrl: 'rtsp://' + ':'.repeat(50000) + 'x' });
+  assert.ok(Date.now() - t0 < 5000, 'crafted URLs must not stall the server: ' + (Date.now() - t0) + 'ms');
+  assert.equal((await api('GET', '/api/surveillance/status', T(adminTok))).status, 200, 'server still responsive');
+  const withPw = await post({ name: 'pw', station: 'ST-PW', rtspUrl: 'rtsp://cam:Secret1@192.168.1.60:554/s1' });
+  assert.equal(withPw.body.camera.canReveal, true, 'password in URL → reveal-once pending');
+  const masked = await post({ name: 'masked', station: 'ST-MASK', rtspUrl: 'rtsp://cam:****@192.168.1.61:554/s1' });
+  assert.equal(masked.body.camera.canReveal, false, 'masked password is not a new secret');
+  const noPw = await post({ name: 'nopw', station: 'ST-NOPW', rtspUrl: 'rtsp://192.168.1.62:554/s1' });
+  assert.equal(noPw.body.camera.canReveal, false);
+  const arr = await post({ name: 'arr', station: 'ST-ARR', rtspUrl: ['rtsp://a:b@h/', 'x'] });
+  assert.ok(arr.status < 500, 'array rtspUrl does not crash');
+  const s = await api('GET', '/api/surveillance/settings', T(adminTok));
+  for (const c of s.body.cameras.filter(c => /^ST-/.test(c.station))) await api('DELETE', '/api/surveillance/cameras/' + c.id, T(adminTok));
+});
+
+test('array / object request params are rejected, never coerced into a lookup', async () => {
+  const lk = await api('GET', '/api/surveillance/lookup?q=GI-151764&q=GI-200000', T(userTok));
+  assert.equal(lk.status, 400, 'q given twice → not a string → "q is required"');
+  assert.equal((await api('GET', '/api/surveillance/lookup?q[a]=GI-151764', T(userTok))).status, 400);
+  assert.equal((await api('GET', '/api/surveillance/lookup?q=GI-151764', T(userTok))).status, 200, 'a plain string still works');
+  const live = await api('GET', '/api/surveillance/live?station=packer4&station=packer9', T(userTok));
+  assert.equal(live.status, 404, 'station given twice → unknown station');
+  const wb = await api('POST', '/api/surveillance/live/waybill', T(userTok), { station: ['packer4'], value: 'X' });
+  assert.equal(wb.status, 404);
+  const wb2 = await api('POST', '/api/surveillance/live/waybill', T(userTok), { station: 'packer4', value: ['X', 'Y'] });
+  assert.equal(wb2.status, 400, 'array waybill value → "value is required"');
+  const vid = await api('GET', '/api/surveillance/clips/nope/video?download=1&download=2', T(userTok));
+  assert.equal(vid.status, 404);
+  // recorder-agent POSTs: a non-binary / missing body is refused with 400, not a crash
+  const up = await fetch(`${B}/api/public/surveillance/agent/clips/x/poster`, { method: 'POST', headers: { 'x-recorder-key': recKey }, body: 'x' });
+  assert.equal(up.status, 404, 'unknown clip id');
+});
+
+test('clip + poster file routes are rate limited (429 + Retry-After), per IP + login', async () => {
+  let last, limited = 0;
+  for (let i = 0; i < 70; i++) {
+    last = await fetch(`${B}/api/surveillance/clips/nope/poster`, { headers: T(userTok) });
+    if (last.status === 429) { limited++; assert.ok(last.headers.get('retry-after')); }
+    else assert.equal(last.status, 404);
+  }
+  assert.ok(limited >= 5, 'poster GET limited, got ' + limited);
+  // the video route shares the file-route bucket for the same login
+  assert.equal((await fetch(`${B}/api/surveillance/clips/nope/video`, { headers: T(userTok) })).status, 429);
+  // another login is unaffected by this one's bucket
+  assert.equal((await fetch(`${B}/api/surveillance/clips/nope/video`, { headers: T(adminTok) })).status, 404);
+  // recorder-agent upload + poster POSTs
+  let up429 = 0;
+  for (let i = 0; i < 130; i++) {
+    const r = await fetch(`${B}/api/public/surveillance/agent/clips/nope/upload`, { method: 'POST', headers: { 'x-recorder-key': recKey }, body: 'x' });
+    if (r.status === 429) up429++; else assert.equal(r.status, 404);
+  }
+  assert.ok(up429 >= 5, 'upload POST limited, got ' + up429);
+});
+
+test('UI: Surveillance menu is shown for visible OR admin toggle-only; order Video button needs visible', () => {
+  const app = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
+  assert.match(app, /s\.visible \|\| s\.canToggle/);
+  const js = fs.readFileSync(path.join(ROOT, 'public', 'surveillance-order.js'), 'utf8');
+  assert.match(js, /on = !!\(s && s\.visible\)/, 'Video button only when visible (never from canToggle / admin)');
+  assert.ok(!/canToggle/.test(js));
+  const pg = fs.readFileSync(path.join(ROOT, 'public', 'surveillance.html'), 'utf8');
+  assert.match(pg, /canToggle/); assert.match(pg, /id="offBox"/);
 });

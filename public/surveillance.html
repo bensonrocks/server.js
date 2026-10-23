@@ -5,7 +5,10 @@ input,button{font:inherit;padding:.35rem .5rem}table{border-collapse:collapse;wi
 td,th{border:1px solid #ddd;padding:.3rem .5rem;text-align:left;font-size:14px}.muted{color:#777}
 section{border:1px solid #e3e3e3;border-radius:8px;padding:1rem;margin:1rem 0}.hidden{display:none}</style></head>
 <body><h1>&#127909; Surveillance</h1><p id="msg" class="muted"></p>
-<section><h2>Find packing video</h2>
+<section id="offBox" class="hidden"><h2>Surveillance is OFF</h2>
+<p class="muted">While it is off, the Surveillance menu, the station live panel and the Video button on completed orders are hidden for everyone. Only an administrator sees this page.</p>
+<button id="turnOn">Turn Surveillance ON</button></section>
+<section id="lookupSec" class="hidden"><h2>Find packing video</h2>
 <form id="f"><input id="q" placeholder="Order / GI / tracking number" size="32"> <button>Search</button></form>
 <div id="out"></div></section>
 <section id="admin" class="hidden"><h2>Settings (Administrator)</h2>
@@ -43,12 +46,15 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 const fmt=t=>t?new Date(t).toLocaleString('en-SG',{timeZone:'Asia/Singapore'})+' SGT':'—';
 async function api(m,p,b){const r=await fetch(p,{method:m,headers:H,body:b?JSON.stringify(b):undefined});return{ok:r.ok,j:await r.json().catch(()=>({}))}}
 async function boot(){const s=await api('GET','/api/surveillance/status');
- if(!s.j.visible){document.body.innerHTML='<p>Surveillance is not enabled for this login.</p>';return}
+ if(!s.j.visible){
+  if(s.j.canToggle){offBox.classList.remove('hidden');turnOn.onclick=async()=>{const r=await api('PUT','/api/surveillance/settings',{enabled:true});if(r.ok)location.reload();else msg.textContent=r.j.error||'Could not turn on'};return}
+  document.body.innerHTML='<p>Surveillance is not enabled for this login.</p>';return}
+ lookupSec.classList.remove('hidden');
  if(s.j.admin){document.getElementById('admin').classList.remove('hidden');loadS();loadPackers()}}
 async function loadS(){const {j}=await api('GET','/api/surveillance/settings');en.checked=j.enabled;gu.value=(j.grantedUsers||[]).join(',');
  pb.value=j.padBeforeSec;pa.value=j.padAfterSec;cRet.value=j.clipRetentionDays;cMax.value=j.clipMaxMB;cTot.value=j.clipTotalMaxMB;rk.textContent=j.recorderKeySet?'set ('+j.recorderKeyHint+')':'not set';
  cams.innerHTML='<tr><th>Name</th><th>Station</th><th>RTSP</th><th>Folder</th><th>Pattern</th><th>Offset</th><th></th></tr>'+j.cameras.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.station)}</td><td>${esc(c.rtspUrl)}</td><td>${esc(c.folder)}</td><td>${esc(c.filePattern)} ${esc(c.tz)}</td><td>${esc(c.clockOffsetSec)}s</td><td><button data-del="${esc(c.id)}">Delete</button></td></tr>`).join('')}
-saveS.onclick=async()=>{await api('PUT','/api/surveillance/settings',{enabled:en.checked,grantedUsers:gu.value.split(',').map(s=>s.trim()).filter(Boolean),padBeforeSec:+pb.value,padAfterSec:+pa.value,clipRetentionDays:+cRet.value,clipMaxMB:+cMax.value,clipTotalMaxMB:+cTot.value});loadS()};
+saveS.onclick=async()=>{await api('PUT','/api/surveillance/settings',{enabled:en.checked,grantedUsers:gu.value.split(',').map(s=>s.trim()).filter(Boolean),padBeforeSec:+pb.value,padAfterSec:+pa.value,clipRetentionDays:+cRet.value,clipMaxMB:+cMax.value,clipTotalMaxMB:+cTot.value});if(!en.checked)location.reload();else loadS()};
 rot.onclick=async()=>{if(!confirm('Replace the recorder key? The local agent must be updated.'))return;const {j}=await api('POST','/api/surveillance/recorder-key');prompt('New recorder key (shown once):',j.recorderKey);loadS()};
 cams.onclick=async e=>{const id=e.target.dataset.del;if(id&&confirm('Delete camera?')){await api('DELETE','/api/surveillance/cameras/'+id);loadS()}};
 cf.onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(cf));const r=await api('POST','/api/surveillance/cameras',b);msg.textContent=r.ok?'Camera saved':r.j.error;cf.rtspUrl.value='';loadS()};
