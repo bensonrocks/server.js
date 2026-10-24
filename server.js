@@ -11517,6 +11517,48 @@ app.use(['/api/surveillance', '/api/public/surveillance'], (req, res, next) => {
   if (req.path === '/status' && req.baseUrl === '/api/surveillance') return res.json({ enabled: false, admin: false, visible: false, demo: true });
   return res.status(403).json({ error: 'Disabled in demo mode' });
 });
+// MANIFEST (see block below the auth gate). DEMO_MODE: hard-off, never touches
+// live data. Public QR acknowledge: unguessable token, no login, rate-limited,
+// minimal data (manifest no, carrier, parcel count — never clients or rates).
+const manifestLib = require('./lib/manifest');
+const manifests = manifestLib.init(DATA_DIR);
+const MF_DEMO = /^(1|true|yes)$/i.test(String(process.env.DEMO_MODE || ''));
+app.use(['/api/manifests', '/api/public/manifest-ack'], (req, res, next) => {
+  if (!MF_DEMO) return next();
+  if (req.path === '/status' && req.baseUrl === '/api/manifests') return res.json({ visible: false, admin: false, demo: true });
+  return res.status(403).json({ error: 'Disabled in demo mode' });
+});
+const _mfAckHits = new Map();
+function mfAckRateLimit(req, res, next) {
+  const k = clientInfo(req).ip || 'x', now = Date.now();
+  const h = (_mfAckHits.get(k) || []).filter(t => now - t < 60000);
+  if (h.length >= 30) return res.status(429).json({ error: 'Too many requests. Please try again shortly.' });
+  h.push(now); _mfAckHits.set(k, h);
+  if (_mfAckHits.size > 5000) _mfAckHits.clear();
+  next();
+}
+app.get('/api/public/manifest-ack/:token', mfAckRateLimit, (req, res) => {
+  const m = manifests.byToken(req.params.token);
+  if (!m) return res.status(404).json({ error: 'Link not valid' });
+  res.json(manifestLib.publicView(m));
+});
+app.post('/api/public/manifest-ack/:token', mfAckRateLimit, (req, res) => {
+  const m = manifests.byToken(req.params.token);
+  if (!m) return res.status(404).json({ error: 'Link not valid' });
+  const b = req.body || {};
+  const name = String(b.name || '').trim().slice(0, 80);
+  if (!name) return res.status(400).json({ error: 'Your name is required' });
+  let geo = null;
+  if (b.geo && Number.isFinite(Number(b.geo.lat)) && Number.isFinite(Number(b.geo.lng)) && Math.abs(b.geo.lat) <= 90 && Math.abs(b.geo.lng) <= 180) {
+    geo = { lat: Number(b.geo.lat), lng: Number(b.geo.lng), accuracy: Number(b.geo.accuracy) || null };
+  }
+  const ci = clientInfo(req);
+  try {
+    manifests.acknowledge(m, { name, plate: String(b.plate || '').trim().slice(0, 16).toUpperCase(), ip: ci.ip, ua: ci.device, geo });
+    try { tenantContext.run(m.tenantId, () => logAudit('manifest_acknowledged', { manifest: m.no, driver: name, ip: ci.ip })); } catch (_) {}
+    res.json({ ok: true, ...manifestLib.publicView(m) });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message, ...manifestLib.publicView(m) }); }
+});
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (AUTH_PUBLIC.has(req.path) || req.path.startsWith('/api/public/') || req.path.startsWith('/api/driver/')
@@ -11560,6 +11602,137 @@ function grantAdminFeature(req) {
 // auth gate, so every mutating scan / orders / waves route — present and
 // future — refuses a reference-only number without having to remember to.
 app.use(referenceOrderFence);
+
+// ── MANIFEST (carrier handover) ─────────────────────────────────────────────
+// Side-menu "Manifest": the live list of scan-completed orders per carrier
+// that are not yet on an active manifest, frozen into MF-YYMMDD-### with a
+// print view, an on-screen signature and a public QR acknowledge link.
+// READ-ONLY against orders — see lib/manifest.js. Gated by the per-user
+// 'manifest' feature tick (default on, like the other menu functions).
+const mfIsAdmin = req => req.headers['x-master-key'] === MASTER_PASS || userHasAdminFeature(req.userId);
+function mfAccess(req, res, next) {
+  if (req.headers['x-master-key'] === MASTER_PASS) return next();
+  const u = readUsers().find(x => x.id === req.userId);
+  if (!u) return res.status(403).json({ error: 'Staff login required' });
+  if (u.features && u.features.manifest === false) return res.status(403).json({ error: 'Manifest is not enabled for this login' });
+  next();
+}
+const mfTenant = () => tenantContext.currentTenantId();
+// Which orders count as "done and ready for handover": scan-completed
+// (status 'done'), not cancelled by client / platform / rule, not pending
+// deletion, not bounced back by the hub. See the PR's open decisions.
+function mfReadyRows(db, tenantId, { carrier, client } = {}) {
+  const onActive = manifests.activeIndex(tenantId);
+  const labels = db.orderLabels || {};
+  const out = [];
+  for (const b of db.batches || []) {
+    if (client && String(b.client_name || '') !== client) continue;
+    const states = b.orderStates || {};
+    for (const o of b.orders || []) {
+      const st = states[o.order_number];
+      if (!st || st.status !== 'done') continue;
+      if (st.client_cancelled || st.platform_cancelled || st.pending_deletion || st.hub_exception || st.auto_cancelled) continue;
+      if (onActive.has(o.order_number)) continue;
+      const c = manifestLib.normalizeCarrier(o.carrier || o.courier);
+      if (carrier && c !== carrier) continue;
+      const pages = labelPagesOf(labels[o.order_number]);
+      const seen = new Set(), waybills = [];
+      for (const w of [o.waybill_number, ...pages.map(p => p.tracking)]) {
+        const s = String(w || '').trim(); if (s && !seen.has(s.toUpperCase())) { seen.add(s.toUpperCase()); waybills.push(s); }
+      }
+      out.push({ order: o.order_number, client: b.client_name || '', carrier: c, waybills,
+        parcels: Math.max(1, pages.length, waybills.length), qty: (o.lines || []).reduce((s, l) => s + (Number(l.qty) || 0), 0),
+        packedAt: st.endTime || st.updated_at || null, packedBy: st.operator || '' });
+    }
+  }
+  return out.sort((a, b) => String(a.packedAt || '').localeCompare(String(b.packedAt || '')));
+}
+app.get('/api/manifests/status', (req, res) => {
+  const u = readUsers().find(x => x.id === req.userId);
+  const visible = req.headers['x-master-key'] === MASTER_PASS || !!(u && !(u.features && u.features.manifest === false));
+  res.json({ visible, admin: mfIsAdmin(req) });
+});
+app.get('/api/manifests/carriers', mfAccess, (req, res) => {
+  const client = String(req.query.client || '').slice(0, 120);
+  const db = readDb();
+  const rows = mfReadyRows(db, mfTenant(), { client });
+  const by = {};
+  for (const r of rows) { const x = by[r.carrier] || (by[r.carrier] = { carrier: r.carrier, orders: 0, parcels: 0 }); x.orders++; x.parcels += r.parcels; }
+  const clients = [...new Set((db.batches || []).map(b => b.client_name).filter(Boolean))].sort();
+  res.json({ asOf: new Date().toISOString(), carriers: Object.values(by).sort((a, b) => b.orders - a.orders), clients });
+});
+app.get('/api/manifests/ready', mfAccess, (req, res) => {
+  const carrier = String(req.query.carrier || '').slice(0, 60);
+  if (!carrier) return res.status(400).json({ error: 'carrier is required' });
+  res.json({ asOf: new Date().toISOString(), carrier, rows: mfReadyRows(readDb(), mfTenant(), { carrier, client: String(req.query.client || '').slice(0, 120) }) });
+});
+app.post('/api/manifests', mfAccess, (req, res) => {
+  const b = req.body || {};
+  const carrier = String(b.carrier || '').slice(0, 60);
+  const wanted = Array.isArray(b.orders) ? [...new Set(b.orders.map(String))].slice(0, 2000) : [];
+  if (!carrier || !wanted.length) return res.status(400).json({ error: 'carrier and at least one order are required' });
+  const tenantId = mfTenant();
+  // Recompute server-side: an order is only accepted if it is ready, for this
+  // carrier, and not already on an active manifest — the client's list is a wish.
+  const ready = new Map(mfReadyRows(readDb(), tenantId, { carrier }).map(r => [r.order, r]));
+  const onActive = manifests.activeIndex(tenantId);
+  const clash = wanted.filter(n => onActive.has(n));
+  if (clash.length) return res.status(409).json({ error: 'Already on another manifest', clash: clash.map(n => ({ order: n, manifest: onActive.get(n).no })) });
+  const notReady = wanted.filter(n => !ready.has(n));
+  if (notReady.length) return res.status(400).json({ error: 'Not ready for this carrier', notReady });
+  const scan = b.scan && typeof b.scan === 'object' ? {
+    scanned: Math.max(0, Number(b.scan.scanned) || 0),
+    missing: (Array.isArray(b.scan.missing) ? b.scan.missing : []).map(String).slice(0, 500),
+    extra: (Array.isArray(b.scan.extra) ? b.scan.extra : []).map(x => String(x).slice(0, 60)).slice(0, 500) } : null;
+  try {
+    const m = manifests.create(tenantId, { carrier, client: String(b.client || '').slice(0, 120), rows: wanted.map(n => ready.get(n)), createdBy: req.userId || 'master-key', scan });
+    logAudit('manifest_created', { manifest: m.no, carrier, orders: m.orders.length, by: req.userId || 'master-key' });
+    res.json({ ok: true, manifest: mfStaffView(req, m) });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message, clash: e.clash }); }
+});
+function mfAckUrl(req, m) {
+  const base = String(process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '') || `${req.protocol}://${req.get('host')}`;
+  return `${base}/manifest-ack.html#${m.token}`;
+}
+function mfStaffView(req, m) {
+  const qr = require('qrcode-generator')(0, 'M');
+  const url = mfAckUrl(req, m); qr.addData(url); qr.make();
+  const { token, ...rest } = m;
+  return { ...rest, ackUrl: m.status === 'draft' ? url : '', qrSvg: m.status === 'draft' ? qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true }) : '' };
+}
+app.get('/api/manifests', mfAccess, (req, res) => {
+  const list = manifests.search(mfTenant(), String(req.query.q || '').slice(0, 80)).slice(0, 200);
+  res.json({ manifests: list.map(manifestLib.summaryView) });
+});
+app.get('/api/manifests/:id', mfAccess, (req, res) => {
+  const m = manifests.get(mfTenant(), String(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Manifest not found' });
+  res.json({ manifest: mfStaffView(req, m) });
+});
+app.post('/api/manifests/:id/sign', mfAccess, (req, res) => {
+  const m = manifests.get(mfTenant(), String(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Manifest not found' });
+  const b = req.body || {};
+  const driverName = String(b.driverName || '').trim().slice(0, 80);
+  const sig = String(b.signature || '');
+  if (!driverName) return res.status(400).json({ error: 'Driver name is required' });
+  if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(sig) || sig.length > 400000) return res.status(400).json({ error: 'A signature image is required' });
+  try {
+    manifests.sign(m, { driverName, idLast4: String(b.idLast4 || '').replace(/\D/g, '').slice(-4), plate: String(b.plate || '').trim().slice(0, 16).toUpperCase(), signature: sig, by: req.userId || 'master-key' });
+    logAudit('manifest_signed', { manifest: m.no, driver: driverName, by: req.userId || 'master-key' });
+    res.json({ ok: true, manifest: mfStaffView(req, m) });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+app.post('/api/manifests/:id/cancel', mfAccess, (req, res) => {
+  if (!mfIsAdmin(req)) return res.status(403).json({ error: 'Administrator access required' });
+  const m = manifests.get(mfTenant(), String(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Manifest not found' });
+  try {
+    manifests.cancel(m, { by: req.userId || 'master-key', reason: String((req.body || {}).reason || '').slice(0, 200) });
+    logAudit('manifest_cancelled', { manifest: m.no, by: req.userId || 'master-key' });
+    res.json({ ok: true, manifest: mfStaffView(req, m) });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
 
 // ── SURVEILLANCE (packing-station video lookup) — OFF by default ────────────
 // Admin-only toggle + per-user grant, both stored in DATA_DIR/surveillance.json
@@ -24283,7 +24456,7 @@ app.delete('/api/master/users/:id', (req, res) => {
 
 // Per-user FEATURE TOGGLES — which main functions this user sees.
 // Absent/never-set = everything visible (role rules still apply on top).
-const USER_FEATURE_KEYS = ['upload', 'orders', 'inbound', 'transport', 'labels', 'reports'];
+const USER_FEATURE_KEYS = ['upload', 'orders', 'inbound', 'transport', 'labels', 'reports', 'manifest'];
 // ── Lazada Open Platform — push-mechanism callback ──────────────────────────
 // Lazada's console verifies this URL (expects a fast HTTP 200) and then
 // pushes JSON events (new orders, status changes) here. For now we ACK and
