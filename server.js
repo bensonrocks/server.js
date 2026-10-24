@@ -11506,6 +11506,7 @@ app.get('/api/master/system-errors/health', (req, res) => {
     zortStores: (db.zortStores || []).length,
     zortOutboxPending: ob.filter(e => !e.stalled).length,
     zortOutboxStalled: ob.filter(e => e.stalled).length,
+    zortOutboxNeedsManualLabel: ob.filter(e => e.needsManualLabel).length,
     openErrors: (db.systemErrors || []).filter(e => e.status === 'open').length,
   });
 });
@@ -12210,6 +12211,7 @@ app.get('/api/system-health', (req, res) => {
     inventoryPathMismatch: INVENTORY_PATH_MISMATCH,
     inventoryAvailable: (() => { try { return inventory.available(); } catch { return false; } })(),
     zortOutboxStalled: ob.filter(e => e.stalled).length,
+    zortOutboxNeedsManualLabel: ob.filter(e => e.needsManualLabel).length,
     storagePersistent: PERSISTENCE.survivedRestart,
     ephemeralRisk: PERSISTENCE.onRailway && !PERSISTENCE.survivedRestart,
     // A CLIENT-FACING FAULT OUTRANKS AN INTERNAL ONE. An error in the portal is
@@ -24741,6 +24743,7 @@ app.get('/api/master/connections/health', (req, res) => {
       lastResultOk: s.lastResult ? !s.lastResult.error : null,
       outboxPending: (db.zortOutbox || []).filter(o => o.storeId === s.id && !o.stalled).length,
       outboxStalled: (db.zortOutbox || []).filter(o => o.storeId === s.id && o.stalled).length,
+      outboxNeedsManualLabel: (db.zortOutbox || []).filter(o => o.storeId === s.id && o.needsManualLabel).length,
       // Is the hub currently refusing to answer this store? A held queue with
       // no explanation reads as a stuck queue.
       quiet: zortHubIsQuiet(s),
@@ -25160,6 +25163,7 @@ app.post('/api/master/shopee/config', express.json(), (req, res) => {
 // live only in db.json (never in git); API responses mask them.
 const zortApi = require('./lib/zort.js');
 const zortWeb = require('./lib/zort-web.js');
+const zortLabelRetry = require('./lib/zort-label-retry.js');
 
 function zortStores(db) { return db.zortStores || (db.zortStores = []); }
 function zortMask(s) { s = String(s || ''); return s.length <= 6 ? '••••' : s.slice(0, 3) + '••••' + s.slice(-3); }
@@ -25220,6 +25224,7 @@ function zortStorePublic(s, db) {
     const mine = (db.zortOutbox || []).filter(e => e.storeId === s.id);
     out.outboxPending = mine.filter(e => !e.stalled).length;
     out.outboxStalled = mine.filter(e => e.stalled).length;
+    out.outboxNeedsManualLabel = mine.filter(e => e.needsManualLabel).length;
   }
   return out;
 }
@@ -26983,7 +26988,8 @@ app.post('/api/orders/:orderNumber/waybill-now', express.json(), async (req, res
       // taking 20–30 seconds to open). An open only makes the label DUE; the
       // background pass fetches it within its budget and the pill repaints
       // when it lands.
-      if (e4) { e4.nextAttemptAt = new Date().toISOString(); e4.stalled = false; if (!auto) e4.askedAt = e4.nextAttemptAt; queuedAt = e4.nextAttemptAt; }
+      if (e4 && e4.needsManualLabel && auto) { /* parked: opening the order does not revive it */ }
+      else if (e4) { if (e4.needsManualLabel) zortLabelRetry.unparkEntry(e4); e4.nextAttemptAt = new Date().toISOString(); e4.stalled = false; if (!auto) e4.askedAt = e4.nextAttemptAt; queuedAt = e4.nextAttemptAt; }
       writeDb(db4);
     }
     if (auto) {
@@ -27297,7 +27303,11 @@ function enqueueZortLabel(db, storeId, { orderNumber, zortId, tracking, labelUrl
   const ob = zortOutbox(db);
   const existing = ob.find(e => e.kind === 'label' && e.storeId === storeId && e.orderNumber === orderNumber);
   if (existing) {
+    // A PARKED (needs-manual) entry is terminal: a re-pull does not revive
+    // it — only a NEW link from the hub or an operator's retry does.
+    if (existing.needsManualLabel && !(labelUrl && labelUrl !== existing.labelUrl)) return false;
     if (labelUrl || existing.stalled) {
+      if (existing.needsManualLabel) zortLabelRetry.unparkEntry(existing);
       if (labelUrl) existing.labelUrl = labelUrl;
       if (tracking) existing.tracking = existing.tracking || tracking;
       existing.stalled = false;
@@ -27752,12 +27762,19 @@ async function _zortSendOutboxEntry(db, store, entry) {
           else webNote = 'The label browser signed in but the print page produced no PDF';
         } catch (e) {
           const msg = String(e.message || e);
-          // A LOGIN failure trips the breaker — do not hammer their sign-in.
-          if (/sign.?in|password|web email|web login/i.test(msg)) {
+          // ONLY A REAL SIGN-IN REJECTION trips the breaker — do not hammer
+          // their sign-in. A browser that failed to launch or crashed is NOT a
+          // login failure: its error text carries Chromium's command line
+          // (`--password-store=basic`), which the old /password/ test matched,
+          // and that is how the breaker tripped on 28 Aug 2026 and stayed on.
+          const kind = zortLabelRetry.classifyWebError(e);
+          if (kind === 'login') {
             const dbw = readDb();
             const sw = zortStores(dbw).find(s => s.id === store.id);
             if (sw) { sw.webLoginFailed = true; writeDb(dbw); store.webLoginFailed = true; }
             logAudit('zort_web_login_failed', { storeId: store.id, client: store.clientName || '', detail: msg.slice(0, 200) });
+          } else if (kind === 'browser') {
+            logAudit('zort_web_browser_error', { storeId: store.id, client: store.clientName || '', detail: msg.slice(0, 200) });
           }
           entry.webError = msg.slice(0, 300);
           webNote = `The label browser tried to fetch it from ZORT's print page and failed: ${msg.slice(0, 300)}`;
@@ -27808,6 +27825,7 @@ async function _zortSendOutboxEntry(db, store, entry) {
           ? `ZORT has the label, but its API only hands out a link to ZORT's own print viewer, not the PDF (${got.detail}). ${webNote || 'The label browser was not tried.'}. Until then, print it from ZORT and upload the PDF on the Labels tab.`
           : `The channel has a label for this order but not in a form we can import — ${got.detail}. Print it from the channel for now.`);
         e.webRan = webRan;   // the drainer gives a browser-tried label the long wait
+        e.unusable = true;   // exponential back-off, then the manual-label state
         throw e;
       }
       const e = new Error(got?.detail ? `Label not available yet — ${got.detail}` : 'Label not available yet');
@@ -28488,9 +28506,24 @@ async function drainZortOutbox({ only = null } = {}) {
     }
     let changed = false, sent = 0, heldForTime = 0, heldForBudget = 0;
     _zortWebPass.used = 0;
+    // LABELS TOO OLD TO KEEP ASKING ABOUT go to the terminal "needs manual
+    // label" state BEFORE any API call — the backlog from 28 Aug 2026 lands
+    // there on the first pass after deploy instead of being retried again.
+    if (!only) {
+      const parked = zortLabelRetry.parkStaleLabels(ob, now);
+      if (parked.length) {
+        changed = true;
+        logAudit('sync_label_needs_manual', {
+          count: parked.length, why: 'label fetch parked — older than the auto-fetch window or out of attempts; print from ZORT',
+          orders: parked.slice(0, 50).map(e => e.orderNumber),
+        });
+      }
+    }
     const remaining = [];
     for (const entry of ob) {
       if (only && !(entry.kind === 'label' && entry.orderNumber === only)) { remaining.push(entry); continue; }
+      // Parked = terminal. Only an operator's explicit tap (`only`) asks again.
+      if (entry.needsManualLabel && !only) { remaining.push(entry); continue; }
       if (new Date(entry.nextAttemptAt).getTime() > now) { remaining.push(entry); continue; }
       if (sent >= ZORT_DRAIN_MAX_PER_PASS) {
         if (rtsGuard.applyOutboxHold(entry, 'waiting behind the pass cap')) changed = true;
@@ -28558,6 +28591,10 @@ async function drainZortOutbox({ only = null } = {}) {
             entry.stalled = true;
             logAudit('sync_label_never_arrived', { storeId: store.id, order: entry.orderNumber, waits: entry.waits });
           }
+          if (zortLabelRetry.shouldPark(entry, now)) {
+            zortLabelRetry.parkEntry(entry, 'The channel never produced a label within the auto-fetch window — print it from ZORT', now);
+            logAudit('sync_label_needs_manual', { storeId: store.id, order: entry.orderNumber, count: 1, why: 'never generated' });
+          }
           changed = true; remaining.push(entry); continue;
         }
         // HELD, NOT FAILED: the pass's browser budget was spent before this
@@ -28584,6 +28621,19 @@ async function drainZortOutbox({ only = null } = {}) {
         // Long enough to carry the reason AND which gate stopped the label
         // browser — at 200 the floor read "Print it from th" and nothing after.
         entry.lastError = String(err.message).slice(0, 1200);
+        // ZORT HANDED US HTML, NOT A PDF. Retrying that every pass is what ran
+        // ~180 failures an hour: exponential back-off with a cap, then the
+        // terminal "needs manual label" state — kept, visible, not retried.
+        if (err.unusable && entry.kind === 'label') {
+          entry.unusableFails = (entry.unusableFails || 0) + 1;
+          const wait = Math.max(zortLabelRetry.unusableBackoffMs(entry.unusableFails), err.webRan ? ZORT_WEB_RETRY_MS : 0);
+          entry.nextAttemptAt = new Date(now + wait).toISOString();
+          if (zortLabelRetry.shouldPark(entry, now)) {
+            zortLabelRetry.parkEntry(entry, 'ZORT only returns its HTML print viewer for this label — print it from ZORT and upload the PDF on the Labels tab', now);
+            logAudit('sync_label_needs_manual', { storeId: store.id, client: store.clientName || '', order: entry.orderNumber, count: 1, attempts: entry.unusableFails, why: 'html instead of pdf' });
+          }
+          changed = true; remaining.push(entry); continue;
+        }
         // A label the BROWSER tried and could not get waits the long interval:
         // the print page had no PDF because ZORT has not generated it yet, and
         // the one-minute rung would spend another two minutes of Chromium on
@@ -29629,6 +29679,7 @@ app.post('/api/master/zort/stores/:id/labels/retry', express.json(), async (req,
   for (const w of wanted) {
     let entry = ob.find(e => e.kind === 'label' && e.storeId === store.id && e.orderNumber === w.orderNumber);
     if (entry) {
+      zortLabelRetry.unparkEntry(entry);   // the button is an operator's explicit retry
       entry.stalled = false; entry.attempts = 0; entry.waitedMs = 0;
       entry.nextAttemptAt = new Date().toISOString();
     } else {
