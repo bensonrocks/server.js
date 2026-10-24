@@ -89,7 +89,20 @@ test('unpark clears the terminal state for an explicit operator retry', () => {
 
 test('server.js no longer trips the login breaker on a bare /password/ match', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, '../server.js'), 'latin1');
-  assert.doesNotMatch(src, /sign\.\?in\|password\|web/);
+  assert.doesNotMatch(src, /sign\.\?in\|password\|web email\|web login/);
   assert.match(src, /zortLabelRetry\.classifyWebError\(e\)/);
   assert.match(src, /zortLabelRetry\.parkStaleLabels\(ob, now\)/);
+});
+
+test('zort-web strips crash text so no caller can read it as a sign-in failure', () => {
+  const zw = require('../lib/zort-web.js');
+  const crash = new Error('page.goto: Target page, context or browser has been closed\nBrowser logs:\n<launching> chromium --password-store=basic --use-mock-keychain');
+  const out = zw._sanitiseBrowserError(crash);
+  assert.strictEqual(out.browserFailure, true);
+  assert.doesNotMatch(out.message, /sign.?in|password|web login/i);   // the web-label test route's check
+  assert.strictEqual(r.isRealLoginFailure(out), false);
+  const login = new Error('the sign-in did not go through'); login.loginRejected = true;
+  assert.strictEqual(zw._sanitiseBrowserError(login), login);
+  const own = new Error('no ZORT web login on the store — add it on the store form');
+  assert.strictEqual(zw._sanitiseBrowserError(own), own);
 });
