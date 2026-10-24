@@ -29828,7 +29828,18 @@ app.post('/api/master/zort/stores/:id/web-capture', express.json(), async (req, 
   }
 });
 
-app.post('/api/master/zort/stores/:id/web-label-test', express.json(), async (req, res) => {
+// Each test launches Chromium and signs in to ZORT — a hammered button could
+// lock the account, so a light per-IP limit (same pattern as introRateLimit).
+const _webLabelTestHits = new Map();
+function webLabelTestRateLimit(req, res, next) {
+  const k = req.ip || 'x', now = Date.now();
+  const h = (_webLabelTestHits.get(k) || []).filter(t => now - t < 60000);
+  if (h.length >= 6) return res.status(429).json({ error: 'Too many label-browser tests — wait a minute and try again.' });
+  h.push(now); _webLabelTestHits.set(k, h);
+  if (_webLabelTestHits.size > 1000) _webLabelTestHits.clear();
+  next();
+}
+app.post('/api/master/zort/stores/:id/web-label-test', webLabelTestRateLimit, express.json(), async (req, res) => {
   if (!checkMaster(req, res)) return;
   const db = readDb();
   const store = zortStores(db).find(s => s.id === req.params.id);
