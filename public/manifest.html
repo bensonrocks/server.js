@@ -1,0 +1,146 @@
+<!doctype html><html><head><meta charset="utf-8"><title>IdealOne — Manifest</title>
+<meta name="robots" content="noindex"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:system-ui,sans-serif;max-width:1100px;margin:1.2rem auto;padding:0 1rem;color:#1f2937}
+h1{margin:.2rem 0 1rem}button,input,select{font:inherit;padding:.4rem .6rem;border-radius:6px;border:1px solid #cbd5e1;background:#fff}
+button{cursor:pointer}.btn-p{background:#2563eb;color:#fff;border-color:#2563eb}.btn-d{background:#dc2626;color:#fff;border-color:#dc2626}
+.muted{color:#6b7280}.hidden{display:none!important}section{border:1px solid #e5e7eb;border-radius:10px;padding:1rem;margin:1rem 0}
+.tiles{display:flex;flex-wrap:wrap;gap:.8rem}.tile{border:2px solid #e5e7eb;border-radius:12px;padding:1rem 1.2rem;min-width:170px;text-align:left;background:#f8fafc}
+.tile b{display:block;font-size:18px}.tile .n{font-size:28px;font-weight:700;color:#2563eb}.tile.sel{border-color:#2563eb;background:#eff6ff}
+table{border-collapse:collapse;width:100%;margin:.6rem 0}td,th{border-bottom:1px solid #e5e7eb;padding:.35rem .5rem;text-align:left;font-size:14px}
+th{background:#f1f5f9}tr.ex td{opacity:.45;text-decoration:line-through}tr.ok td{background:#ecfdf5}
+.pill{display:inline-block;padding:.1rem .5rem;border-radius:999px;font-size:12px;font-weight:600}
+.p-draft{background:#fef3c7;color:#92400e}.p-handed_over{background:#dcfce7;color:#166534}.p-cancelled{background:#fee2e2;color:#991b1b}
+.bar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}.warn{color:#b45309}.err{color:#b91c1c}
+#pad{border:2px dashed #94a3b8;border-radius:8px;touch-action:none;background:#fff;width:100%;max-width:600px;height:220px}
+.modal{position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:10}
+.modal>div{background:#fff;border-radius:12px;padding:1.2rem;width:94%;max-width:640px}
+/* A4 print sheet */
+.sheet{background:#fff;width:210mm;min-height:297mm;padding:14mm;box-sizing:border-box;margin:0 auto;box-shadow:0 0 0 1px #e5e7eb;font-size:12px}
+.sheet h2{margin:0;font-size:20px}.sheet table td,.sheet table th{font-size:11px;border:1px solid #cbd5e1;padding:3px 5px}
+.sheet .hdr{display:flex;justify-content:space-between;gap:1rem;border-bottom:2px solid #111;padding-bottom:6px;margin-bottom:8px}
+.sheet .qr svg{width:34mm;height:34mm}.sheet .tot{display:flex;gap:1.2rem;font-size:13px;margin:6px 0}
+.sigs{display:grid;grid-template-columns:1fr 1fr;gap:12mm;margin-top:12mm}.sigs div{border-top:1px solid #111;padding-top:3px;min-height:20mm}
+.sigs img{max-height:22mm;display:block}
+@media print{body{margin:0;max-width:none;padding:0}.noprint{display:none!important}.sheet{box-shadow:none;width:auto;min-height:0;padding:0}@page{size:A4;margin:12mm}}
+</style></head><body>
+<div class="noprint"><h1>&#128203; Manifest <span class="muted" style="font-size:14px;font-weight:400">carrier handover</span></h1>
+<p id="msg" class="muted"></p>
+<div class="bar"><button id="tabNew" class="btn-p">New handover</button><button id="tabHist">History</button></div>
+<section id="vNew">
+  <div class="bar"><b>Carrier at the dock</b><span class="muted" id="asOf"></span><span style="flex:1"></span>
+  Client <select id="client"><option value="">All clients</option></select><button id="refresh">&#8635; Refresh</button></div>
+  <div class="tiles" id="tiles" style="margin-top:.8rem"></div>
+  <div id="list" class="hidden" style="margin-top:1rem">
+    <div class="bar"><h2 id="lTitle" style="margin:0"></h2><span style="flex:1"></span>
+      <input id="scan" placeholder="Scan waybill / order no to check" size="32" autocomplete="off"></div>
+    <p id="scanSum" class="muted"></p>
+    <table><thead><tr><th><input type="checkbox" id="all" checked></th><th>Order no</th><th>Client</th><th>Tracking / waybill</th><th>Parcels</th><th>Qty</th><th>Packed</th><th>Scan</th></tr></thead><tbody id="rows"></tbody></table>
+    <div class="bar"><b id="selSum"></b><span style="flex:1"></span><button class="btn-p" id="create">Create manifest</button></div>
+  </div>
+</section>
+<section id="vHist" class="hidden">
+  <div class="bar"><input id="hq" placeholder="Search manifest no, order no or tracking" size="40"><button id="hgo">Search</button></div>
+  <table><thead><tr><th>Manifest</th><th>Carrier</th><th>Created</th><th>Orders</th><th>Parcels</th><th>Status</th><th>Handover</th><th></th></tr></thead><tbody id="hrows"></tbody></table>
+</section>
+<section id="vDet" class="hidden"><div class="bar">
+  <button id="back">&larr; Back</button><span style="flex:1"></span>
+  <button id="print" class="btn-p">&#128424; Print</button><button id="esign">&#9997; E-sign</button><button id="cancelMf" class="btn-d hidden">Cancel manifest</button></div>
+  <p id="ackLine" style="font-weight:600"></p></section>
+</div>
+<div id="sheetWrap"></div>
+<div id="sigModal" class="modal hidden noprint"><div>
+  <h3 style="margin-top:0">Driver signature — <span id="sigNo"></span></h3>
+  <div class="bar" style="margin-bottom:.5rem"><input id="dName" placeholder="Driver name *" size="22"><input id="dId" placeholder="IC/ID last 4 (optional)" size="18" maxlength="4" inputmode="numeric"><input id="dPlate" placeholder="Vehicle plate (optional)" size="16"></div>
+  <canvas id="pad" width="600" height="220"></canvas>
+  <div class="bar" style="margin-top:.6rem"><button id="clr">Clear</button><span class="err" id="sigErr"></span><span style="flex:1"></span><button id="sigCancel">Close</button><button class="btn-p" id="sigSave">Save signature</button></div>
+</div></div>
+<script>
+(function(){
+const T=localStorage.getItem('wms_token')||'';const H={'x-auth-token':T,'Content-Type':'application/json'};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=t=>t?new Date(t).toLocaleString('en-SG',{timeZone:'Asia/Singapore',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false}):'—';
+const hm=t=>t?new Date(t).toLocaleTimeString('en-SG',{timeZone:'Asia/Singapore',hour:'2-digit',minute:'2-digit',hour12:false}):'';
+async function api(m,p,b){const r=await fetch(p,{method:m,headers:H,body:b?JSON.stringify(b):undefined});return{ok:r.ok,status:r.status,j:await r.json().catch(()=>({}))}}
+let carrier='',rows=[],excluded=new Set(),scanned=new Set(),extra=[],cur=null,admin=false;
+function show(v){['vNew','vHist','vDet'].forEach(x=>$(x).classList.toggle('hidden',x!==v));if(v!=='vDet')$('sheetWrap').innerHTML='';}
+async function loadCarriers(){
+  const r=await api('GET','/api/manifests/carriers?client='+encodeURIComponent($('client').value));
+  if(!r.ok){$('msg').textContent=r.j.error||'Not available';$('msg').className='err';return;}
+  const sel=$('client').value;$('client').innerHTML='<option value="">All clients</option>'+r.j.clients.map(c=>`<option ${c===sel?'selected':''}>${esc(c)}</option>`).join('');
+  $('asOf').textContent='as of '+fmt(r.j.asOf)+' SGT';
+  $('tiles').innerHTML=r.j.carriers.length?r.j.carriers.map(c=>`<button class="tile ${c.carrier===carrier?'sel':''}" data-c="${esc(c.carrier)}"><b>${esc(c.carrier)}</b><span class="n">${c.orders}</span> orders · ${c.parcels} parcels</button>`).join(''):'<p class="muted">No packed orders waiting for handover.</p>';
+  document.querySelectorAll('.tile').forEach(b=>b.onclick=()=>pick(b.dataset.c));
+}
+async function pick(c){carrier=c;excluded=new Set();scanned=new Set();extra=[];
+  document.querySelectorAll('.tile').forEach(b=>b.classList.toggle('sel',b.dataset.c===c));
+  const r=await api('GET','/api/manifests/ready?carrier='+encodeURIComponent(c)+'&client='+encodeURIComponent($('client').value));
+  rows=r.j.rows||[];$('lTitle').textContent=c+' — ready for handover up to '+hm(r.j.asOf);$('list').classList.remove('hidden');render();$('scan').focus();}
+function render(){
+  $('rows').innerHTML=rows.map((o,i)=>{const ex=excluded.has(o.order),ok=scanned.has(o.order);return `<tr class="${ex?'ex':''} ${ok?'ok':''}"><td><input type="checkbox" data-i="${i}" ${ex?'':'checked'}></td><td>${esc(o.order)}</td><td>${esc(o.client)}</td><td>${o.waybills.map(esc).join('<br>')||'<span class="warn">no waybill</span>'}</td><td>${o.parcels}</td><td>${o.qty}</td><td>${hm(o.packedAt)}</td><td>${ok?'&#10004;':''}</td></tr>`}).join('');
+  document.querySelectorAll('#rows input').forEach(cb=>cb.onchange=()=>{const o=rows[cb.dataset.i];cb.checked?excluded.delete(o.order):excluded.add(o.order);render();});
+  const inc=rows.filter(o=>!excluded.has(o.order));
+  $('selSum').textContent=`${inc.length} orders · ${inc.reduce((s,o)=>s+o.parcels,0)} parcels selected`;
+  const miss=inc.filter(o=>!scanned.has(o.order));
+  $('scanSum').innerHTML=scanned.size||extra.length?`Scanned <b>${scanned.size}</b> / ${inc.length}. `+(miss.length?`<span class="warn">Missing: ${miss.map(o=>esc(o.order)).join(', ')}</span> `:'<b style="color:#166534">All present.</b> ')+(extra.length?`<span class="err">Not on this list: ${extra.map(esc).join(', ')}</span>`:''):'Scan each parcel to tick it as physically present (optional).';
+}
+$('scan').onkeydown=e=>{if(e.key!=='Enter')return;const v=e.target.value.trim().toUpperCase();e.target.value='';if(!v)return;
+  const o=rows.find(o=>o.order.toUpperCase()===v||o.waybills.some(w=>w.toUpperCase()===v));
+  if(o){scanned.add(o.order);excluded.delete(o.order);}else if(!extra.includes(v))extra.push(v);render();};
+$('all').onchange=e=>{excluded=e.target.checked?new Set():new Set(rows.map(o=>o.order));render();};
+$('create').onclick=async()=>{const inc=rows.filter(o=>!excluded.has(o.order));if(!inc.length)return alert('Nothing selected');
+  const miss=inc.filter(o=>!scanned.has(o.order)).map(o=>o.order);
+  if(scanned.size&&miss.length&&!confirm(miss.length+' selected order(s) were not scanned. Create anyway?'))return;
+  const r=await api('POST','/api/manifests',{carrier,client:$('client').value,orders:inc.map(o=>o.order),scan:scanned.size||extra.length?{scanned:scanned.size,missing:miss,extra}:null});
+  if(!r.ok)return alert(r.j.error+(r.j.clash?': '+r.j.clash.map(c=>c.order+' → '+c.manifest).join(', '):''));
+  openDet(r.j.manifest);};
+async function hist(){const r=await api('GET','/api/manifests?q='+encodeURIComponent($('hq').value));
+  $('hrows').innerHTML=(r.j.manifests||[]).map(m=>`<tr><td><b>${esc(m.no)}</b></td><td>${esc(m.carrier)}</td><td>${fmt(m.createdAt)}</td><td>${m.totals.orders}</td><td>${m.totals.parcels}</td><td><span class="pill p-${m.status}">${m.status.replace('_',' ')}</span></td><td>${m.ackBy?esc(m.ackBy)+' '+hm(m.ackAt):''}</td><td><button data-id="${esc(m.id)}">Open / reprint</button></td></tr>`).join('')||'<tr><td colspan="8" class="muted">No manifests</td></tr>';
+  document.querySelectorAll('#hrows button').forEach(b=>b.onclick=async()=>{const r=await api('GET','/api/manifests/'+b.dataset.id);if(r.ok)openDet(r.j.manifest);});}
+function ackText(m){if(m.status==='cancelled')return 'Cancelled '+fmt(m.cancelledAt)+' by '+m.cancelledBy;
+  if(m.ack)return '✔ Acknowledged by '+m.ack.name+(m.ack.plate?' ('+m.ack.plate+')':'')+' at '+hm(m.ack.at)+' SGT via QR';
+  if(m.signature)return '✔ Signed by '+m.signature.driverName+(m.signature.plate?' ('+m.signature.plate+')':'')+' at '+hm(m.signature.at)+' SGT';
+  return 'Draft — waiting for driver signature or QR acknowledgement';}
+function sheet(m){const o=m.orders;return `<div class="sheet">
+ <div class="hdr"><div><div style="font-size:11px;letter-spacing:.08em" class="muted">ULD · IDEALONE WAREHOUSE</div><h2>Carrier Handover Manifest</h2>
+ <div style="font-size:14px;margin-top:4px"><b>${esc(m.carrier)}</b>${m.client?' · '+esc(m.client):''}</div>
+ <div>Manifest no <b style="font-size:15px">${esc(m.no)}</b></div><div>Created ${fmt(m.createdAt)} SGT by ${esc(m.createdBy)}</div>
+ <div>Status: <b>${esc(m.status.replace('_',' ').toUpperCase())}</b></div></div>
+ <div class="qr" style="text-align:center">${m.qrSvg||''}<div style="font-size:10px">${m.qrSvg?'Driver: scan to acknowledge pickup':''}</div></div></div>
+ <div class="tot"><span>Orders <b>${m.totals.orders}</b></span><span>Parcels <b>${m.totals.parcels}</b></span><span>Units <b>${m.totals.qty}</b></span></div>
+ <table><thead><tr><th>#</th><th>Order no</th><th>Client</th><th>Tracking / waybill</th><th>Parcels</th><th>Qty</th><th>Packed</th></tr></thead><tbody>
+ ${o.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.order)}</td><td>${esc(r.client)}</td><td>${r.waybills.map(esc).join(', ')}</td><td>${r.parcels}</td><td>${r.qty}</td><td>${hm(r.packedAt)}</td></tr>`).join('')}
+ </tbody></table>
+ <div class="sigs"><div>${m.signature?`<img src="${esc(m.signature.image)}" alt="signature">`:''}<b>Received by (carrier driver)</b><br>Name: ${esc(m.signature?m.signature.driverName:(m.ack?m.ack.name:''))}
+ ${m.signature&&m.signature.idLast4?' · ID ****'+esc(m.signature.idLast4):''}<br>Vehicle: ${esc((m.signature||m.ack||{}).plate||'')}<br>Date/time: ${m.handedOverAt?fmt(m.handedOverAt)+' SGT':''}
+ ${m.ack?'<br><i>Acknowledged on driver phone via QR</i>':''}</div>
+ <div><b>Released by (ULD)</b><br>Name: ${esc(m.createdBy)}<br>Signature:<br>Date/time:</div></div></div>`;}
+function openDet(m){cur=m;show('vDet');$('ackLine').textContent=ackText(m);$('sheetWrap').innerHTML=sheet(m);
+  $('esign').classList.toggle('hidden',m.status!=='draft');$('cancelMf').classList.toggle('hidden',!(admin&&m.status==='draft'));}
+// Signature pad
+const pad=$('pad'),ctx=pad.getContext('2d');let drawing=false,inked=false;
+function pt(e){const r=pad.getBoundingClientRect();return[(e.clientX-r.left)*pad.width/r.width,(e.clientY-r.top)*pad.height/r.height];}
+pad.onpointerdown=e=>{drawing=true;pad.setPointerCapture(e.pointerId);const[x,y]=pt(e);ctx.beginPath();ctx.moveTo(x,y);};
+pad.onpointermove=e=>{if(!drawing)return;const[x,y]=pt(e);ctx.lineWidth=2.5;ctx.lineCap='round';ctx.strokeStyle='#111';ctx.lineTo(x,y);ctx.stroke();inked=true;};
+pad.onpointerup=()=>drawing=false;
+function clearPad(){ctx.fillStyle='#fff';ctx.fillRect(0,0,pad.width,pad.height);inked=false;}
+$('clr').onclick=clearPad;
+$('esign').onclick=()=>{$('sigNo').textContent=cur.no;$('sigErr').textContent='';clearPad();$('sigModal').classList.remove('hidden');};
+$('sigCancel').onclick=()=>$('sigModal').classList.add('hidden');
+$('sigSave').onclick=async()=>{if(!$('dName').value.trim())return $('sigErr').textContent='Driver name is required';if(!inked)return $('sigErr').textContent='Please sign in the box';
+  const r=await api('POST','/api/manifests/'+cur.id+'/sign',{driverName:$('dName').value,idLast4:$('dId').value,plate:$('dPlate').value,signature:pad.toDataURL('image/png')});
+  if(!r.ok)return $('sigErr').textContent=r.j.error;$('sigModal').classList.add('hidden');openDet(r.j.manifest);};
+$('cancelMf').onclick=async()=>{const why=prompt('Cancel '+cur.no+'? Reason:');if(why===null)return;const r=await api('POST','/api/manifests/'+cur.id+'/cancel',{reason:why});if(!r.ok)return alert(r.j.error);openDet(r.j.manifest);};
+$('print').onclick=()=>window.print();
+$('back').onclick=()=>{show('vNew');loadCarriers();};
+$('tabNew').onclick=()=>{show('vNew');loadCarriers();};$('tabHist').onclick=()=>{show('vHist');hist();};
+$('hgo').onclick=hist;$('hq').onkeydown=e=>{if(e.key==='Enter')hist();};
+$('refresh').onclick=()=>{loadCarriers();if(carrier)pick(carrier);};$('client').onchange=()=>{carrier='';$('list').classList.add('hidden');loadCarriers();};
+// Poll the open draft so a QR acknowledgement shows up without a refresh.
+setInterval(async()=>{if(cur&&cur.status==='draft'&&!$('vDet').classList.contains('hidden')){const r=await api('GET','/api/manifests/'+cur.id);if(r.ok&&r.j.manifest.status!=='draft')openDet(r.j.manifest);}},10000);
+api('GET','/api/manifests/status').then(r=>{admin=!!r.j.admin;if(!r.j.visible){$('msg').textContent='Manifest is not enabled for this login.';$('msg').className='err';}});
+const qid=new URLSearchParams(location.search).get('id');
+if(qid)api('GET','/api/manifests/'+encodeURIComponent(qid)).then(r=>r.ok&&openDet(r.j.manifest));else loadCarriers();
+})();
+</script></body></html>

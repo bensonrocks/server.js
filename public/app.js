@@ -360,6 +360,10 @@
       currentUser.features    = p.features    || null;
       if (p.tablePrefs) tablePrefs = { widths: p.tablePrefs.widths || {}, hidden: p.tablePrefs.hidden || [] };
       applyFeatureToggles(currentUser.features);
+      // Manifest menu: per-user 'manifest' feature tick (default on); demo mode hides it.
+      fetch('/api/manifests/status', { headers: hdrs() }).then(r => r.ok ? r.json() : null).then(s => {
+        const b = document.getElementById('manifestNavBtn'); if (b) b.style.display = s && s.visible ? '' : 'none';
+      }).catch(() => {});
       // Surveillance menu: shown only when the server says this login may see it.
       fetch('/api/surveillance/status', { headers: hdrs() }).then(r => r.ok ? r.json() : null).then(s => {
         const b = document.getElementById('surveillanceNavBtn'); if (b) b.style.display = s && s.visible ? '' : 'none';
@@ -17015,6 +17019,7 @@
       ['transport', '🚚 Transport — deliveries, map, route planning'],
       ['labels',    '🏷 Labels'],
       ['reports',   '📊 Reports'],
+      ['manifest',  '📋 Manifest — carrier handover manifests'],
     ];
     const f = user.features || {};
     const isAdminFeat = f.administrator === true;

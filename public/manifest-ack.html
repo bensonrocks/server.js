@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Acknowledge pickup</title>
+<meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:system-ui,sans-serif;margin:0;background:#f1f5f9;color:#111}
+.c{max-width:420px;margin:0 auto;padding:1.2rem}.card{background:#fff;border-radius:14px;padding:1.2rem;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h1{font-size:20px;margin:.2rem 0 1rem}.big{font-size:34px;font-weight:800}.row{display:flex;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid #eee}
+input{width:100%;box-sizing:border-box;font-size:17px;padding:.7rem;border:1px solid #cbd5e1;border-radius:10px;margin:.4rem 0}
+button{width:100%;font-size:19px;font-weight:700;padding:1rem;border:0;border-radius:12px;background:#16a34a;color:#fff;margin-top:.6rem}
+.muted{color:#64748b;font-size:13px}.done{background:#dcfce7;border-radius:12px;padding:1rem;font-size:17px;font-weight:600;color:#166534;text-align:center}
+.err{color:#b91c1c}label{font-size:14px;display:flex;gap:.5rem;align-items:center;margin:.4rem 0}label input{width:auto;margin:0}</style></head>
+<body><div class="c"><div class="card" id="card"><p class="muted">Loading…</p></div>
+<p class="muted" style="text-align:center">ULD · IdealOne handover acknowledgement</p></div>
+<script>
+(function(){
+const tok=(location.hash||'').slice(1);const card=document.getElementById('card');
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hm=t=>new Date(t).toLocaleString('en-SG',{timeZone:'Asia/Singapore',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false});
+const url='/api/public/manifest-ack/'+encodeURIComponent(tok);
+function view(m,err){
+  const head=`<h1>Pickup acknowledgement</h1><div class="row"><span>Manifest</span><b>${esc(m.no)}</b></div><div class="row"><span>Carrier</span><b>${esc(m.carrier)}</b></div><div class="row"><span>Parcels</span><span class="big">${m.parcels}</span></div>`;
+  if(m.status==='cancelled'){card.innerHTML=head+'<p class="err">This manifest was cancelled by the warehouse.</p>';return;}
+  if(m.acknowledged){card.innerHTML=head+`<p class="done">&#10004; Acknowledged by ${esc(m.ackName)}<br>${esc(hm(m.ackAt))} SGT</p>`;return;}
+  card.innerHTML=head+`<p class="muted">Count the parcels, then confirm you have collected them.</p>
+  <input id="n" placeholder="Your name *" autocomplete="name"><input id="p" placeholder="Vehicle plate (optional)">
+  <label><input type="checkbox" id="g"> Share my location (optional)</label>
+  <p class="err" id="e">${esc(err||'')}</p><button id="b">Acknowledge pickup of ${m.parcels} parcels</button>`;
+  document.getElementById('b').onclick=async()=>{const name=document.getElementById('n').value.trim();if(!name){document.getElementById('e').textContent='Please enter your name';return;}
+    const b=document.getElementById('b');b.disabled=true;b.textContent='Sending…';
+    let geo=null;if(document.getElementById('g').checked&&navigator.geolocation){geo=await new Promise(r=>navigator.geolocation.getCurrentPosition(p=>r({lat:p.coords.latitude,lng:p.coords.longitude,accuracy:p.coords.accuracy}),()=>r(null),{timeout:6000}));}
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,plate:document.getElementById('p').value,geo})});
+    const j=await r.json().catch(()=>({}));if(j.no)view(j,r.ok?'':j.error);else view(m,j.error||'Failed, please retry');};
+}
+if(!/^[A-Za-z0-9_-]{32}$/.test(tok)){card.innerHTML='<p class="err">This link is not valid.</p>';return;}
+fetch(url).then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok){card.innerHTML='<p class="err">'+esc(j.error||'This link is not valid.')+'</p>';return;}view(j);}).catch(()=>{card.innerHTML='<p class="err">Network error</p>';});
+})();
+</script></body></html>
